@@ -12,20 +12,19 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import roc_curve, auc, classification_report, confusion_matrix, ConfusionMatrixDisplay
-
 from scipy import stats
 from docx import Document
 
 
-# ======================
-# Page config
-# ======================
-st.set_page_config(page_title="Pneumonia App", layout="wide")
+# =========================================================
+# Page
+# =========================================================
+st.set_page_config(page_title="Pneumonia Analytics", page_icon="🫁", layout="wide")
 
 
-# ======================
-# DeLong test functions (giữ như bạn)
-# ======================
+# =========================================================
+# DeLong test (same logic)
+# =========================================================
 def compute_midrank(x):
     J = np.argsort(x)
     Z = x[J]
@@ -45,23 +44,22 @@ def compute_midrank(x):
 def fastDeLong(predictions_sorted_transposed, label_1_count):
     m = label_1_count
     n = predictions_sorted_transposed.shape[1] - m
-    positive_examples = predictions_sorted_transposed[:, :m]
-    negative_examples = predictions_sorted_transposed[:, m:]
+    pos = predictions_sorted_transposed[:, :m]
+    neg = predictions_sorted_transposed[:, m:]
     k = predictions_sorted_transposed.shape[0]
     tx = np.empty([k, m])
     ty = np.empty([k, n])
     tz = np.empty([k, m + n])
     for r in range(k):
-        tx[r] = compute_midrank(positive_examples[r])
-        ty[r] = compute_midrank(negative_examples[r])
+        tx[r] = compute_midrank(pos[r])
+        ty[r] = compute_midrank(neg[r])
         tz[r] = compute_midrank(predictions_sorted_transposed[r])
     aucs = tx.sum(axis=1) / m / n - (m + 1) / (2 * n)
     v01 = (tz[:, :m] - tx) / n
     v10 = (tz[:, m:] - ty) / m
     sx = np.cov(v01)
     sy = np.cov(v10)
-    delongcov = sx / m + sy / n
-    return aucs, delongcov
+    return aucs, sx / m + sy / n
 
 def delong_roc_test(y_true, y_scores_1, y_scores_2):
     y_true = np.array(y_true)
@@ -70,53 +68,43 @@ def delong_roc_test(y_true, y_scores_1, y_scores_2):
     y_scores_1 = y_scores_1[order]
     y_scores_2 = y_scores_2[order]
     label_1_count = int(np.sum(y_true))
-    predictions = np.vstack((y_scores_1, y_scores_2))
-    aucs, delongcov = fastDeLong(predictions, label_1_count)
+    preds = np.vstack((y_scores_1, y_scores_2))
+    aucs, cov = fastDeLong(preds, label_1_count)
     diff = aucs[0] - aucs[1]
-    var = delongcov[0, 0] + delongcov[1, 1] - 2 * delongcov[0, 1]
+    var = cov[0, 0] + cov[1, 1] - 2 * cov[0, 1]
     z = np.abs(diff) / np.sqrt(var)
-    p = 2 * (1 - stats.norm.cdf(z))
-    return float(p)
+    return float(2 * (1 - stats.norm.cdf(z)))
 
 
-# ======================
+# =========================================================
 # Data helpers
-# ======================
+# =========================================================
 REQUIRED_COLS = ["Pneumonia", "CRP", "WBC", "SpO2", "Temperature"]
 
 def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    # Vietnamese -> English mapping (keep both acceptable)
     df.rename(columns={
         "Viêm phổi": "Pneumonia",
         "Nhiệt độ": "Temperature",
         "Bạch cầu": "WBC",
         "CRP": "CRP",
-        "SpO2": "SpO2"
+        "SpO2": "SpO2",
     }, inplace=True)
     return df
 
 def validate_df(df: pd.DataFrame):
     missing = set(REQUIRED_COLS) - set(df.columns)
     if missing:
-        raise ValueError(f"Thiếu cột: {sorted(list(missing))}. Cần đủ: {REQUIRED_COLS}")
+        raise ValueError(f"Missing required columns: {sorted(list(missing))}. Required: {REQUIRED_COLS}")
     if df["Pneumonia"].dropna().nunique() < 2:
-        raise ValueError("Cột Pneumonia phải có đủ 2 lớp (0/1).")
-
-def make_template_excel_bytes() -> bytes:
-    tmpl = pd.DataFrame({
-        "Pneumonia": [0, 1],
-        "CRP": [10.0, 50.0],
-        "WBC": [7.5, 14.2],
-        "SpO2": [98, 92],
-        "Temperature": [36.8, 39.1],
-    })
-    return df_to_excel_bytes({"template": tmpl})
+        raise ValueError("Column 'Pneumonia' must contain both classes (0 and 1).")
 
 def df_to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
     bio = io.BytesIO()
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        for sheet_name, df in sheets.items():
-            df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+        for sheet, _df in sheets.items():
+            _df.to_excel(writer, index=False, sheet_name=sheet[:31])
     bio.seek(0)
     return bio.getvalue()
 
@@ -127,141 +115,149 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
     return bio.getvalue()
 
 def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
-    # Render dataframe thành ảnh (matplotlib table)
     n_rows, n_cols = df.shape
-    fig_w = min(18, max(6, n_cols * 1.6))
-    fig_h = min(18, max(2.5, (n_rows + 1) * 0.45))
+    fig_w = min(18, max(6, n_cols * 1.5))
+    fig_h = min(18, max(2.2, (n_rows + 1) * 0.45))
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     ax.axis("off")
     if title:
-        ax.set_title(title, fontsize=12, pad=10)
-
-    tbl = ax.table(
-        cellText=df.values,
-        colLabels=df.columns,
-        cellLoc="center",
-        loc="center"
-    )
+        ax.set_title(title, fontsize=12, pad=8)
+    tbl = ax.table(cellText=df.values, colLabels=df.columns, cellLoc="center", loc="center")
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(9)
-    tbl.scale(1, 1.2)
-
+    tbl.scale(1, 1.15)
     png = fig_to_png_bytes(fig, dpi=dpi)
     plt.close(fig)
     return png
 
+def make_template_excel_bytes() -> bytes:
+    template = pd.DataFrame({
+        "Pneumonia": [0, 1],
+        "CRP": [10.0, 50.0],
+        "WBC": [7.5, 14.2],
+        "SpO2": [98, 92],
+        "Temperature": [36.8, 39.1],
+    })
+    notes = pd.DataFrame({
+        "Notes": [
+            "Pneumonia must be 0 (No) or 1 (Yes).",
+            "CRP: numeric (e.g., mg/L).",
+            "WBC: numeric (e.g., 10^9/L).",
+            "SpO2: numeric (0–100).",
+            "Temperature: numeric (°C)."
+        ]
+    })
+    return df_to_excel_bytes({"template": template, "notes": notes})
 
-# ======================
-# Core analysis
-# ======================
+
+# =========================================================
+# Core modeling
+# =========================================================
 @st.cache_data(show_spinner=False)
-def run_models(df: pd.DataFrame, test_size: float, random_state: int):
+def run_models(df: pd.DataFrame, test_size: float, random_state: int, n_bootstraps: int):
     df = standardize_columns(df)
     validate_df(df)
 
     X = df[["CRP", "WBC", "SpO2", "Temperature"]]
     y = df["Pneumonia"]
 
-    # statsmodels logistic
+    # Statsmodels logistic regression
     X_sm = sm.add_constant(X)
-    logit_model = sm.Logit(y, X_sm).fit(disp=False)
-
-    params = logit_model.params
-    conf = logit_model.conf_int()
-    pvals = logit_model.pvalues
+    logit = sm.Logit(y, X_sm).fit(disp=False)
+    params = logit.params
+    conf = logit.conf_int()
+    pvals = logit.pvalues
 
     odds_table = pd.DataFrame({
-        "Coefficient (β)": params,
-        "Odds Ratio": np.exp(params),
-        "CI 2.5%": np.exp(conf[0]),
-        "CI 97.5%": np.exp(conf[1]),
-        "p-value": pvals
+        "Term": params.index,
+        "Coefficient (β)": params.values,
+        "Odds Ratio": np.exp(params.values),
+        "CI 2.5%": np.exp(conf[0].values),
+        "CI 97.5%": np.exp(conf[1].values),
+        "p-value": pvals.values,
     }).round(4)
-    odds_table["Significant(p<0.05)"] = odds_table["p-value"].apply(lambda p: "Yes" if p < 0.05 else "")
+    odds_table["Significant (p<0.05)"] = odds_table["p-value"].apply(lambda p: "Yes" if p < 0.05 else "")
 
-    # ML models
+    # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, stratify=y, random_state=random_state
     )
 
     models = {
-        "Logistic Regression": LogisticRegression(max_iter=1000),
+        "Logistic Regression": LogisticRegression(max_iter=2000),
         "Random Forest": RandomForestClassifier(),
         "SVM": SVC(probability=True),
-        "k-NN": KNeighborsClassifier()
+        "k-NN": KNeighborsClassifier(),
     }
 
-    probs_dict = {}
+    probs = {}
     auc_scores = {}
+
     for name, clf in models.items():
         clf.fit(X_train, y_train)
-        probs = clf.predict_proba(X_test)[:, 1]
-        probs_dict[name] = probs
-
-        fpr, tpr, _ = roc_curve(y_test, probs)
+        p = clf.predict_proba(X_test)[:, 1]
+        probs[name] = p
+        fpr, tpr, _ = roc_curve(y_test, p)
         auc_scores[name] = auc(fpr, tpr)
 
-    # ROC figure
-    roc_fig = plt.figure(figsize=(8, 6))
-    for name in models:
-        fpr, tpr, _ = roc_curve(y_test, probs_dict[name])
-        plt.plot(fpr, tpr, label=f"{name} (AUC={auc_scores[name]:.3f})", linewidth=2)
-    plt.plot([0, 1], [0, 1], linestyle="--", color="gray")
-    plt.xlabel("False Positive Rate")
-    plt.ylabel("True Positive Rate")
-    plt.title("ROC Curve Comparison")
-    plt.legend(loc="lower right")
-    plt.grid(True)
-    plt.tight_layout()
-
     # Bootstrap CI
-    def bootstrap_auc_ci(y_true, y_scores, n_bootstraps=1000, alpha=0.05):
+    def bootstrap_auc_ci(y_true, y_scores, n_bootstraps=200, alpha=0.05):
         rng = np.random.RandomState(42)
-        boot_scores = []
-        y_true = np.array(y_true)
-        y_scores = np.array(y_scores)
+        y_true = np.asarray(y_true)
+        y_scores = np.asarray(y_scores)
+        scores = []
         for _ in range(n_bootstraps):
             idx = rng.randint(0, len(y_scores), len(y_scores))
             if len(np.unique(y_true[idx])) < 2:
                 continue
             fpr, tpr, _ = roc_curve(y_true[idx], y_scores[idx])
-            boot_scores.append(auc(fpr, tpr))
-        boot_scores = np.array(boot_scores)
-        boot_scores.sort()
-        lower = boot_scores[int((alpha / 2) * len(boot_scores))]
-        upper = boot_scores[int((1 - alpha / 2) * len(boot_scores))]
-        return float(lower), float(upper)
+            scores.append(auc(fpr, tpr))
+        scores = np.array(scores)
+        scores.sort()
+        lo = scores[int((alpha / 2) * len(scores))]
+        hi = scores[int((1 - alpha / 2) * len(scores))]
+        return float(lo), float(hi)
 
     rows = []
-    ci_results = {}
     for m in auc_scores:
-        lo, hi = bootstrap_auc_ci(y_test.values, probs_dict[m])
-        ci_results[m] = (round(lo, 4), round(hi, 4))
+        lo, hi = bootstrap_auc_ci(y_test.values, probs[m], n_bootstraps=n_bootstraps)
         rows.append({
             "Model": m,
             "AUC": round(auc_scores[m], 4),
-            "95% CI Lower": ci_results[m][0],
-            "95% CI Upper": ci_results[m][1],
+            "95% CI Lower": round(lo, 4),
+            "95% CI Upper": round(hi, 4),
         })
     auc_df = pd.DataFrame(rows).sort_values("AUC", ascending=False).reset_index(drop=True)
 
-    # DeLong (top2)
-    top = auc_df["Model"].tolist()
-    model1, model2 = top[0], top[1]
-    p_value = delong_roc_test(y_test.values, probs_dict[model1], probs_dict[model2])
+    top1, top2 = auc_df["Model"].iloc[0], auc_df["Model"].iloc[1]
+    p_value = delong_roc_test(y_test.values, probs[top1], probs[top2])
 
-    # Reports + Confusion matrices (top2)
+    # ROC figure
+    roc_fig = plt.figure(figsize=(8, 5.5))
+    for name in models:
+        fpr, tpr, _ = roc_curve(y_test, probs[name])
+        plt.plot(fpr, tpr, label=f"{name} (AUC={auc_scores[name]:.3f})", linewidth=2)
+    plt.plot([0, 1], [0, 1], linestyle="--", color="gray")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("ROC Curve")
+    plt.grid(True)
+    plt.legend(loc="lower right")
+    plt.tight_layout()
+
+    # Reports + confusion matrices (top2)
     reports = {}
     cm_figs = {}
-    for m in [model1, model2]:
-        y_pred = (probs_dict[m] >= 0.5).astype(int)
-        reports[m] = pd.DataFrame(classification_report(y_test, y_pred, output_dict=True)).T.round(4)
+    for m in [top1, top2]:
+        y_pred = (probs[m] >= 0.5).astype(int)
+        rep = pd.DataFrame(classification_report(y_test, y_pred, output_dict=True)).T.round(4)
+        reports[m] = rep
 
         cm = confusion_matrix(y_test, y_pred)
         fig = plt.figure(figsize=(5.2, 4.2))
-        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["No Pneumonia", "Pneumonia"])
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["No", "Yes"])
         disp.plot(values_format="d")
-        plt.title(f"Confusion Matrix: {m}")
+        plt.title(f"Confusion Matrix — {m}")
         plt.tight_layout()
         cm_figs[m] = fig
 
@@ -270,9 +266,9 @@ def run_models(df: pd.DataFrame, test_size: float, random_state: int):
         "odds_table": odds_table,
         "auc_df": auc_df,
         "roc_fig": roc_fig,
-        "top1": model1,
-        "top2": model2,
-        "p_value": p_value,
+        "top1": top1,
+        "top2": top2,
+        "delong_p": float(p_value),
         "reports": reports,
         "cm_figs": cm_figs,
     }
@@ -280,17 +276,16 @@ def run_models(df: pd.DataFrame, test_size: float, random_state: int):
 
 def build_docx_bytes(result: dict) -> bytes:
     doc = Document()
-    doc.add_heading("Pneumonia Classification Report", level=1)
-    doc.add_paragraph("Generated by Streamlit app.")
+    doc.add_heading("Pneumonia — Analysis Report", level=1)
 
     doc.add_heading("AUC Summary", level=2)
     doc.add_paragraph(result["auc_df"].to_string(index=False))
 
-    doc.add_heading("Logistic Regression Odds Ratio", level=2)
-    doc.add_paragraph(result["odds_table"].to_string())
+    doc.add_heading("Logistic Regression (Odds Ratios)", level=2)
+    doc.add_paragraph(result["odds_table"].to_string(index=False))
 
-    doc.add_heading("DeLong Test (Top 2 models)", level=2)
-    doc.add_paragraph(f"Top1: {result['top1']}, Top2: {result['top2']}, p-value={result['p_value']:.6f}")
+    doc.add_heading("DeLong Test", level=2)
+    doc.add_paragraph(f"Top1: {result['top1']} | Top2: {result['top2']} | p-value: {result['delong_p']:.6f}")
 
     bio = io.BytesIO()
     doc.save(bio)
@@ -298,31 +293,31 @@ def build_docx_bytes(result: dict) -> bytes:
     return bio.getvalue()
 
 
-# ======================
-# UI Components
-# ======================
-def download_table_block(df: pd.DataFrame, base_name: str, title: str = ""):
-    colA, colB = st.columns(2)
-    with colA:
+# =========================================================
+# UI helpers
+# =========================================================
+def download_table(df: pd.DataFrame, base_name: str, title: str = ""):
+    c1, c2 = st.columns([1, 1])
+    with c1:
         st.download_button(
-            "⬇️ Tải bảng (Excel)",
+            "Download Excel",
             data=df_to_excel_bytes({base_name: df}),
             file_name=f"{base_name}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
-    with colB:
+    with c2:
         st.download_button(
-            "⬇️ Tải bảng (PNG)",
+            "Download PNG",
             data=df_to_png_bytes(df, title=title),
             file_name=f"{base_name}.png",
             mime="image/png",
             use_container_width=True
         )
 
-def download_figure_block(fig: plt.Figure, base_name: str):
+def download_figure(fig: plt.Figure, base_name: str):
     st.download_button(
-        "⬇️ Tải hình (PNG)",
+        "Download PNG",
         data=fig_to_png_bytes(fig),
         file_name=f"{base_name}.png",
         mime="image/png",
@@ -330,229 +325,236 @@ def download_figure_block(fig: plt.Figure, base_name: str):
     )
 
 
-# ======================
-# App State: load data
-# ======================
-st.title("🫁 Pneumonia – Data, EDA, Modeling")
-
+# =========================================================
+# Sidebar (compact + professional)
+# =========================================================
 with st.sidebar:
-    st.header("📁 Dữ liệu")
-    st.caption("Bạn có thể upload CSV hoặc Excel. Có sẵn form mẫu Excel để nhập.")
+    st.markdown("### Navigation")
+    section = st.selectbox(
+        "Section",
+        ["Data", "Explore (EDA)", "Logistic (OR)", "Model Comparison", "Reports", "Export"],
+        label_visibility="collapsed"
+    )
 
-    template_bytes = make_template_excel_bytes()
+    st.divider()
+
+    st.markdown("### Data")
     st.download_button(
-        "📄 Tải form mẫu Excel",
-        data=template_bytes,
+        "Download Excel template",
+        data=make_template_excel_bytes(),
         file_name="pneumonia_template.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
-    up = st.file_uploader("Upload dữ liệu (CSV/XLSX)", type=["csv", "xlsx"])
+    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx"], label_visibility="visible")
 
-    st.divider()
-    st.header("🧭 Menu")
-    menu = st.radio(
-        "Chọn chức năng",
-        [
-            "1) Nạp dữ liệu",
-            "2) Khám phá dữ liệu (EDA)",
-            "3) Hồi quy Logistic (Odds Ratio)",
-            "4) So sánh mô hình (AUC/ROC/DeLong)",
-            "5) Confusion matrix & Report (Top 2)",
-            "6) Xuất báo cáo (Word/Excel)"
-        ],
-        label_visibility="collapsed"
-    )
+    with st.expander("Model settings", expanded=False):
+        test_size = st.slider("Test size", 0.1, 0.5, 0.3, 0.05)
+        random_state = st.number_input("Random state", value=42, step=1)
+        n_bootstraps = st.slider("Bootstrap iterations (AUC CI)", 100, 500, 200, 50)
 
-    st.divider()
-    st.header("⚙️ Cài đặt mô hình")
-    test_size = st.slider("Test size", 0.1, 0.5, 0.3, 0.05)
-    random_state = st.number_input("Random state", value=42, step=1)
+    st.caption("Tip: Keep the template columns unchanged.")
 
 
-def load_dataframe(uploaded_file):
-    if uploaded_file is None:
+# =========================================================
+# Load data
+# =========================================================
+def load_dataframe(file):
+    if file is None:
         return None
-    name = uploaded_file.name.lower()
+    name = file.name.lower()
     if name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
+        df = pd.read_csv(file)
     else:
-        # excel
-        df = pd.read_excel(uploaded_file)
-    df = standardize_columns(df)
-    return df
+        df = pd.read_excel(file)
+    return standardize_columns(df)
+
+df = load_dataframe(uploaded)
 
 
-df = load_dataframe(up)
+# =========================================================
+# Header
+# =========================================================
+st.title("🫁 Pneumonia Analytics")
+st.caption("Upload data, explore EDA, run logistic regression and compare ML models.")
 
 
-# ======================
-# Menu: 1) Load data
-# ======================
-if menu == "1) Nạp dữ liệu":
-    st.subheader("1) Nạp dữ liệu")
-
+# =========================================================
+# Content per section
+# =========================================================
+if section == "Data":
+    st.subheader("Data")
     if df is None:
-        st.info("⬅️ Hãy upload file CSV/XLSX ở sidebar. Hoặc tải form mẫu Excel, nhập dữ liệu rồi upload lại.")
+        st.info("Upload a CSV/XLSX file from the sidebar to get started.")
         st.stop()
 
-    st.success(f"Đã nạp dữ liệu: {up.name} | Số dòng: {df.shape[0]} | Số cột: {df.shape[1]}")
-    st.write("Yêu cầu cột:", REQUIRED_COLS)
+    left, right = st.columns([2, 1])
+    with left:
+        st.markdown("#### Preview")
+        st.dataframe(df.head(30), use_container_width=True)
+        download_table(df.head(200).reset_index(drop=True), base_name="data_preview", title="Data Preview (first rows)")
+    with right:
+        st.markdown("#### Quick checks")
+        info = pd.DataFrame({
+            "Rows": [df.shape[0]],
+            "Columns": [df.shape[1]],
+            "Missing values": [int(df.isna().sum().sum())],
+            "Duplicate rows": [int(df.duplicated().sum())],
+        })
+        st.dataframe(info, use_container_width=True)
+        try:
+            validate_df(df)
+            st.success("Dataset is valid for modeling.")
+        except Exception as e:
+            st.error(str(e))
 
-    st.dataframe(df.head(30), use_container_width=True)
-    download_table_block(df, base_name="data_preview", title="Data Preview (top rows)")
+elif section == "Explore (EDA)":
+    st.subheader("Explore (EDA)")
+    if df is None:
+        st.info("Upload a CSV/XLSX file from the sidebar to get started.")
+        st.stop()
 
+    tab1, tab2, tab3 = st.tabs(["Summary", "Distributions", "Correlations"])
+
+    with tab1:
+        st.markdown("#### Descriptive statistics")
+        desc = df[["CRP", "WBC", "SpO2", "Temperature"]].describe().T.round(4).reset_index(names="Feature")
+        st.dataframe(desc, use_container_width=True)
+        download_table(desc, "eda_descriptive_stats", "Descriptive Statistics")
+
+        st.markdown("#### Missing values by column")
+        miss = df.isna().sum().reset_index()
+        miss.columns = ["Column", "Missing"]
+        st.dataframe(miss, use_container_width=True)
+        download_table(miss, "eda_missing_by_column", "Missing Values by Column")
+
+    with tab2:
+        c1, c2 = st.columns(2)
+        with c1:
+            fig = plt.figure(figsize=(6.2, 4.2))
+            ax = fig.add_subplot(111)
+            df["Pneumonia"].value_counts(dropna=False).sort_index().plot(kind="bar", ax=ax)
+            ax.set_title("Class distribution (Pneumonia)")
+            ax.set_xlabel("Pneumonia")
+            ax.set_ylabel("Count")
+            plt.tight_layout()
+            st.pyplot(fig, clear_figure=False)
+            download_figure(fig, "eda_class_distribution")
+        with c2:
+            feature = st.selectbox("Feature", ["CRP", "WBC", "SpO2", "Temperature"])
+            fig2 = plt.figure(figsize=(6.2, 4.2))
+            ax2 = fig2.add_subplot(111)
+            sns.histplot(data=df, x=feature, hue="Pneumonia", kde=True, ax=ax2)
+            ax2.set_title(f"Distribution — {feature}")
+            plt.tight_layout()
+            st.pyplot(fig2, clear_figure=False)
+            download_figure(fig2, f"eda_hist_{feature}".lower())
+
+    with tab3:
+        corr = df[["CRP", "WBC", "SpO2", "Temperature", "Pneumonia"]].corr(numeric_only=True).round(4)
+        fig3 = plt.figure(figsize=(7, 5))
+        ax3 = fig3.add_subplot(111)
+        sns.heatmap(corr, annot=True, fmt=".2f", ax=ax3)
+        ax3.set_title("Correlation heatmap")
+        plt.tight_layout()
+        st.pyplot(fig3, clear_figure=False)
+        download_figure(fig3, "eda_correlation_heatmap")
+
+        corr_table = corr.reset_index(names="Feature")
+        st.dataframe(corr_table, use_container_width=True)
+        download_table(corr_table, "eda_correlation_table", "Correlation Table")
+
+elif section in ["Logistic (OR)", "Model Comparison", "Reports", "Export"]:
+    if df is None:
+        st.info("Upload a CSV/XLSX file from the sidebar to get started.")
+        st.stop()
     try:
         validate_df(df)
-        st.success("✅ Dữ liệu hợp lệ để chạy mô hình.")
     except Exception as e:
-        st.error(f"❌ Dữ liệu chưa hợp lệ: {e}")
-
-
-# ======================
-# Menu: 2) EDA
-# ======================
-elif menu == "2) Khám phá dữ liệu (EDA)":
-    st.subheader("2) Khám phá dữ liệu (EDA)")
-    if df is None:
-        st.info("⬅️ Upload dữ liệu trước.")
+        st.error(str(e))
         st.stop()
 
-    # Basic checks
-    st.markdown("### Tổng quan")
-    overview = pd.DataFrame({
-        "Rows": [df.shape[0]],
-        "Columns": [df.shape[1]],
-        "Missing values (total)": [int(df.isna().sum().sum())],
-        "Duplicate rows": [int(df.duplicated().sum())]
-    })
-    st.dataframe(overview, use_container_width=True)
-    download_table_block(overview, base_name="eda_overview", title="EDA Overview")
-
-    st.markdown("### Thống kê mô tả")
-    desc = df[["CRP", "WBC", "SpO2", "Temperature"]].describe().T.round(4).reset_index(names="Feature")
-    st.dataframe(desc, use_container_width=True)
-    download_table_block(desc, base_name="eda_describe", title="Descriptive Statistics")
-
-    st.markdown("### Missing theo cột")
-    miss = df.isna().sum().reset_index()
-    miss.columns = ["Column", "Missing"]
-    st.dataframe(miss, use_container_width=True)
-    download_table_block(miss, base_name="eda_missing", title="Missing per column")
-
-    st.markdown("### Phân bố theo Pneumonia")
-    fig1 = plt.figure(figsize=(6.5, 4.0))
-    ax = fig1.add_subplot(111)
-    df["Pneumonia"].value_counts(dropna=False).sort_index().plot(kind="bar", ax=ax)
-    ax.set_title("Class distribution (Pneumonia)")
-    ax.set_xlabel("Pneumonia")
-    ax.set_ylabel("Count")
-    plt.tight_layout()
-    st.pyplot(fig1, clear_figure=False)
-    download_figure_block(fig1, "eda_class_distribution")
-
-    st.markdown("### Correlation heatmap")
-    corr = df[["CRP", "WBC", "SpO2", "Temperature", "Pneumonia"]].corr(numeric_only=True).round(4)
-    fig2 = plt.figure(figsize=(7, 5))
-    ax2 = fig2.add_subplot(111)
-    sns.heatmap(corr, annot=True, fmt=".2f", ax=ax2)
-    ax2.set_title("Correlation heatmap")
-    plt.tight_layout()
-    st.pyplot(fig2, clear_figure=False)
-    download_figure_block(fig2, "eda_corr_heatmap")
-    st.dataframe(corr, use_container_width=True)
-    download_table_block(corr.reset_index(names="Feature"), base_name="eda_corr_table", title="Correlation Table")
-
-
-# ======================
-# Menu: 3-6 need model results
-# ======================
-else:
-    if df is None:
-        st.info("⬅️ Upload dữ liệu trước.")
+    st.markdown("#### Run analysis")
+    run = st.button("▶ Run analysis", type="primary")
+    if not run:
+        st.info("Click **Run analysis** to compute results (fast on small datasets).")
         st.stop()
 
-    try:
-        validate_df(df)
-    except Exception as e:
-        st.error(f"❌ Dữ liệu chưa hợp lệ để chạy mô hình: {e}")
-        st.stop()
+    with st.spinner("Running models..."):
+        result = run_models(df, test_size=float(test_size), random_state=int(random_state), n_bootstraps=int(n_bootstraps))
 
-    with st.spinner("Đang chạy mô hình..."):
-        result = run_models(df, test_size=float(test_size), random_state=int(random_state))
-
-    # 3) Logistic OR
-    if menu == "3) Hồi quy Logistic (Odds Ratio)":
-        st.subheader("3) Hồi quy Logistic (Odds Ratio)")
+    if section == "Logistic (OR)":
+        st.subheader("Logistic Regression — Odds Ratios")
         st.dataframe(result["odds_table"], use_container_width=True)
-        download_table_block(result["odds_table"].reset_index(names="Term"), base_name="logistic_odds_ratio", title="Logistic Odds Ratio")
+        download_table(result["odds_table"], "logistic_odds_ratios", "Logistic Regression — Odds Ratios")
 
-    # 4) ROC / AUC / DeLong
-    elif menu == "4) So sánh mô hình (AUC/ROC/DeLong)":
-        st.subheader("4) So sánh mô hình (AUC/ROC/DeLong)")
+    elif section == "Model Comparison":
+        st.subheader("Model Comparison")
+        c1, c2 = st.columns([1.2, 1])
+        with c1:
+            st.markdown("#### AUC with 95% CI")
+            st.dataframe(result["auc_df"], use_container_width=True)
+            download_table(result["auc_df"], "auc_summary", "AUC Summary")
+        with c2:
+            st.markdown("#### DeLong test (Top 2)")
+            delong_df = pd.DataFrame([{
+                "Top 1": result["top1"],
+                "Top 2": result["top2"],
+                "p-value": round(result["delong_p"], 6)
+            }])
+            st.dataframe(delong_df, use_container_width=True)
+            download_table(delong_df, "delong_test", "DeLong Test")
 
-        st.markdown("### AUC + 95% CI")
-        st.dataframe(result["auc_df"], use_container_width=True)
-        download_table_block(result["auc_df"], base_name="auc_summary", title="AUC Summary")
-
-        st.markdown("### ROC Curve")
+        st.markdown("#### ROC curve")
         st.pyplot(result["roc_fig"], clear_figure=False)
-        download_figure_block(result["roc_fig"], "roc_curve")
+        download_figure(result["roc_fig"], "roc_curve")
 
-        st.markdown("### DeLong test (Top 2)")
-        delong_df = pd.DataFrame([{
-            "Top 1": result["top1"],
-            "Top 2": result["top2"],
-            "p-value": round(result["p_value"], 6)
-        }])
-        st.dataframe(delong_df, use_container_width=True)
-        download_table_block(delong_df, base_name="delong_test", title="DeLong Test")
-
-    # 5) Confusion matrix & report
-    elif menu == "5) Confusion matrix & Report (Top 2)":
-        st.subheader("5) Confusion matrix & Report (Top 2)")
-
+    elif section == "Reports":
+        st.subheader("Reports (Top 2 models)")
         for m in [result["top1"], result["top2"]]:
             st.markdown(f"### {m}")
+            left, right = st.columns([1.2, 1])
+            with left:
+                st.markdown("**Classification report**")
+                rep = result["reports"][m]
+                st.dataframe(rep, use_container_width=True)
+                download_table(rep.reset_index(names="Metric"), f"report_{m}".replace(" ", "_").lower(), f"Classification Report — {m}")
+            with right:
+                st.markdown("**Confusion matrix**")
+                fig_cm = result["cm_figs"][m]
+                st.pyplot(fig_cm, clear_figure=False)
+                download_figure(fig_cm, f"confusion_matrix_{m}".replace(" ", "_").lower())
 
-            st.markdown("**Classification report**")
-            rep = result["reports"][m]
-            st.dataframe(rep, use_container_width=True)
-            download_table_block(rep.reset_index(names="Metric"), base_name=f"classification_report_{m}".replace(" ", "_"), title=f"Classification report - {m}")
+    elif section == "Export":
+        st.subheader("Export")
+        st.markdown("Download a complete report package.")
 
-            st.markdown("**Confusion matrix**")
-            fig_cm = result["cm_figs"][m]
-            st.pyplot(fig_cm, clear_figure=False)
-            download_figure_block(fig_cm, f"confusion_matrix_{m}".replace(" ", "_"))
-
-    # 6) Export report
-    elif menu == "6) Xuất báo cáo (Word/Excel)":
-        st.subheader("6) Xuất báo cáo (Word/Excel)")
-
-        st.markdown("### Export Excel (nhiều sheet)")
         excel_bytes = df_to_excel_bytes({
             "data": result["df"],
             "auc_summary": result["auc_df"],
-            "odds_ratio": result["odds_table"].reset_index(names="Term"),
-            "delong": pd.DataFrame([{
-                "Top 1": result["top1"], "Top 2": result["top2"], "p-value": result["p_value"]
-            }]),
+            "odds_ratios": result["odds_table"],
+            "delong": pd.DataFrame([{"Top 1": result["top1"], "Top 2": result["top2"], "p-value": result["delong_p"]}]),
         })
         st.download_button(
-            "⬇️ Tải báo cáo Excel",
+            "Download Excel report",
             data=excel_bytes,
-            file_name="Pneumonia_Report.xlsx",
+            file_name="pneumonia_report.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
 
-        st.markdown("### Export Word")
         docx_bytes = build_docx_bytes(result)
         st.download_button(
-            "⬇️ Tải báo cáo Word",
+            "Download Word report",
             data=docx_bytes,
-            file_name="Pneumonia_Report.docx",
+            file_name="pneumonia_report.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
+
+# =========================================================
+# Footer note (clean)
+# =========================================================
+st.caption("Built with Streamlit • Upload your own dataset using the template for best results.")
