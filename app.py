@@ -457,12 +457,21 @@ def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
         "CI 97.5%": conf[1].values,
     })
     coef_df["p-value"] = coef_df["p_raw"].apply(format_p_value)
-    coef_df["Significant (p<0.05)"] = coef_df["p_raw"].apply(lambda p: "Yes" if float(p) < 0.05 else "")
+    coef_df["Significant (p<0.05)"] = coef_df["p_raw"].apply(lambda p: "Yes" if float(p) < 0.05 else "No")
     coef_df = coef_df.drop(columns=["p_raw"])
     for col in ["Coefficient (B)", "Std. Error", "t", "CI 2.5%", "CI 97.5%"]:
         coef_df[col] = pd.to_numeric(coef_df[col], errors="coerce").round(4)
     coef_df = coef_df[["Term","Coefficient (B)","Std. Error","t","CI 2.5%","CI 97.5%","p-value","Significant (p<0.05)"]]
+    def _clean_term(s: str) -> str:
+    # Convert Q("CRP") -> CRP
+    if isinstance(s, str) and s.startswith('Q("') and s.endswith('")'):
+        return s[3:-2]
+    return s
 
+    coef_df["Term"] = coef_df["Term"].apply(_clean_term)
+    anova_df["Source"] = anova_df["Source"].apply(_clean_term)
+
+    
     # ANOVA
     anova_df = anova_lm(model, typ=1).reset_index().rename(columns={"index":"Source"})
     anova_df = anova_df.rename(columns={"df":"df","sum_sq":"Sum Sq","mean_sq":"Mean Sq","F":"F","PR(>F)":"p_raw"})
@@ -472,6 +481,16 @@ def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
     for col in ["Sum Sq","Mean Sq","F"]:
         if col in anova_df.columns:
             anova_df[col] = pd.to_numeric(anova_df[col], errors="coerce").round(4)
+    def _clean_term(s: str) -> str:
+    # Convert Q("CRP") -> CRP
+    if isinstance(s, str) and s.startswith('Q("') and s.endswith('")'):
+        return s[3:-2]
+    return s
+
+    coef_df["Term"] = coef_df["Term"].apply(_clean_term)
+    anova_df["Source"] = anova_df["Source"].apply(_clean_term)
+    if "p-value" in anova_df.columns:
+    anova_df["p-value"] = anova_df["p-value"].where(anova_df["p-value"].notna(), None)
 
     # Fit metrics
     metrics = pd.DataFrame([{
