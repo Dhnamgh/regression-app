@@ -27,18 +27,24 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
+st.markdown("""
+<style>
+/* ===== Sidebar menu: button style (no radio circle) ===== */
 
-# =========================================================
-# CSS: Blue sidebar + "button-like" radio
-# =========================================================
-/* ===== Sidebar menu: hide radio circle, make full button ===== */
+section[data-testid="stSidebar"]{
+  background: linear-gradient(180deg, #0B3A66 0%, #0A2D4E 100%);
+}
 
-/* Hide the native radio control */
+section[data-testid="stSidebar"] *{
+  color: #ffffff !important;
+}
+
+/* Hide radio circle */
 section[data-testid="stSidebar"] div[role="radiogroup"] input[type="radio"]{
   display: none !important;
 }
 
-/* Make each option look like a full button */
+/* Menu buttons */
 section[data-testid="stSidebar"] div[role="radiogroup"] label{
   width: 100%;
   border: 1px solid rgba(255,255,255,0.22);
@@ -46,9 +52,29 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label{
   border-radius: 14px;
   padding: 11px 12px;
   margin: 0px !important;
-  transition: all 120ms ease-in-out;
   cursor: pointer;
+  transition: all 120ms ease-in-out;
 }
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label:hover{
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(255,255,255,0.38);
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked){
+  background: rgba(255,255,255,0.20);
+  border-color: rgba(255,255,255,0.60);
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"]{
+  gap: 10px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# =========================================================
+# CSS: Blue sidebar + "button-like" radio
+# =========================================================
 
 /* Hover state */
 section[data-testid="stSidebar"] div[role="radiogroup"] label:hover{
