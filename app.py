@@ -76,6 +76,26 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked)
 section[data-testid="stSidebar"] div[role="radiogroup"]{
   gap: 10px;
 }
+/* ===== Sidebar action buttons same style as menu ===== */
+
+/* Download / normal buttons */
+section[data-testid="stSidebar"] .stButton button,
+section[data-testid="stSidebar"] .stDownloadButton button{
+  width: 100%;
+  background: rgba(255,255,255,0.10) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255,255,255,0.30) !important;
+  border-radius: 14px !important;
+  font-weight: 600 !important;
+  padding: 10px 12px !important;
+}
+
+/* Hover */
+section[data-testid="stSidebar"] .stButton button:hover,
+section[data-testid="stSidebar"] .stDownloadButton button:hover{
+  background: rgba(255,255,255,0.18) !important;
+  bo
+
 </style>
 """, unsafe_allow_html=True)
 
