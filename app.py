@@ -562,7 +562,7 @@ def build_docx_classification(result: dict) -> bytes:
     doc.add_heading("AUC Summary", level=2)
     doc.add_paragraph(result["auc_df"].to_string(index=False))
 
-    doc.add_heading("Logistic Regression (Odds Ratios)", level=2)
+    doc.add_heading("Variables in the Equation", level=2)
     doc.add_paragraph(result["odds_table"].to_string(index=False))
 
     doc.add_heading("DeLong Test", level=2)
@@ -790,7 +790,7 @@ elif module == "Modeling":
                 n_bootstraps=int(n_bootstraps),
             )
 
-        st.markdown("### Logistic regression (Odds Ratios)")
+        st.markdown("### Variables in the Equation")
         st.dataframe(cls_result["odds_table"], use_container_width=True)
         download_table_block(cls_result["odds_table"], "logistic_odds_ratios", "Odds Ratios")
 
