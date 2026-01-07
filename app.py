@@ -507,10 +507,9 @@ def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
         if col in anova_df.columns:
             anova_df[col] = pd.to_numeric(anova_df[col], errors="coerce").round(4)
 
-    # Replace NaN → None (SPSS-style)
-    if "p-value" in anova_df.columns:
-        anova_df["p-value"] = anova_df["p-value"].astype(object)
-        anova_df["p-value"] = anova_df["p-value"].where(anova_df["p-value"].notna(), None)
+    # Replace NaN -> None (SPSS-style)  ✅ apply to the whole ANOVA table
+    anova_df = anova_df.astype(object).where(pd.notna(anova_df), None)
+
 
     # =========================
     # Model fit metrics
