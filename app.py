@@ -73,13 +73,6 @@ section[data-testid="stSidebar"] div[role="radiogroup"]{
 """, unsafe_allow_html=True)
 
 # =========================================================
-# CSS: Blue sidebar + "button-like" radio
-# =========================================================
-
-""", unsafe_allow_html=True)
-
-
-# =========================================================
 # Utilities: downloads
 # =========================================================
 def df_to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
