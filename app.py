@@ -89,12 +89,14 @@ section[data-testid="stSidebar"] .stDownloadButton button{
   font-weight: 600 !important;
   padding: 10px 12px !important;
 }
-
 /* Hover */
 section[data-testid="stSidebar"] .stButton button:hover,
 section[data-testid="stSidebar"] .stDownloadButton button:hover{
   background: rgba(255,255,255,0.18) !important;
-  bo
+  border-color: rgba(255,255,255,0.55) !important;
+  transform: translateY(-1px);
+}
+
 /* ===== FORCE file uploader to match sidebar style (remove white card) ===== */
 
 /* Apply to dropzone + all nested containers */
