@@ -432,21 +432,28 @@ def q(name: str) -> str:
 def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
     data = df[[target] + features].dropna().copy()
 
-    # ensure numeric
+    # Ensure numeric
     data[target] = pd.to_numeric(data[target], errors="coerce")
     for c in features:
         data[c] = pd.to_numeric(data[c], errors="coerce")
     data = data.dropna()
 
     if data.shape[0] < max(10, len(features) + 3):
-        raise ValueError("Not enough rows after cleaning. Please check missing/non-numeric values.")
+        raise ValueError("Not enough rows after cleaning. Please check missing or non-numeric values.")
 
-    # Fit with formula -> has design_info -> anova_lm works
-    formula = f"{q(target)} ~ " + " + ".join([q(c) for c in features])
+    # Build formula (for ANOVA compatibility)
+    def q(name: str) -> str:
+        return f'Q("{name}")'
+
+    formula = f'{q(target)} ~ ' + " + ".join(q(c) for c in features)
+
     model = smf.ols(formula=formula, data=data).fit()
 
-    # Coef table
+    # =========================
+    # Coefficients table
+    # =========================
     conf = model.conf_int()
+
     coef_df = pd.DataFrame({
         "Term": model.params.index,
         "Coefficient (B)": model.params.values,
@@ -456,69 +463,86 @@ def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
         "CI 2.5%": conf[0].values,
         "CI 97.5%": conf[1].values,
     })
-    coef_df["p-value"] = coef_df["p_raw"].apply(format_p_value)
-    coef_df["Significant (p<0.05)"] = coef_df["p_raw"].apply(lambda p: "Yes" if float(p) < 0.05 else "No")
-    coef_df = coef_df.drop(columns=["p_raw"])
-    for col in ["Coefficient (B)", "Std. Error", "t", "CI 2.5%", "CI 97.5%"]:
-        coef_df[col] = pd.to_numeric(coef_df[col], errors="coerce").round(4)
-    coef_df = coef_df[["Term","Coefficient (B)","Std. Error","t","CI 2.5%","CI 97.5%","p-value","Significant (p<0.05)"]]
+
+    # Clean Q("var") → var
     def _clean_term(s: str) -> str:
-    # Convert Q("CRP") -> CRP
         if isinstance(s, str) and s.startswith('Q("') and s.endswith('")'):
             return s[3:-2]
         return s
 
     coef_df["Term"] = coef_df["Term"].apply(_clean_term)
+
+    coef_df["p-value"] = coef_df["p_raw"].apply(format_p_value)
+    coef_df["Significant (p<0.05)"] = coef_df["p_raw"].apply(
+        lambda p: "Yes" if float(p) < 0.05 else "No"
+    )
+    coef_df = coef_df.drop(columns=["p_raw"])
+
+    for col in ["Coefficient (B)", "Std. Error", "t", "CI 2.5%", "CI 97.5%"]:
+        coef_df[col] = pd.to_numeric(coef_df[col], errors="coerce").round(4)
+
+    coef_df = coef_df[
+        ["Term", "Coefficient (B)", "Std. Error", "t", "CI 2.5%", "CI 97.5%", "p-value", "Significant (p<0.05)"]
+    ]
+
+    # =========================
+    # ANOVA table
+    # =========================
+    anova_df = anova_lm(model, typ=1).reset_index().rename(columns={"index": "Source"})
     anova_df["Source"] = anova_df["Source"].apply(_clean_term)
 
-    
-    # ANOVA
-    anova_df = anova_lm(model, typ=1).reset_index().rename(columns={"index":"Source"})
-    anova_df = anova_df.rename(columns={"df":"df","sum_sq":"Sum Sq","mean_sq":"Mean Sq","F":"F","PR(>F)":"p_raw"})
+    anova_df = anova_df.rename(columns={
+        "df": "df",
+        "sum_sq": "Sum Sq",
+        "mean_sq": "Mean Sq",
+        "F": "F",
+        "PR(>F)": "p_raw"
+    })
+
     if "p_raw" in anova_df.columns:
         anova_df["p-value"] = anova_df["p_raw"].apply(format_p_value)
         anova_df = anova_df.drop(columns=["p_raw"])
-    for col in ["Sum Sq","Mean Sq","F"]:
+
+    for col in ["Sum Sq", "Mean Sq", "F"]:
         if col in anova_df.columns:
             anova_df[col] = pd.to_numeric(anova_df[col], errors="coerce").round(4)
-    def _clean_term(s: str) -> str:
-    # Convert Q("CRP") -> CRP
-    if isinstance(s, str) and s.startswith('Q("') and s.endswith('")'):
-        return s[3:-2]
-    return s
 
-    coef_df["Term"] = coef_df["Term"].apply(_clean_term)
-    anova_df["Source"] = anova_df["Source"].apply(_clean_term)
-    if "p-value" in anova_df.columns:
-    anova_df["p-value"] = anova_df["p-value"].where(anova_df["p-value"].notna(), None)
+    # Replace NaN → None (SPSS-style)
+    anova_df = anova_df.replace({np.nan: None})
 
-    # Fit metrics
+    # =========================
+    # Model fit metrics
+    # =========================
     metrics = pd.DataFrame([{
         "N": int(model.nobs),
         "R-squared": round(float(model.rsquared), 4),
         "Adj. R-squared": round(float(model.rsquared_adj), 4),
         "AIC": round(float(model.aic), 4),
         "BIC": round(float(model.bic), 4),
-        "F-statistic": round(float(model.fvalue), 4) if model.fvalue is not None else np.nan,
-        "F p-value": format_p_value(float(model.f_pvalue)) if model.f_pvalue is not None else "",
+        "F-statistic": round(float(model.fvalue), 4) if model.fvalue is not None else None,
+        "F p-value": format_p_value(float(model.f_pvalue)) if model.f_pvalue is not None else None,
     }])
 
-    # For diagnostics
+    # =========================
+    # Diagnostics
+    # =========================
     resid = model.resid
     fitted = model.fittedvalues
 
-    # VIF (use raw numeric X)
-    X = data[features].copy()
+    # VIF
+    X = data[features]
     X_sm = sm.add_constant(X)
     vif_rows = []
     for i, col in enumerate(X_sm.columns):
         if col == "const":
             continue
-        vif_rows.append({"Variable": col, "VIF": float(variance_inflation_factor(X_sm.values, i))})
+        vif_rows.append({
+            "Variable": col,
+            "VIF": round(float(variance_inflation_factor(X_sm.values, i)), 4)
+        })
     vif_df = pd.DataFrame(vif_rows).sort_values("VIF", ascending=False).reset_index(drop=True)
-    vif_df["VIF"] = vif_df["VIF"].round(4)
 
-    # Normality test
+    # Normality
     s_stat, s_p = shapiro(resid)
     shapiro_df = pd.DataFrame([{
         "Test": "Shapiro-Wilk",
@@ -526,7 +550,7 @@ def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
         "p-value": format_p_value(float(s_p))
     }])
 
-    # Homoscedasticity BP
+    # Homoscedasticity
     lm, lm_p, fval, f_p = het_breuschpagan(resid, sm.add_constant(X))
     bp_df = pd.DataFrame([{
         "Test": "Breusch-Pagan",
@@ -536,9 +560,11 @@ def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
         "F p-value": format_p_value(float(f_p)),
     }])
 
-    # Durbin-Watson
-    dw = durbin_watson(resid)
-    dw_df = pd.DataFrame([{"Test": "Durbin-Watson", "Statistic": round(float(dw), 4)}])
+    # Independence
+    dw_df = pd.DataFrame([{
+        "Test": "Durbin-Watson",
+        "Statistic": round(float(durbin_watson(resid)), 4)
+    }])
 
     return {
         "model": model,
