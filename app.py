@@ -27,6 +27,16 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
+st.markdown(
+    """
+    <div class="app-header">
+        <h1>Regression Applications in Health Sciences</h1>
+        <p>Unified platform for logistic, linear, and multivariable regression modeling</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 st.markdown("""
 <style>
 /* ===== Sidebar menu: button style (no radio circle) ===== */
@@ -130,6 +140,26 @@ section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
   border: 1px solid rgba(255,255,255,0.40) !important;
   border-radius: 12px !important;
   font-weight: 600 !important;
+}
+/* ===== App Header ===== */
+.app-header {
+  background: linear-gradient(90deg, #0B3A66, #0A2D4E);
+  padding: 14px 28px;
+  margin: -1.2rem -1.2rem 1.2rem -1.2rem;
+  border-radius: 0 0 18px 18px;
+}
+
+.app-header h1 {
+  color: #ffffff;
+  font-size: 1.6rem;
+  margin: 0;
+  font-weight: 700;
+}
+
+.app-header p {
+  color: rgba(255,255,255,0.85);
+  margin: 2px 0 0 0;
+  font-size: 0.95rem;
 }
 
 </style>
@@ -634,7 +664,7 @@ with st.sidebar:
 # =========================================================
 # Main: Title (no icon card, no extra text)
 # =========================================================
-st.title("Disease Diagnosis with Logistic Regression")
+st.markdown("### Disease Diagnosis with Logistic Regression")
 # If you want English title instead, use:
 # st.title("Disease Diagnosis with Logistic Regression")
 
