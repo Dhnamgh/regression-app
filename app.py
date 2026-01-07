@@ -35,9 +35,16 @@ section[data-testid="stSidebar"]{
   background: linear-gradient(180deg, #0B3A66 0%, #0A2D4E 100%);
 }
 
-section[data-testid="stSidebar"] *{
+/* Sidebar text color (safe) */
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] span{
   color: #ffffff !important;
 }
+
 
 /* Hide radio circle */
 section[data-testid="stSidebar"] div[role="radiogroup"] input[type="radio"]{
