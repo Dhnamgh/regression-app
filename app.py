@@ -376,11 +376,12 @@ def download_figure(fig: plt.Figure, base_name: str):
 # =========================================================
 with st.sidebar:
     st.markdown("### Navigation")
-    section = st.selectbox(
-        "Section",
+    section = st.radio(
+        "Navigation",
         ["Data", "Explore (EDA)", "Logistic (OR)", "Model Comparison", "Reports", "Export"],
-        label_visibility="collapsed"
+        index=0
     )
+
 
     st.divider()
 
