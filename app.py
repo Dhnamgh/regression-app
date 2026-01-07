@@ -664,10 +664,7 @@ with st.sidebar:
 # =========================================================
 # Main: Title (no icon card, no extra text)
 # =========================================================
-st.markdown("### Disease Diagnosis with Logistic Regression")
-# If you want English title instead, use:
-# st.title("Disease Diagnosis with Logistic Regression")
-
+st.markdown("## Data")
 
 df = load_dataframe(uploaded)
 
