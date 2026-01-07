@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Regression Applications in Health Sciences</title>
+  <meta name="robots" content="noindex, noarchive">
+  <style>
+    html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+    header{padding:10px 14px;background:#0B3A66;color:#fff;font-size:15px;font-weight:700;}
+    .w{position:relative;height:calc(100% - 40px);background:#fff;}
+    iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff;}
+  </style>
+</head>
+<body>
+  <header>Regression Applications in Health Sciences</header>
+  <div class="w">
+    <iframe id="f" allow="clipboard-read; clipboard-write" referrerpolicy="no-referrer"></iframe>
+  </div>
+
+  <script>
+    (function(){
+      // base64("https://regression-myapp.streamlit.app/?embed=true")
+      var s = "aHR0cHM6Ly9yZWdyZXNzaW9uLW15YXBwLnN0cmVhbWxpdC5hcHAvP2VtYmVkPXRydWU=";
+
+      var url = atob(s);
+
+      // Optional: forward query params of wrapper to the embedded app
+      var qs = window.location.search;
+      if (qs && qs.length > 1) url += "&" + qs.substring(1);
+
+      document.getElementById("f").src = url;
+    })();
+  </script>
+</body>
+</html>
