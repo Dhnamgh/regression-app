@@ -21,6 +21,52 @@ from docx import Document
 # =========================================================
 st.set_page_config(page_title="Pneumonia Analytics", page_icon="🫁", layout="wide")
 
+st.markdown("""
+<style>
+/* App width & spacing */
+.block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
+
+/* Sidebar */
+section[data-testid="stSidebar"] { width: 320px !important; }
+section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
+section[data-testid="stSidebar"] h3 { margin-bottom: .6rem; }
+
+/* Typography */
+h1, h2, h3 { letter-spacing: -0.02em; }
+.small-muted { color: rgba(49,51,63,0.65); font-size: 0.95rem; }
+
+/* Card */
+.card {
+  border: 1px solid rgba(49,51,63,0.12);
+  background: rgba(255,255,255,0.9);
+  border-radius: 16px;
+  padding: 16px 16px 14px 16px;
+  box-shadow: 0 1px 10px rgba(0,0,0,0.04);
+}
+.card h3 { margin: 0 0 6px 0; }
+.card .meta { margin-top: 8px; color: rgba(49,51,63,0.65); font-size: 0.92rem; }
+
+/* Buttons */
+.stDownloadButton button, .stButton button {
+  border-radius: 12px !important;
+  padding: .55rem .8rem !important;
+  font-weight: 600 !important;
+}
+
+/* Dataframe container */
+[data-testid="stDataFrame"] { border-radius: 14px; overflow: hidden; border: 1px solid rgba(49,51,63,0.10); }
+
+/* Tabs spacing */
+.stTabs [data-baseweb="tab-list"] { gap: 6px; }
+.stTabs [data-baseweb="tab"] { border-radius: 12px; }
+
+/* Alerts */
+.stAlert { border-radius: 14px; }
+
+/* Remove excessive empty space above widgets */
+div[data-testid="stVerticalBlock"] > div:has(> div[data-testid="stMarkdownContainer"]) { margin-top: .2rem; }
+</style>
+""", unsafe_allow_html=True)
 
 # =========================================================
 # DeLong test (same logic)
@@ -376,8 +422,15 @@ df = load_dataframe(uploaded)
 # =========================================================
 # Header
 # =========================================================
-st.title("🫁 Pneumonia Analytics")
-st.caption("Upload data, explore EDA, run logistic regression and compare ML models.")
+st.markdown("""
+<div class="card">
+  <h1 style="margin:0;">🫁 Pneumonia Analytics</h1>
+  <div class="small-muted">Upload data, explore EDA, run logistic regression, and compare ML models.</div>
+  <div class="meta">Recommended: use the Excel template to keep column names consistent.</div>
+</div>
+""", unsafe_allow_html=True)
+st.write("")
+
 
 
 # =========================================================
@@ -476,10 +529,37 @@ elif section in ["Logistic (OR)", "Model Comparison", "Reports", "Export"]:
         st.stop()
 
     st.markdown("#### Run analysis")
-    run = st.button("▶ Run analysis", type="primary")
-    if not run:
-        st.info("Click **Run analysis** to compute results (fast on small datasets).")
-        st.stop()
+
+bar1, bar2, bar3 = st.columns([1.2, 1, 1])
+
+with bar1:
+    st.markdown(
+        '<div class="small-muted">'
+        'Compute results on demand to keep the app responsive.'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+with bar2:
+    run = st.button(
+        "▶ Run analysis",
+        type="primary",
+        use_container_width=True
+    )
+
+with bar3:
+    st.download_button(
+        "Download Excel template",
+        data=make_template_excel_bytes(),
+        file_name="pneumonia_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+if not run:
+    st.info("Click **Run analysis** to start model training and evaluation.")
+    st.stop()
+
 
     with st.spinner("Running models..."):
         result = run_models(df, test_size=float(test_size), random_state=int(random_state), n_bootstraps=int(n_bootstraps))
@@ -557,4 +637,5 @@ elif section in ["Logistic (OR)", "Model Comparison", "Reports", "Export"]:
 # =========================================================
 # Footer note (clean)
 # =========================================================
-st.caption("Built with Streamlit • Upload your own dataset using the template for best results.")
+st.caption("Upload CSV/XLSX • Use the template for best results.")
+
