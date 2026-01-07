@@ -321,15 +321,31 @@ def run_classification(df: pd.DataFrame, target: str, features: list[str],
     conf = logit.conf_int()
     pvals = logit.pvalues
 
-    odds_table = pd.DataFrame({
-        "Term": params.index,
-        "Coefficient (β)": params.values,
-        "Odds Ratio": np.exp(params.values),
-        "CI 2.5%": np.exp(conf[0].values),
-        "CI 97.5%": np.exp(conf[1].values),
-        "p-value": pvals.values,
-    }).round(4)
-    odds_table["Significant (p<0.05)"] = odds_table["p-value"].apply(lambda p: "Yes" if p < 0.05 else "")
+    # Build table (keep raw p for decisions + formatted p for display)
+odds_table = pd.DataFrame({
+    "Term": params.index,
+    "Coefficient (β)": params.values,
+    "Odds Ratio": np.exp(params.values),
+    "CI 2.5%": np.exp(conf[0].values),
+    "CI 97.5%": np.exp(conf[1].values),
+    "p_raw": pvals.values,
+})
+
+# Significant flag should use raw numeric p-values
+odds_table["Significant (p<0.05)"] = odds_table["p_raw"].apply(lambda p: "Yes" if p < 0.05 else "")
+
+# SPSS-like p-value formatting (never show 0.000)
+odds_table["p-value"] = odds_table["p_raw"].apply(format_p_value)
+odds_table = odds_table.drop(columns=["p_raw"])
+
+# Hide OR and CI for constant/intercept (SPSS style)
+is_const = odds_table["Term"].isin(["const", "Intercept"])
+odds_table.loc[is_const, ["Odds Ratio", "CI 2.5%", "CI 97.5%"]] = ""
+
+# Round numeric columns safely (keep p-value as string)
+for col in ["Coefficient (β)", "Odds Ratio", "CI 2.5%", "CI 97.5%"]:
+    odds_table[col] = pd.to_numeric(odds_table[col], errors="coerce").round(4)
+
 
     # ML models
     X_train, X_test, y_train, y_test = train_test_split(
