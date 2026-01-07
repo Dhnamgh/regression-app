@@ -76,25 +76,6 @@ section[data-testid="stSidebar"] div[role="radiogroup"]{
 # CSS: Blue sidebar + "button-like" radio
 # =========================================================
 
-/* Hover state */
-section[data-testid="stSidebar"] div[role="radiogroup"] label:hover{
-  background: rgba(255,255,255,0.14);
-  border-color: rgba(255,255,255,0.38);
-  transform: translateY(-1px);
-}
-
-/* Selected state */
-section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked){
-  background: rgba(255,255,255,0.20);
-  border-color: rgba(255,255,255,0.60);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.18);
-}
-
-/* Spacing between buttons */
-section[data-testid="stSidebar"] div[role="radiogroup"]{
-  gap: 10px;
-}
-
 """, unsafe_allow_html=True)
 
 
