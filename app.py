@@ -789,6 +789,19 @@ elif module == "Modeling":
                 random_state=int(random_state),
                 n_bootstraps=int(n_bootstraps),
             )
+        
+                # Reorder columns: p-value before Significant (SPSS style)
+        cls_result["odds_table"] = cls_result["odds_table"][
+            [
+                "Term",
+                "Coefficient (β)",
+                "Odds Ratio",
+                "CI 2.5%",
+                "CI 97.5%",
+                "p-value",
+                "Significant (p<0.05)",
+            ]
+        ]
 
         st.markdown("### Variables in the Equation")
         st.dataframe(cls_result["odds_table"], use_container_width=True)
