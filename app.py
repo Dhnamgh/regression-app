@@ -464,9 +464,9 @@ def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
     coef_df = coef_df[["Term","Coefficient (B)","Std. Error","t","CI 2.5%","CI 97.5%","p-value","Significant (p<0.05)"]]
     def _clean_term(s: str) -> str:
     # Convert Q("CRP") -> CRP
-    if isinstance(s, str) and s.startswith('Q("') and s.endswith('")'):
-        return s[3:-2]
-    return s
+        if isinstance(s, str) and s.startswith('Q("') and s.endswith('")'):
+            return s[3:-2]
+        return s
 
     coef_df["Term"] = coef_df["Term"].apply(_clean_term)
     anova_df["Source"] = anova_df["Source"].apply(_clean_term)
