@@ -95,6 +95,40 @@ section[data-testid="stSidebar"] .stButton button:hover,
 section[data-testid="stSidebar"] .stDownloadButton button:hover{
   background: rgba(255,255,255,0.18) !important;
   bo
+/* ===== FORCE file uploader to match sidebar style (remove white card) ===== */
+
+/* Apply to dropzone + all nested containers */
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"],
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] *{
+  background: transparent !important;
+}
+
+/* The visible white box is usually the first/second nested div -> force it */
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] > div,
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] > div > div{
+  background: rgba(255,255,255,0.10) !important;
+  border-radius: 14px !important;
+}
+
+/* Border for the whole dropzone */
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]{
+  border: 1px dashed rgba(255,255,255,0.35) !important;
+  border-radius: 14px !important;
+}
+
+/* Make uploader text white */
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] *{
+  color: #ffffff !important;
+}
+
+/* Browse files button inside uploader */
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
+  background: rgba(255,255,255,0.14) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255,255,255,0.40) !important;
+  border-radius: 12px !important;
+  font-weight: 600 !important;
+}
 
 </style>
 """, unsafe_allow_html=True)
