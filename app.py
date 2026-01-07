@@ -509,6 +509,11 @@ def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
 
     # Replace NaN -> None (SPSS-style)  ✅ apply to the whole ANOVA table
     anova_df = anova_df.astype(object).where(pd.notna(anova_df), None)
+    # Final cleanup: show empty cells instead of None / NaN / "nan"
+    anova_df = anova_df.replace(
+        [np.nan, "nan", "NaN", None],
+        ""
+    )
 
 
     # =========================
