@@ -2,17 +2,28 @@ import io
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import statsmodels.api as sm
 import streamlit as st
 
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_curve, auc, confusion_matrix, ConfusionMatrixDisplay
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
 
 from scipy.stats import shapiro
 from statsmodels.stats.diagnostic import het_breuschpagan
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from statsmodels.stats.stattools import durbin_watson
 from statsmodels.stats.anova import anova_lm
+
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    roc_curve, auc, confusion_matrix,
+    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+)
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression as SkLogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
 
 
 # =========================================================
@@ -25,21 +36,19 @@ st.set_page_config(
 )
 
 # =========================================================
-# CSS (Sidebar + Header + Reduce top gap)
+# CSS (fix expander white + header clipped)
 # =========================================================
 st.markdown("""
 <style>
-/* ===== Reduce top empty space ===== */
-.block-container {
-  padding-top: 1.2rem !important;
-}
+/* Reduce top empty space */
+.block-container { padding-top: 1.0rem !important; }
 
-/* ===== Sidebar background ===== */
+/* Sidebar background */
 section[data-testid="stSidebar"]{
   background: linear-gradient(180deg, #0B3A66 0%, #0A2D4E 100%);
 }
 
-/* Sidebar text (safe) */
+/* Sidebar text safe */
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3,
@@ -49,7 +58,7 @@ section[data-testid="stSidebar"] span{
   color: #ffffff !important;
 }
 
-/* Sidebar buttons style */
+/* Sidebar buttons */
 section[data-testid="stSidebar"] .stButton button,
 section[data-testid="stSidebar"] .stDownloadButton button{
   width: 100%;
@@ -57,7 +66,7 @@ section[data-testid="stSidebar"] .stDownloadButton button{
   color: #ffffff !important;
   border: 1px solid rgba(255,255,255,0.30) !important;
   border-radius: 14px !important;
-  font-weight: 600 !important;
+  font-weight: 650 !important;
   padding: 10px 12px !important;
 }
 
@@ -68,73 +77,76 @@ section[data-testid="stSidebar"] .stDownloadButton button:hover{
   transform: translateY(-1px);
 }
 
-/* Expander header in sidebar */
-section[data-testid="stSidebar"] div[data-testid="stExpander"] details summary {
+/* ===== FIX: Expander header white background ===== */
+section[data-testid="stSidebar"] div[data-testid="stExpander"] details summary{
+  background: rgba(255,255,255,0.10) !important;
+  border: 1px solid rgba(255,255,255,0.30) !important;
+  border-radius: 14px !important;
+  padding: 10px 12px !important;
   color: #ffffff !important;
-  font-weight: 700 !important;
+  font-weight: 800 !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] details[open] summary{
+  background: rgba(255,255,255,0.16) !important;
+  border-color: rgba(255,255,255,0.50) !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] details summary svg{
+  fill: #ffffff !important;
 }
 
-/* ===== FORCE file uploader to match sidebar style (remove white card) ===== */
+/* Force file uploader styling in sidebar (no white card) */
 section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"],
 section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] *{
   background: transparent !important;
 }
-
 section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]{
   border: 1px dashed rgba(255,255,255,0.35) !important;
   border-radius: 14px !important;
 }
-
 section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] > div,
 section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] > div > div{
   background: rgba(255,255,255,0.10) !important;
   border-radius: 14px !important;
 }
-
 section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] *{
   color: #ffffff !important;
 }
-
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
   background: rgba(255,255,255,0.14) !important;
   color: #ffffff !important;
   border: 1px solid rgba(255,255,255,0.40) !important;
   border-radius: 12px !important;
-  font-weight: 600 !important;
+  font-weight: 650 !important;
 }
 
-/* ===== App Header ===== */
+/* ===== Header =====
+   IMPORTANT: do NOT use negative left margin (it gets clipped by layout) */
 .app-header {
   background: linear-gradient(90deg, #0B3A66, #0A2D4E);
-  padding: 14px 28px;
-  margin: -1.2rem -1.2rem 1.0rem -1.2rem;
-  border-radius: 0 0 18px 18px;
+  padding: 16px 28px;
+  margin: 0 0 1.0rem 0;     /* no negative margin */
+  border-radius: 18px;
+  overflow: visible;
 }
 .app-header h1 {
   color: #ffffff;
-  font-size: 1.6rem;
+  font-size: 1.55rem;
   margin: 0;
-  font-weight: 800;
+  font-weight: 850;
 }
 .app-header p {
   color: rgba(255,255,255,0.85);
-  margin: 4px 0 0 0;
+  margin: 6px 0 0 0;
   font-size: 0.95rem;
-}
-
-/* Pull content closer to header */
-.app-header + div {
-  margin-top: -1.4rem !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# Header (global)
 st.markdown(
     """
     <div class="app-header">
         <h1>Regression Applications in Health Sciences</h1>
-        <p>Unified platform for logistic and multivariable linear regression, with diagnostics and exports</p>
+        <p>Logistic & multivariable linear regression with diagnostics, model comparison, and exports</p>
     </div>
     """,
     unsafe_allow_html=True
@@ -150,7 +162,7 @@ if "sub_menu" not in st.session_state:
 if "df" not in st.session_state:
     st.session_state.df = None
 if "last_results" not in st.session_state:
-    st.session_state.last_results = {}  # store outputs for Export
+    st.session_state.last_results = {}
 
 
 # =========================================================
@@ -215,7 +227,6 @@ def download_figure_block(fig: plt.Figure, base_name: str):
     )
 
 def format_p_value(p: float) -> str:
-    # SPSS-like formatting
     try:
         p = float(p)
     except Exception:
@@ -264,19 +275,27 @@ def read_uploaded_file(uploaded) -> pd.DataFrame | None:
     return None
 
 
+def show_dataset_status():
+    if st.session_state.df is None:
+        st.info("No dataset loaded yet. Please upload a CSV/XLSX file in the Data section.")
+        return
+    df = st.session_state.df
+    st.success(f"Dataset loaded: {df.shape[0]} rows × {df.shape[1]} columns")
+    with st.expander("Preview (first 20 rows)", expanded=False):
+        st.dataframe(df.head(20), use_container_width=True)
+
+
 # =========================================================
-# Modeling functions
+# Logistic regression
 # =========================================================
-def run_logistic_regression(df: pd.DataFrame, target: str, features: list[str],
-                            test_size: float = 0.25, random_state: int = 42):
+def run_logistic_or_table(df: pd.DataFrame, target: str, features: list[str]) -> pd.DataFrame:
     data = df[[target] + features].dropna().copy()
 
-    # Ensure binary target
     y_raw = data[target]
     if y_raw.nunique() != 2:
-        raise ValueError("Binary logistic regression requires a target with exactly 2 unique values.")
+        raise ValueError("Binary logistic regression requires exactly 2 unique target values.")
 
-    # Map to 0/1 if needed
+    # map to 0/1 if needed
     if set(pd.unique(y_raw)) != {0, 1}:
         classes = list(pd.unique(y_raw))
         mapping = {classes[0]: 0, classes[1]: 1}
@@ -289,9 +308,9 @@ def run_logistic_regression(df: pd.DataFrame, target: str, features: list[str],
     y = tmp[target]
     X = tmp[features]
 
-    # Statsmodels OR table
     X_sm = sm.add_constant(X)
     logit = sm.Logit(y, X_sm).fit(disp=False)
+
     params = logit.params
     conf = logit.conf_int()
     pvals = logit.pvalues
@@ -309,105 +328,215 @@ def run_logistic_regression(df: pd.DataFrame, target: str, features: list[str],
     odds_table["Significant (p<0.05)"] = odds_table["p_raw"].apply(lambda p: "Yes" if float(p) < 0.05 else "")
     odds_table = odds_table.drop(columns=["p_raw"])
 
-    # Hide OR and CI for constant (SPSS style)
+    # Hide OR & CI for const (SPSS style)
     is_const = odds_table["Term"].isin(["const", "Intercept"])
     odds_table.loc[is_const, ["Odds Ratio", "CI 2.5%", "CI 97.5%"]] = np.nan
 
-    # Round numeric columns
     for col in ["Coefficient (β)", "Odds Ratio", "CI 2.5%", "CI 97.5%"]:
         odds_table[col] = pd.to_numeric(odds_table[col], errors="coerce").round(4)
 
-    # Reorder columns: p-value before Significant
     odds_table = odds_table[
         ["Term", "Coefficient (β)", "Odds Ratio", "CI 2.5%", "CI 97.5%", "p-value", "Significant (p<0.05)"]
     ]
+    return odds_table
 
-    # Simple ROC using train/test split
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
-    logit_tt = sm.Logit(y_train, sm.add_constant(X_train)).fit(disp=False)
-    prob = logit_tt.predict(sm.add_constant(X_test))
-    fpr, tpr, _ = roc_curve(y_test, prob)
-    roc_auc = auc(fpr, tpr)
 
-    # Confusion matrix using 0.5
-    y_pred = (prob >= 0.5).astype(int)
-    cm = confusion_matrix(y_test, y_pred)
+def compare_classification_models(df: pd.DataFrame, target: str, features: list[str],
+                                 test_size: float = 0.25, random_state: int = 42):
+    data = df[[target] + features].dropna().copy()
 
-    return {
-        "model": logit,
-        "odds_table": odds_table,
-        "roc": {"fpr": fpr, "tpr": tpr, "auc": roc_auc},
-        "cm": cm,
-        "features": features,
-        "target": target,
+    y_raw = data[target]
+    if y_raw.nunique() != 2:
+        raise ValueError("Model comparison requires a binary target with 2 unique values.")
+
+    if set(pd.unique(y_raw)) != {0, 1}:
+        classes = list(pd.unique(y_raw))
+        mapping = {classes[0]: 0, classes[1]: 1}
+        y = y_raw.map(mapping).astype(int)
+    else:
+        y = y_raw.astype(int)
+
+    X = data[features].apply(pd.to_numeric, errors="coerce")
+    tmp = pd.concat([y, X], axis=1).dropna()
+    y = tmp[target].astype(int)
+    X = tmp[features]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
+
+    models = {
+        "Logistic Regression": Pipeline([("scaler", StandardScaler()), ("clf", SkLogisticRegression(max_iter=2000))]),
+        "Random Forest": RandomForestClassifier(n_estimators=300, random_state=random_state),
+        "SVM (RBF)": Pipeline([("scaler", StandardScaler()), ("clf", SVC(probability=True, random_state=random_state))]),
+        "KNN": Pipeline([("scaler", StandardScaler()), ("clf", KNeighborsClassifier(n_neighbors=7))]),
     }
 
+    rows = []
+    roc_lines = {}
+
+    for name, model in models.items():
+        model.fit(X_train, y_train)
+
+        # probabilities for ROC
+        if hasattr(model, "predict_proba"):
+            prob = model.predict_proba(X_test)[:, 1]
+        else:
+            # fallback
+            prob = model.decision_function(X_test)
+            prob = (prob - prob.min()) / (prob.max() - prob.min() + 1e-12)
+
+        pred = (prob >= 0.5).astype(int)
+
+        acc = accuracy_score(y_test, pred)
+        pre = precision_score(y_test, pred, zero_division=0)
+        rec = recall_score(y_test, pred, zero_division=0)
+        f1 = f1_score(y_test, pred, zero_division=0)
+        auc_val = roc_auc_score(y_test, prob)
+
+        fpr, tpr, _ = roc_curve(y_test, prob)
+        roc_lines[name] = (fpr, tpr, auc_val)
+
+        rows.append({
+            "Model": name,
+            "AUC": round(float(auc_val), 4),
+            "Accuracy": round(float(acc), 4),
+            "Precision": round(float(pre), 4),
+            "Recall": round(float(rec), 4),
+            "F1": round(float(f1), 4),
+        })
+
+    metrics_df = pd.DataFrame(rows).sort_values("AUC", ascending=False).reset_index(drop=True)
+
+    # Confusion matrix for top model
+    top_name = metrics_df.loc[0, "Model"]
+    top_model = models[top_name]
+    if hasattr(top_model, "predict_proba"):
+        top_prob = top_model.predict_proba(X_test)[:, 1]
+    else:
+        top_prob = top_model.decision_function(X_test)
+        top_prob = (top_prob - top_prob.min()) / (top_prob.max() - top_prob.min() + 1e-12)
+    top_pred = (top_prob >= 0.5).astype(int)
+    cm = confusion_matrix(y_test, top_pred)
+
+    return {"metrics": metrics_df, "roc_lines": roc_lines, "cm_top": cm, "top_model_name": top_name}
+
+
+# =========================================================
+# Linear regression (OLS via formula to fix design_info error)
+# =========================================================
+def q(name: str) -> str:
+    # Patsy quote helper for any column name
+    return f'Q("{name}")'
 
 def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
     data = df[[target] + features].dropna().copy()
 
-    y = pd.to_numeric(data[target], errors="coerce")
-    X = data[features].apply(pd.to_numeric, errors="coerce")
-    tmp = pd.concat([y, X], axis=1).dropna()
-    y = tmp[target]
-    X = tmp[features]
+    # ensure numeric
+    data[target] = pd.to_numeric(data[target], errors="coerce")
+    for c in features:
+        data[c] = pd.to_numeric(data[c], errors="coerce")
+    data = data.dropna()
 
-    X_sm = sm.add_constant(X)
-    ols = sm.OLS(y, X_sm).fit()
+    if data.shape[0] < max(10, len(features) + 3):
+        raise ValueError("Not enough rows after cleaning. Please check missing/non-numeric values.")
 
-    # Coefficients table
-    conf = ols.conf_int()
+    # Fit with formula -> has design_info -> anova_lm works
+    formula = f"{q(target)} ~ " + " + ".join([q(c) for c in features])
+    model = smf.ols(formula=formula, data=data).fit()
+
+    # Coef table
+    conf = model.conf_int()
     coef_df = pd.DataFrame({
-        "Term": ols.params.index,
-        "Coefficient (B)": ols.params.values,
-        "Std. Error": ols.bse.values,
-        "t": ols.tvalues.values,
-        "p_raw": ols.pvalues.values,
+        "Term": model.params.index,
+        "Coefficient (B)": model.params.values,
+        "Std. Error": model.bse.values,
+        "t": model.tvalues.values,
+        "p_raw": model.pvalues.values,
         "CI 2.5%": conf[0].values,
         "CI 97.5%": conf[1].values,
     })
     coef_df["p-value"] = coef_df["p_raw"].apply(format_p_value)
     coef_df["Significant (p<0.05)"] = coef_df["p_raw"].apply(lambda p: "Yes" if float(p) < 0.05 else "")
     coef_df = coef_df.drop(columns=["p_raw"])
-
     for col in ["Coefficient (B)", "Std. Error", "t", "CI 2.5%", "CI 97.5%"]:
         coef_df[col] = pd.to_numeric(coef_df[col], errors="coerce").round(4)
+    coef_df = coef_df[["Term","Coefficient (B)","Std. Error","t","CI 2.5%","CI 97.5%","p-value","Significant (p<0.05)"]]
 
-    coef_df = coef_df[
-        ["Term", "Coefficient (B)", "Std. Error", "t", "CI 2.5%", "CI 97.5%", "p-value", "Significant (p<0.05)"]
-    ]
-
-    # ANOVA table
-    anova_df = anova_lm(ols, typ=1).reset_index().rename(columns={"index": "Source"})
-    anova_df = anova_df.rename(columns={
-        "df": "df",
-        "sum_sq": "Sum Sq",
-        "mean_sq": "Mean Sq",
-        "F": "F",
-        "PR(>F)": "p_raw",
-    })
+    # ANOVA
+    anova_df = anova_lm(model, typ=1).reset_index().rename(columns={"index":"Source"})
+    anova_df = anova_df.rename(columns={"df":"df","sum_sq":"Sum Sq","mean_sq":"Mean Sq","F":"F","PR(>F)":"p_raw"})
     if "p_raw" in anova_df.columns:
         anova_df["p-value"] = anova_df["p_raw"].apply(format_p_value)
         anova_df = anova_df.drop(columns=["p_raw"])
-    for col in ["Sum Sq", "Mean Sq", "F"]:
+    for col in ["Sum Sq","Mean Sq","F"]:
         if col in anova_df.columns:
             anova_df[col] = pd.to_numeric(anova_df[col], errors="coerce").round(4)
 
+    # Fit metrics
     metrics = pd.DataFrame([{
-        "N": int(ols.nobs),
-        "R-squared": round(float(ols.rsquared), 4),
-        "Adj. R-squared": round(float(ols.rsquared_adj), 4),
-        "AIC": round(float(ols.aic), 4),
-        "BIC": round(float(ols.bic), 4),
-        "F-statistic": round(float(ols.fvalue), 4) if ols.fvalue is not None else np.nan,
-        "F p-value": format_p_value(float(ols.f_pvalue)) if ols.f_pvalue is not None else "",
+        "N": int(model.nobs),
+        "R-squared": round(float(model.rsquared), 4),
+        "Adj. R-squared": round(float(model.rsquared_adj), 4),
+        "AIC": round(float(model.aic), 4),
+        "BIC": round(float(model.bic), 4),
+        "F-statistic": round(float(model.fvalue), 4) if model.fvalue is not None else np.nan,
+        "F p-value": format_p_value(float(model.f_pvalue)) if model.f_pvalue is not None else "",
     }])
 
-    return {"model": ols, "coef_table": coef_df, "anova_table": anova_df, "metrics": metrics, "X": X, "y": y}
+    # For diagnostics
+    resid = model.resid
+    fitted = model.fittedvalues
+
+    # VIF (use raw numeric X)
+    X = data[features].copy()
+    X_sm = sm.add_constant(X)
+    vif_rows = []
+    for i, col in enumerate(X_sm.columns):
+        if col == "const":
+            continue
+        vif_rows.append({"Variable": col, "VIF": float(variance_inflation_factor(X_sm.values, i))})
+    vif_df = pd.DataFrame(vif_rows).sort_values("VIF", ascending=False).reset_index(drop=True)
+    vif_df["VIF"] = vif_df["VIF"].round(4)
+
+    # Normality test
+    s_stat, s_p = shapiro(resid)
+    shapiro_df = pd.DataFrame([{
+        "Test": "Shapiro-Wilk",
+        "Statistic": round(float(s_stat), 4),
+        "p-value": format_p_value(float(s_p))
+    }])
+
+    # Homoscedasticity BP
+    lm, lm_p, fval, f_p = het_breuschpagan(resid, sm.add_constant(X))
+    bp_df = pd.DataFrame([{
+        "Test": "Breusch-Pagan",
+        "LM Statistic": round(float(lm), 4),
+        "LM p-value": format_p_value(float(lm_p)),
+        "F Statistic": round(float(fval), 4),
+        "F p-value": format_p_value(float(f_p)),
+    }])
+
+    # Durbin-Watson
+    dw = durbin_watson(resid)
+    dw_df = pd.DataFrame([{"Test": "Durbin-Watson", "Statistic": round(float(dw), 4)}])
+
+    return {
+        "model": model,
+        "coef_table": coef_df,
+        "anova_table": anova_df,
+        "metrics": metrics,
+        "resid": resid,
+        "fitted": fitted,
+        "vif": vif_df,
+        "shapiro": shapiro_df,
+        "bp": bp_df,
+        "dw": dw_df
+    }
 
 
 # =========================================================
-# Sidebar navigation: Expander + Buttons
+# Sidebar navigation (Expander + Buttons)
 # =========================================================
 with st.sidebar:
     st.markdown("## Navigation")
@@ -419,9 +548,12 @@ with st.sidebar:
         if st.button("EDA", use_container_width=True):
             st.session_state.main_menu = "Logistic Regression"
             st.session_state.sub_menu = "EDA"
-        if st.button("Modeling (OR, ROC)", use_container_width=True):
+        if st.button("Modeling (OR Table)", use_container_width=True):
             st.session_state.main_menu = "Logistic Regression"
             st.session_state.sub_menu = "Modeling"
+        if st.button("Model Comparison (ML)", use_container_width=True):
+            st.session_state.main_menu = "Logistic Regression"
+            st.session_state.sub_menu = "Comparison"
         if st.button("Export", use_container_width=True):
             st.session_state.main_menu = "Logistic Regression"
             st.session_state.sub_menu = "Export"
@@ -430,15 +562,15 @@ with st.sidebar:
         if st.button("Data (Upload & Template)", key="lin_data", use_container_width=True):
             st.session_state.main_menu = "Linear Regression"
             st.session_state.sub_menu = "Data"
-        if st.button("Assumptions & Diagnostics", key="lin_diag", use_container_width=True):
-            st.session_state.main_menu = "Linear Regression"
-            st.session_state.sub_menu = "Diagnostics"
         if st.button("Modeling (OLS)", key="lin_model", use_container_width=True):
             st.session_state.main_menu = "Linear Regression"
             st.session_state.sub_menu = "Modeling"
         if st.button("ANOVA & Coefficients", key="lin_tables", use_container_width=True):
             st.session_state.main_menu = "Linear Regression"
             st.session_state.sub_menu = "Tables"
+        if st.button("Assumptions & Diagnostics", key="lin_diag", use_container_width=True):
+            st.session_state.main_menu = "Linear Regression"
+            st.session_state.sub_menu = "Diagnostics"
         if st.button("Export", key="lin_export", use_container_width=True):
             st.session_state.main_menu = "Linear Regression"
             st.session_state.sub_menu = "Export"
@@ -449,92 +581,61 @@ with st.sidebar:
 # =========================================================
 main = st.session_state.main_menu
 sub = st.session_state.sub_menu
-
-# Optional breadcrumb
 st.caption(f"Section: {main} → {sub}")
 
 # =========================================================
-# Shared: show current dataset summary if available
-# =========================================================
-def show_dataset_status():
-    if st.session_state.df is None:
-        st.info("No dataset loaded yet. Please upload a CSV/XLSX file in the Data section.")
-        return
-    df = st.session_state.df
-    st.success(f"Dataset loaded: {df.shape[0]} rows × {df.shape[1]} columns")
-    with st.expander("Preview (first 20 rows)", expanded=False):
-        st.dataframe(df.head(20), use_container_width=True)
-
-# =========================================================
-# Logistic pages
+# LOGISTIC: Data
 # =========================================================
 if main == "Logistic Regression" and sub == "Data":
     st.markdown("## Data")
 
-    st.markdown("### Templates")
     c1, c2 = st.columns([1, 2])
     with c1:
-        tmpl = make_logistic_template()
         st.download_button(
             "Download Excel template",
-            data=df_to_excel_bytes({"template": tmpl}),
+            data=df_to_excel_bytes({"template": make_logistic_template()}),
             file_name="logistic_regression_template.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
     with c2:
-        st.info("Upload a CSV/XLSX file using the uploader below. Use the template to keep column names consistent.")
+        st.info("Upload a CSV/XLSX file. Use the template to keep column names consistent.")
 
-    st.markdown("### Upload CSV/XLSX")
     uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], label_visibility="collapsed")
     df_new = read_uploaded_file(uploaded)
     if df_new is not None:
         st.session_state.df = df_new
-        st.session_state.last_results = {}  # reset old results
+        st.session_state.last_results = {}
 
     show_dataset_status()
 
+# =========================================================
+# LOGISTIC: EDA
+# =========================================================
 elif main == "Logistic Regression" and sub == "EDA":
     st.markdown("## Explore (EDA)")
     show_dataset_status()
     if st.session_state.df is not None:
         df = st.session_state.df
 
-        st.markdown("### Summary")
         desc = df.describe(include="all").transpose().reset_index().rename(columns={"index": "Column"})
+        st.markdown("### Summary")
         st.dataframe(desc, use_container_width=True)
         download_table_block(desc, "eda_summary", "EDA Summary")
 
-        st.markdown("### Missing values")
         miss = pd.DataFrame({
             "Column": df.columns,
             "Missing count": df.isna().sum().values,
             "Missing %": (df.isna().mean().values * 100).round(2),
         }).sort_values("Missing %", ascending=False).reset_index(drop=True)
+
+        st.markdown("### Missing values")
         st.dataframe(miss, use_container_width=True)
         download_table_block(miss, "eda_missing", "Missing Values")
 
-        st.markdown("### Correlation heatmap (numeric)")
-        num = df.select_dtypes(include=[np.number])
-        if num.shape[1] >= 2:
-            corr = num.corr()
-            fig, ax = plt.subplots(figsize=(8, 6))
-            im = ax.imshow(corr.values)
-            ax.set_xticks(range(len(corr.columns)))
-            ax.set_yticks(range(len(corr.columns)))
-            ax.set_xticklabels(corr.columns, rotation=45, ha="right")
-            ax.set_yticklabels(corr.columns)
-            ax.set_title("Correlation Heatmap (Numeric)")
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            st.pyplot(fig)
-            download_figure_block(fig, "eda_correlation_heatmap")
-            plt.close(fig)
-
-            st.dataframe(corr.round(4), use_container_width=True)
-            download_table_block(corr.round(4).reset_index().rename(columns={"index": "Variable"}), "eda_correlation_table", "Correlation Table")
-        else:
-            st.info("Not enough numeric columns to compute correlations.")
-
+# =========================================================
+# LOGISTIC: Modeling (OR table)
+# =========================================================
 elif main == "Logistic Regression" and sub == "Modeling":
     st.markdown("## Modeling (Logistic Regression)")
     show_dataset_status()
@@ -543,60 +644,95 @@ elif main == "Logistic Regression" and sub == "Modeling":
         df = st.session_state.df
         cols = list(df.columns)
 
-        st.markdown("### Model setup")
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            target = st.selectbox("Target (binary)", options=cols)
-        with c2:
-            candidates = [c for c in cols if c != target]
-            features = st.multiselect("Predictors", options=candidates)
+        target = st.selectbox("Target (binary)", options=cols)
+        features = st.multiselect("Predictors", options=[c for c in cols if c != target])
 
-        c3, c4 = st.columns([1, 1])
-        with c3:
-            test_size = st.slider("Test size", min_value=0.1, max_value=0.5, value=0.25, step=0.05)
-        with c4:
-            random_state = st.number_input("Random state", value=42, step=1)
-
-        run = st.button("Run Logistic Regression", type="primary", use_container_width=True)
-
+        run = st.button("Run Logistic OR Table", type="primary", use_container_width=True)
         if run:
             try:
-                res = run_logistic_regression(df, target, features, test_size=float(test_size), random_state=int(random_state))
-                st.session_state.last_results["logistic"] = res
+                odds_table = run_logistic_or_table(df, target, features)
+                st.session_state.last_results["logistic_or"] = {"odds_table": odds_table}
 
                 st.markdown("### Variables in the Equation")
-                st.dataframe(res["odds_table"], use_container_width=True)
-                download_table_block(res["odds_table"], "logistic_variables_in_equation", "Variables in the Equation")
-
-                st.markdown("### ROC Curve")
-                fig, ax = plt.subplots()
-                ax.plot(res["roc"]["fpr"], res["roc"]["tpr"])
-                ax.plot([0, 1], [0, 1], linestyle="--")
-                ax.set_xlabel("False Positive Rate")
-                ax.set_ylabel("True Positive Rate")
-                ax.set_title(f"ROC Curve (AUC = {res['roc']['auc']:.3f})")
-                st.pyplot(fig)
-                download_figure_block(fig, "logistic_roc")
-                plt.close(fig)
-
-                st.markdown("### Confusion Matrix (threshold = 0.5)")
-                fig, ax = plt.subplots()
-                disp = ConfusionMatrixDisplay(res["cm"])
-                disp.plot(ax=ax, colorbar=False)
-                ax.set_title("Confusion Matrix")
-                st.pyplot(fig)
-                download_figure_block(fig, "logistic_confusion_matrix")
-                plt.close(fig)
-
+                st.dataframe(odds_table, use_container_width=True)
+                download_table_block(odds_table, "logistic_variables_in_equation", "Variables in the Equation")
             except Exception as e:
                 st.error(f"Modeling failed: {e}")
 
-elif main == "Logistic Regression" and sub == "Export":
-    st.markdown("## Export (Logistic Regression)")
+# =========================================================
+# LOGISTIC: Comparison (restore ML comparison + ROC legend)
+# =========================================================
+elif main == "Logistic Regression" and sub == "Comparison":
+    st.markdown("## Model Comparison (Classification)")
     show_dataset_status()
 
     if st.session_state.df is not None:
-        st.markdown("### Dataset")
+        df = st.session_state.df
+        cols = list(df.columns)
+
+        st.markdown("### Setup")
+        target = st.selectbox("Target (binary)", options=cols, key="cmp_target")
+        features = st.multiselect("Predictors", options=[c for c in cols if c != target], key="cmp_features")
+
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            test_size = st.slider("Test size", 0.1, 0.5, 0.25, 0.05, key="cmp_test")
+        with c2:
+            random_state = st.number_input("Random state", value=42, step=1, key="cmp_rs")
+
+        run = st.button("Run Model Comparison", type="primary", use_container_width=True)
+
+        if run:
+            try:
+                res = compare_classification_models(
+                    df, target, features, test_size=float(test_size), random_state=int(random_state)
+                )
+                st.session_state.last_results["logistic_cmp"] = res
+
+                st.markdown("### Performance metrics")
+                st.dataframe(res["metrics"], use_container_width=True)
+                download_table_block(res["metrics"], "classification_model_comparison", "Model Comparison Metrics")
+
+                st.markdown("### ROC curves (with AUC legend)")
+                fig, ax = plt.subplots()
+                for name, (fpr, tpr, auc_val) in res["roc_lines"].items():
+                    ax.plot(fpr, tpr, label=f"{name} (AUC={auc_val:.3f})")
+                ax.plot([0, 1], [0, 1], linestyle="--", label="Chance")
+                ax.set_xlabel("False Positive Rate")
+                ax.set_ylabel("True Positive Rate")
+                ax.set_title("ROC Curves")
+                ax.legend(loc="lower right")
+                st.pyplot(fig)
+                download_figure_block(fig, "roc_model_comparison")
+                plt.close(fig)
+
+                st.info(f"Top model by AUC: {res['top_model_name']}")
+
+                st.markdown("### Confusion matrix (Top model, threshold=0.5)")
+                cm = res["cm_top"]
+                fig, ax = plt.subplots()
+                im = ax.imshow(cm)
+                ax.set_title("Confusion Matrix (Top model)")
+                ax.set_xlabel("Predicted")
+                ax.set_ylabel("Actual")
+                for (i, j), v in np.ndenumerate(cm):
+                    ax.text(j, i, str(v), ha="center", va="center")
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                st.pyplot(fig)
+                download_figure_block(fig, "confusion_matrix_top_model")
+                plt.close(fig)
+
+            except Exception as e:
+                st.error(f"Comparison failed: {e}")
+
+# =========================================================
+# LOGISTIC: Export
+# =========================================================
+elif main == "Logistic Regression" and sub == "Export":
+    st.markdown("## Export (Logistic)")
+    show_dataset_status()
+
+    if st.session_state.df is not None:
         st.download_button(
             "Download dataset as Excel",
             data=df_to_excel_bytes({"dataset": st.session_state.df}),
@@ -605,48 +741,54 @@ elif main == "Logistic Regression" and sub == "Export":
             use_container_width=True
         )
 
-    if "logistic" in st.session_state.last_results:
-        st.markdown("### Latest Logistic Regression Outputs")
-        odds = st.session_state.last_results["logistic"]["odds_table"]
+    sheets = {}
+    if "logistic_or" in st.session_state.last_results:
+        sheets["Variables_in_Equation"] = st.session_state.last_results["logistic_or"]["odds_table"]
+    if "logistic_cmp" in st.session_state.last_results:
+        sheets["Model_Comparison"] = st.session_state.last_results["logistic_cmp"]["metrics"]
+
+    if sheets:
         st.download_button(
-            "Download logistic tables (Excel)",
-            data=df_to_excel_bytes({"Variables_in_Equation": odds}),
+            "Download latest logistic outputs (Excel)",
+            data=df_to_excel_bytes(sheets),
             file_name="logistic_outputs.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
     else:
-        st.info("No logistic results yet. Run a model first.")
+        st.info("No logistic outputs yet. Run a model first.")
 
 # =========================================================
-# Linear pages
+# LINEAR: Data
 # =========================================================
 elif main == "Linear Regression" and sub == "Data":
     st.markdown("## Data (Linear Regression)")
 
-    st.markdown("### Templates")
     c1, c2 = st.columns([1, 2])
     with c1:
-        tmpl = make_linear_template()
         st.download_button(
             "Download Excel template",
-            data=df_to_excel_bytes({"template": tmpl}),
+            data=df_to_excel_bytes({"template": make_linear_template()}),
             file_name="linear_regression_template.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
     with c2:
-        st.info("Upload a CSV/XLSX file using the uploader below. The linear outcome should be numeric (continuous).")
+        st.info("Upload a CSV/XLSX file. The linear outcome must be numeric (continuous).")
 
-    st.markdown("### Upload CSV/XLSX")
-    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], label_visibility="collapsed", key="linear_upload")
+    uploaded = st.file_uploader(
+        "Upload CSV/XLSX", type=["csv", "xlsx", "xls"], label_visibility="collapsed", key="lin_upload"
+    )
     df_new = read_uploaded_file(uploaded)
     if df_new is not None:
         st.session_state.df = df_new
-        st.session_state.last_results = {}  # reset old results
+        st.session_state.last_results = {}
 
     show_dataset_status()
 
+# =========================================================
+# LINEAR: Modeling
+# =========================================================
 elif main == "Linear Regression" and sub == "Modeling":
     st.markdown("## Modeling (Multivariable Linear Regression / OLS)")
     show_dataset_status()
@@ -655,11 +797,8 @@ elif main == "Linear Regression" and sub == "Modeling":
         df = st.session_state.df
         cols = list(df.columns)
 
-        st.markdown("### Model setup")
         target = st.selectbox("Outcome (numeric)", options=cols, key="lin_target")
-
-        candidates = [c for c in cols if c != target]
-        features = st.multiselect("Predictors", options=candidates, key="lin_features")
+        features = st.multiselect("Predictors", options=[c for c in cols if c != target], key="lin_features")
 
         run = st.button("Run Linear Regression (OLS)", type="primary", use_container_width=True)
         if run:
@@ -671,10 +810,13 @@ elif main == "Linear Regression" and sub == "Modeling":
                 st.dataframe(res["metrics"], use_container_width=True)
                 download_table_block(res["metrics"], "linear_model_fit", "Model Fit")
 
-                st.success("Model fitted successfully. Use the 'ANOVA & Coefficients' and 'Assumptions & Diagnostics' sections for detailed outputs.")
+                st.success("Model fitted successfully.")
             except Exception as e:
                 st.error(f"Modeling failed: {e}")
 
+# =========================================================
+# LINEAR: Tables
+# =========================================================
 elif main == "Linear Regression" and sub == "Tables":
     st.markdown("## ANOVA & Coefficients")
     show_dataset_status()
@@ -692,6 +834,9 @@ elif main == "Linear Regression" and sub == "Tables":
         st.dataframe(res["coef_table"], use_container_width=True)
         download_table_block(res["coef_table"], "linear_coefficients", "Coefficients")
 
+# =========================================================
+# LINEAR: Diagnostics
+# =========================================================
 elif main == "Linear Regression" and sub == "Diagnostics":
     st.markdown("## Assumptions & Diagnostics")
     show_dataset_status()
@@ -700,12 +845,8 @@ elif main == "Linear Regression" and sub == "Diagnostics":
         st.info("No linear results yet. Run the model in 'Modeling (OLS)' first.")
     else:
         res = st.session_state.last_results["linear"]
-        ols = res["model"]
-        X = res["X"]
-        y = res["y"]
-
-        fitted = ols.fittedvalues
-        resid = ols.resid
+        resid = res["resid"]
+        fitted = res["fitted"]
 
         st.markdown("### Linearity: Residuals vs Fitted")
         fig, ax = plt.subplots()
@@ -719,61 +860,35 @@ elif main == "Linear Regression" and sub == "Diagnostics":
         plt.close(fig)
 
         st.markdown("### Normality of residuals")
-        # QQ plot
         fig = sm.qqplot(resid, line="45")
         plt.title("Q-Q Plot of Residuals")
         st.pyplot(fig)
         download_figure_block(plt.gcf(), "linear_qqplot_residuals")
         plt.close(plt.gcf())
 
-        # Shapiro-Wilk
-        stat, p = shapiro(resid)
-        shapiro_df = pd.DataFrame([{
-            "Test": "Shapiro-Wilk",
-            "Statistic": round(float(stat), 4),
-            "p-value": format_p_value(float(p))
-        }])
-        st.dataframe(shapiro_df, use_container_width=True)
-        download_table_block(shapiro_df, "linear_shapiro", "Normality Test")
+        st.dataframe(res["shapiro"], use_container_width=True)
+        download_table_block(res["shapiro"], "linear_shapiro", "Normality Test")
 
         st.markdown("### Homoscedasticity")
-        lm, lm_p, fval, f_p = het_breuschpagan(resid, sm.add_constant(X))
-        bp_df = pd.DataFrame([{
-            "Test": "Breusch-Pagan",
-            "LM Statistic": round(float(lm), 4),
-            "LM p-value": format_p_value(float(lm_p)),
-            "F Statistic": round(float(fval), 4),
-            "F p-value": format_p_value(float(f_p)),
-        }])
-        st.dataframe(bp_df, use_container_width=True)
-        download_table_block(bp_df, "linear_breusch_pagan", "Homoscedasticity")
+        st.dataframe(res["bp"], use_container_width=True)
+        download_table_block(res["bp"], "linear_breusch_pagan", "Homoscedasticity")
 
         st.markdown("### Multicollinearity: VIF")
-        X_vif = sm.add_constant(X)
-        vif_rows = []
-        for i, col in enumerate(X_vif.columns):
-            if col == "const":
-                continue
-            vif_rows.append({
-                "Variable": col,
-                "VIF": round(float(variance_inflation_factor(X_vif.values, i)), 4)
-            })
-        vif_df = pd.DataFrame(vif_rows).sort_values("VIF", ascending=False).reset_index(drop=True)
-        st.dataframe(vif_df, use_container_width=True)
-        download_table_block(vif_df, "linear_vif", "VIF Table")
+        st.dataframe(res["vif"], use_container_width=True)
+        download_table_block(res["vif"], "linear_vif", "VIF Table")
 
         st.markdown("### Independence of errors")
-        dw = durbin_watson(resid)
-        dw_df = pd.DataFrame([{"Test": "Durbin-Watson", "Statistic": round(float(dw), 4)}])
-        st.dataframe(dw_df, use_container_width=True)
-        download_table_block(dw_df, "linear_durbin_watson", "Independence of Errors")
+        st.dataframe(res["dw"], use_container_width=True)
+        download_table_block(res["dw"], "linear_durbin_watson", "Independence of Errors")
 
+# =========================================================
+# LINEAR: Export
+# =========================================================
 elif main == "Linear Regression" and sub == "Export":
-    st.markdown("## Export (Linear Regression)")
+    st.markdown("## Export (Linear)")
     show_dataset_status()
 
     if st.session_state.df is not None:
-        st.markdown("### Dataset")
         st.download_button(
             "Download dataset as Excel",
             data=df_to_excel_bytes({"dataset": st.session_state.df}),
@@ -783,21 +898,21 @@ elif main == "Linear Regression" and sub == "Export":
         )
 
     if "linear" in st.session_state.last_results:
-        st.markdown("### Latest Linear Regression Outputs")
-        coef = st.session_state.last_results["linear"]["coef_table"]
-        anova_t = st.session_state.last_results["linear"]["anova_table"]
-        metrics = st.session_state.last_results["linear"]["metrics"]
-
+        res = st.session_state.last_results["linear"]
         st.download_button(
-            "Download linear tables (Excel)",
+            "Download latest linear outputs (Excel)",
             data=df_to_excel_bytes({
-                "Model_Fit": metrics,
-                "ANOVA": anova_t,
-                "Coefficients": coef,
+                "Model_Fit": res["metrics"],
+                "ANOVA": res["anova_table"],
+                "Coefficients": res["coef_table"],
+                "VIF": res["vif"],
+                "Shapiro": res["shapiro"],
+                "Breusch_Pagan": res["bp"],
+                "Durbin_Watson": res["dw"],
             }),
             file_name="linear_outputs.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
     else:
-        st.info("No linear results yet. Run a model first.")
+        st.info("No linear outputs yet. Run a model first.")
