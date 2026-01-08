@@ -688,7 +688,7 @@ elif main == "Logistic Regression" and sub == "EDA":
 # LOGISTIC: Modeling (OR table)
 # =========================================================
 elif main == "Logistic Regression" and sub == "Modeling":
-    st.markdown("## Modeling (Logistic Regression)")
+    st.markdown("### Modeling (Logistic Regression)")
     show_dataset_status()
 
     if st.session_state.df is not None:
