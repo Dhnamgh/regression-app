@@ -30,7 +30,7 @@ from sklearn.neighbors import KNeighborsClassifier
 # Page config
 # =========================================================
 st.set_page_config(
-    page_title="Regression Applications in Health Sciences",
+    page_title="Data Analysis in Health Sciences",
     page_icon="📊",
     layout="wide"
 )
@@ -144,8 +144,8 @@ section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
 st.markdown(
     """
     <div class="app-header">
-        <h1>Regression Applications in Health Sciences</h1>
-        <p>Logistic & multivariable linear regression with diagnostics, model comparison, and exports</p>
+        <h1>Data Analysis in Health Sciences</h1>
+        <p>Unified platform for regression modeling and statistical tests, with diagnostics and exports</p>
     </div>
     """,
     unsafe_allow_html=True
