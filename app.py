@@ -262,6 +262,112 @@ def make_excel_template(columns: List[str], n_rows: int = 20) -> bytes:
 # =========================================================
 # GLOBAL: Contingency table editor (labels editable + Total int)
 # =========================================================
+# =========================================================
+# GLOBAL: Contingency table editor (labels editable + Total int)
+# =========================================================
+def contingency_editor(
+    key: str,
+    default_rows: list[str],
+    default_cols: list[str],
+    default_counts: np.ndarray
+):
+    """
+    Returns:
+      counts_df: DataFrame for display/editing (includes Total row/col)
+      observed_df: r×c numeric DataFrame (NO totals) used for tests
+    """
+
+    # ---- init session state table (editable) ----
+    ss_key = f"ct_{key}"
+
+    if ss_key not in st.session_state:
+        init = np.asarray(default_counts, dtype=int)
+        init = np.clip(init, 0, None)
+        df0 = pd.DataFrame(init, columns=default_cols)
+        df0.insert(0, "Group", default_rows)
+        st.session_state[ss_key] = df0
+
+    df = st.session_state[ss_key].copy()
+
+    # ---- Allow renaming columns (Category names) safely ----
+    st.markdown("#### Labels")
+    with st.expander("Rename row/column labels", expanded=False):
+        # Row labels are editable in the data editor (Group column),
+        # but we also offer quick rename here.
+        new_rows = []
+        for i, old in enumerate(df["Group"].astype(str).tolist()):
+            new_rows.append(st.text_input(f"Row {i+1} label", value=old, key=f"{key}_rowlbl_{i}"))
+        df["Group"] = new_rows
+
+        cat_cols = [c for c in df.columns if c != "Group"]
+        new_cols = []
+        for j, old in enumerate(cat_cols):
+            new_cols.append(st.text_input(f"Column {j+1} label", value=str(old), key=f"{key}_collbl_{j}"))
+
+        # Apply rename while preventing duplicates/empty names
+        cleaned = []
+        seen = set()
+        for name in new_cols:
+            nm = name.strip() if name.strip() else "Category"
+            base = nm
+            kdup = 1
+            while nm in seen:
+                kdup += 1
+                nm = f"{base}_{kdup}"
+            seen.add(nm)
+            cleaned.append(nm)
+
+        rename_map = {old: new for old, new in zip(cat_cols, cleaned)}
+        df = df.rename(columns=rename_map)
+
+    # ---- Data editor for counts (only numeric columns) ----
+    st.markdown("#### Observed counts (edit cells)")
+    cat_cols = [c for c in df.columns if c != "Group"]
+
+    # Ensure numeric
+    for c in cat_cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+        df[c] = df[c].clip(lower=0)
+
+    edited = st.data_editor(
+        df,
+        key=f"{key}_editor",
+        use_container_width=True,
+        num_rows="fixed",
+        column_config={
+            "Group": st.column_config.TextColumn("Group")
+        } | {
+            c: st.column_config.NumberColumn(c, min_value=0, step=1, format="%d")
+            for c in cat_cols
+        }
+    )
+
+    # Re-validate after edit
+    edited = edited.copy()
+    edited["Group"] = edited["Group"].astype(str)
+    for c in cat_cols:
+        edited[c] = pd.to_numeric(edited[c], errors="coerce").fillna(0).round(0).astype(int)
+        edited[c] = edited[c].clip(lower=0)
+
+    # Save back
+    st.session_state[ss_key] = edited
+
+    # ---- Build observed r×c (no totals) ----
+    observed_df = edited[cat_cols].copy()
+
+    # ---- Build display table with Total row/col (SPSS-like) ----
+    display_df = edited.copy()
+    display_df["Total"] = observed_df.sum(axis=1).astype(int)
+
+    total_row = {"Group": "Total"}
+    for c in cat_cols:
+        total_row[c] = int(observed_df[c].sum())
+    total_row["Total"] = int(observed_df.values.sum())
+
+    display_df = pd.concat([display_df, pd.DataFrame([total_row])], ignore_index=True)
+
+    return display_df, observed_df
+
 def rc_contingency_ui(key: str, default_r: int = 2, default_c: int = 2):
     st.markdown("### Table size")
     c1, c2, c3 = st.columns([1, 1, 2])
