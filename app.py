@@ -1172,7 +1172,7 @@ if main == "Tests" and sub == "CI":
 
         st.markdown("### Confidence Interval Results")
         if st.button("Compute CI", type="primary", use_container_width=True):
-            if len(x) >= 2:
+  if len(x) >= 2:
     try:
         t1 = ci_mean(x, alpha=alpha_tail)
         t2 = ci_variance(x, alpha=alpha_tail)
