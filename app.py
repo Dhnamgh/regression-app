@@ -262,70 +262,31 @@ def make_excel_template(columns: List[str], n_rows: int = 20) -> bytes:
 # =========================================================
 # GLOBAL: Contingency table editor (labels editable + Total int)
 # =========================================================
-def contingency_editor(key: str, default_rows: List[str], default_cols: List[str], default_counts: Optional[np.ndarray] = None):
-    """
-    Editable row/column names + counts.
-    Returns:
-      counts_df: DataFrame with index=row labels and columns=column labels (NO Total)
-      observed_df: DataFrame for display with Group + counts + Total row/col (int)
-    """
-    state_key = f"ct_{key}"
-    if state_key not in st.session_state:
-        if default_counts is None:
-            default_counts = np.ones((len(default_rows), len(default_cols)), dtype=int)
-        df0 = pd.DataFrame(default_counts, columns=default_cols)
-        df0.insert(0, "Group", default_rows)
-        st.session_state[state_key] = df0
-
-    st.markdown("### Contingency Table (Counts)")
-    st.caption("Edit row/column names and counts. Totals are computed automatically (SPSS-style).")
-
-    df_edit = st.session_state[state_key]
-
-    # Column name editor
-    col_labels = [c for c in df_edit.columns if c != "Group"]
-    with st.expander("Edit column names", expanded=False):
-        new_cols = []
-        cols = st.columns(len(col_labels))
-        for i, c in enumerate(col_labels):
-            with cols[i]:
-                new_cols.append(st.text_input(f"Column {i+1}", value=c, key=f"{state_key}_col_{i}"))
-        if st.button("Apply column names", key=f"{state_key}_apply_cols", use_container_width=True):
-            rename = {old: new for old, new in zip(col_labels, new_cols) if new and new != old}
-            st.session_state[state_key] = df_edit.rename(columns=rename)
+def rc_contingency_ui(key: str, default_r: int = 2, default_c: int = 2):
+    st.markdown("### Table size")
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        r = st.number_input("Rows (r)", min_value=2, max_value=20, value=default_r, step=1, key=f"{key}_r")
+    with c2:
+        c = st.number_input("Columns (c)", min_value=2, max_value=20, value=default_c, step=1, key=f"{key}_c")
+    with c3:
+        if st.button("Apply size (reset table)", key=f"{key}_apply_rc", use_container_width=True):
+            rows = [f"Group {i+1}" for i in range(int(r))]
+            cols = [f"Category {j+1}" for j in range(int(c))]
+            init = np.ones((int(r), int(c)), dtype=int)
+            df0 = pd.DataFrame(init, columns=cols)
+            df0.insert(0, "Group", rows)
+            st.session_state[f"ct_{key}"] = df0
             st.rerun()
 
-    edited = st.data_editor(
-        df_edit,
-        use_container_width=True,
-        num_rows="fixed",
-        key=f"{state_key}_editor",
+    counts_df, observed_df = contingency_editor(
+        key=key,
+        default_rows=[f"Group {i+1}" for i in range(default_r)],
+        default_cols=[f"Category {j+1}" for j in range(default_c)],
+        default_counts=np.ones((default_r, default_c), dtype=int),
     )
-    st.session_state[state_key] = edited
+    return counts_df, observed_df
 
-    if "Group" not in edited.columns:
-        raise ValueError('Missing required column: "Group".')
-
-    row_labels = edited["Group"].astype(str).fillna("").tolist()
-    if any(r.strip() == "" for r in row_labels):
-        raise ValueError("Row labels (Group) cannot be empty.")
-
-    counts_df = edited.drop(columns=["Group"]).copy()
-    counts_df.index = row_labels
-    counts_df = counts_df.apply(pd.to_numeric, errors="coerce")
-    if counts_df.isna().any().any():
-        raise ValueError("All count cells must be numeric.")
-    if (counts_df.values < 0).any():
-        raise ValueError("Counts must be non-negative.")
-    counts_df = counts_df.astype(int)
-
-    # observed with totals (Total must be integer)
-    observed = counts_df.copy()
-    observed["Total"] = observed.sum(axis=1).astype(int)
-    total_row = observed.sum(axis=0).astype(int)
-    observed.loc["Total"] = total_row
-    observed = observed.reset_index().rename(columns={"index": "Group"})
-    return counts_df, observed
 
 # =========================================================
 # GLOBAL: 2x2 measures (OR/RR/VE) + Diagnostic metrics + CI
@@ -657,6 +618,69 @@ def ci_variance(x: np.ndarray, alpha: float = 0.05) -> pd.DataFrame:
     hi = df * s2 / stats.chi2.ppf(alpha / 2, df=df)
     out = pd.DataFrame([{"Statistic": "Variance", "N": n, "Estimate": s2, "95% CI Lower": lo, "95% CI Upper": hi}])
     return out
+def normality_report(x: np.ndarray) -> pd.DataFrame:
+    x = np.asarray(x, dtype=float)
+    x = x[~np.isnan(x)]
+    n = len(x)
+    # Shapiro is recommended for n<=5000
+    p_shapiro = ""
+    if 3 <= n <= 5000:
+        try:
+            p_shapiro = format_p_value(stats.shapiro(x).pvalue)
+        except Exception:
+            p_shapiro = ""
+    # D'Agostino K^2 needs n>=8
+    p_dagostino = ""
+    if n >= 8:
+        try:
+            p_dagostino = format_p_value(stats.normaltest(x).pvalue)
+        except Exception:
+            p_dagostino = ""
+    return pd.DataFrame([{
+        "Test": "Normality",
+        "N": n,
+        "Shapiro-Wilk Sig.": p_shapiro,
+        "D'Agostino K^2 Sig.": p_dagostino,
+        "Decision (α=0.05)": "Non-normal" if (p_shapiro == "< 0.001" or (p_shapiro != "" and float(p_shapiro.replace("<", "").strip()) < 0.05)) else "Likely normal"
+    }])
+
+def bootstrap_ci_mean(x: np.ndarray, n_boot: int = 5000, alpha: float = 0.05, seed: int = 42) -> pd.DataFrame:
+    x = np.asarray(x, dtype=float)
+    x = x[~np.isnan(x)]
+    n = len(x)
+    if n < 2:
+        raise ValueError("Need at least 2 observations.")
+    rng = np.random.default_rng(seed)
+    boots = rng.choice(x, size=(n_boot, n), replace=True).mean(axis=1)
+    lo = float(np.quantile(boots, alpha/2))
+    hi = float(np.quantile(boots, 1 - alpha/2))
+    out = pd.DataFrame([{
+        "Statistic": "Mean (Bootstrap percentile)",
+        "N": n,
+        "Estimate": float(np.mean(x)),
+        "95% CI Lower": lo,
+        "95% CI Upper": hi
+    }])
+    return out
+
+def bootstrap_ci_variance(x: np.ndarray, n_boot: int = 5000, alpha: float = 0.05, seed: int = 42) -> pd.DataFrame:
+    x = np.asarray(x, dtype=float)
+    x = x[~np.isnan(x)]
+    n = len(x)
+    if n < 2:
+        raise ValueError("Need at least 2 observations.")
+    rng = np.random.default_rng(seed)
+    boots = np.var(rng.choice(x, size=(n_boot, n), replace=True), ddof=1, axis=1)
+    lo = float(np.quantile(boots, alpha/2))
+    hi = float(np.quantile(boots, 1 - alpha/2))
+    out = pd.DataFrame([{
+        "Statistic": "Variance (Bootstrap percentile)",
+        "N": n,
+        "Estimate": float(np.var(x, ddof=1)),
+        "95% CI Lower": lo,
+        "95% CI Upper": hi
+    }])
+    return out
 
 # =========================================================
 # Sidebar navigation (expanders + buttons)
@@ -916,12 +940,12 @@ if main == "Tests" and sub == "Categorical":
 
     # 1) Chi-square
     if cat_choice == "Contingency Table (r×c) / Chi-square":
-        counts_df, observed_df = contingency_editor(
+        counts_df, observed_df = rc_contingency_ui(
             key="chisq",
-            default_rows=["Treatment", "Placebo"],
-            default_cols=["Disease", "No disease"],
-            default_counts=np.array([[10, 30], [20, 15]], dtype=int),
+            default_r=2,
+            default_c=2
         )
+
 
         if st.button("Run Chi-square", type="primary", use_container_width=True):
             try:
@@ -1083,19 +1107,42 @@ if main == "Tests" and sub == "Categorical":
 # =========================================================
 if main == "Tests" and sub == "CI":
     st.markdown("## Confidence Intervals")
+    st.caption("Upload values or pick a numeric column; outputs are SPSS-like tables with export.")
 
-    st.caption("Upload a numeric column or paste values; outputs are SPSS-like tables with export.")
+    # Template for CI module
+    st.download_button(
+        "Download Excel template (one numeric column)",
+        data=make_excel_template(["Value"], 50),
+        file_name="template_confidence_intervals.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=False,
+    )
 
-    mode = st.radio("Input method", ["Upload dataset column", "Paste values"], horizontal=True)
+    input_method = st.radio("Input method", ["Upload file (CSV/XLSX)", "Use dataset column", "Paste values"], horizontal=True)
 
     x = None
-    if mode == "Upload dataset column":
+
+    if input_method == "Upload file (CSV/XLSX)":
+        upl = st.file_uploader("Upload a file with a column named 'Value' (recommended)", type=["csv", "xlsx", "xls"], key="ci_upload")
+        if upl is not None:
+            try:
+                df_ci = read_dataset(upl)
+                show_table(df_ci.head(30), "Data Preview")
+                if "Value" not in df_ci.columns:
+                    st.warning("Template expects a column named 'Value'. Please rename your numeric column to 'Value'.")
+                else:
+                    x = pd.to_numeric(df_ci["Value"], errors="coerce").dropna().values
+            except Exception as e:
+                st.error(f"Load failed: {e}")
+
+    elif input_method == "Use dataset column":
         df = st.session_state.dataset
         if df is None:
             st.warning("Upload a dataset in Data first.")
         else:
             col = st.selectbox("Choose numeric column", df.columns)
             x = pd.to_numeric(df[col], errors="coerce").dropna().values
+
     else:
         txt = st.text_area("Paste numbers (comma/space/newline separated)", height=120, value="1.2, 2.5, 3.0, 2.8, 1.9")
         parts = [p.strip() for p in txt.replace("\n", ",").replace(" ", ",").split(",") if p.strip() != ""]
@@ -1104,18 +1151,47 @@ if main == "Tests" and sub == "CI":
         except Exception:
             x = None
 
-    if x is not None and len(x) >= 2:
+    st.markdown("### Options")
+    alpha = st.selectbox("Confidence level", [0.90, 0.95, 0.99], index=1)
+    alpha_tail = 1 - alpha
+    force_boot = st.checkbox("Use bootstrap (nonparametric) even if data looks normal", value=False)
+    n_boot = st.slider("Bootstrap iterations", min_value=1000, max_value=20000, value=5000, step=1000)
+
+    if x is None or len(x) < 2:
+        st.info("Provide at least 2 numeric values.")
+    else:
+        # Normality check
+        nr = normality_report(x)
+        show_table(nr, "Tests of Normality")
+        download_table_block(nr, "normality_tests", "Normality")
+
+        # Decide parametric vs bootstrap
+        # (Simple rule: if Shapiro p<0.05 -> non-normal)
+        decision = nr.loc[0, "Decision (α=0.05)"]
+        use_boot = force_boot or (decision == "Non-normal")
+
+        st.markdown("### Confidence Interval Results")
         if st.button("Compute CI", type="primary", use_container_width=True):
             try:
-                t1 = ci_mean(x)
-                t2 = ci_variance(x)
-                show_table(t1, "Confidence Interval for Mean")
-                download_table_block(t1, "ci_mean", "CI Mean")
+                if use_boot:
+                    t1 = bootstrap_ci_mean(x, n_boot=n_boot, alpha=alpha_tail)
+                    t2 = bootstrap_ci_variance(x, n_boot=n_boot, alpha=alpha_tail)
+                    show_table(t1, "Confidence Interval for Mean (Bootstrap)")
+                    download_table_block(t1, "ci_mean_bootstrap", "CI Mean Bootstrap")
 
-                show_table(t2, "Confidence Interval for Variance")
-                download_table_block(t2, "ci_variance", "CI Variance")
+                    show_table(t2, "Confidence Interval for Variance (Bootstrap)")
+                    download_table_block(t2, "ci_variance_bootstrap", "CI Variance Bootstrap")
+                else:
+                    t1 = ci_mean(x, alpha=alpha_tail)
+                    t2 = ci_variance(x, alpha=alpha_tail)
+                    show_table(t1, "Confidence Interval for Mean")
+                    download_table_block(t1, "ci_mean", "CI Mean")
+
+                    show_table(t2, "Confidence Interval for Variance")
+                    download_table_block(t2, "ci_variance", "CI Variance")
             except Exception as e:
                 st.error(f"Failed: {e}")
+
     else:
         st.info("Provide at least 2 numeric values.")
 
