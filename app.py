@@ -1171,22 +1171,27 @@ if main == "Tests" and sub == "CI":
         use_boot = force_boot or (decision == "Non-normal")
 
         st.markdown("### Confidence Interval Results")
+
         if st.button("Compute CI", type="primary", use_container_width=True):
-  if len(x) >= 2:
-    try:
-        t1 = ci_mean(x, alpha=alpha_tail)
-        t2 = ci_variance(x, alpha=alpha_tail)
+        
+            if len(x) >= 2:
+                try:
+                    # Parametric CI
+                    t1 = ci_mean(x, alpha=alpha_tail)
+                    t2 = ci_variance(x, alpha=alpha_tail)
+        
+                    show_table(t1, "Confidence Interval for Mean")
+                    download_table_block(t1, "ci_mean", "CI Mean")
+        
+                    show_table(t2, "Confidence Interval for Variance")
+                    download_table_block(t2, "ci_variance", "CI Variance")
+        
+                except Exception as e:
+                    st.error(f"Failed: {e}")
+        
+            else:
+                st.info("Provide at least 2 numeric values.")
 
-        show_table(t1, "Confidence Interval for Mean")
-        download_table_block(t1, "ci_mean", "CI Mean")
-
-        show_table(t2, "Confidence Interval for Variance")
-        download_table_block(t2, "ci_variance", "CI Variance")
-
-    except Exception as e:
-        st.error(f"Failed: {e}")
-else:
-    st.info("Provide at least 2 numeric values.")
 
 
 # =========================================================
