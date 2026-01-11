@@ -1,31 +1,39 @@
 import io
+import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
+
+from scipy import stats
+from scipy.stats import shapiro
+from scipy.stats import chi2_contingency, chisquare
+
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
-from scipy.stats import shapiro
-from scipy import stats
+from statsmodels.stats.anova import anova_lm
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
-from scipy.stats import chi2_contingency, chisquare
-from statsmodels.stats.contingency_tables import mcnemar, StratifiedTable
+from statsmodels.stats.contingency_tables import (
+    mcnemar, StratifiedTable
+)
 from statsmodels.stats.contingency_tables import cochrans_q as sm_cochrans_q
 from statsmodels.stats.diagnostic import het_breuschpagan
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from statsmodels.stats.stattools import durbin_watson
-from statsmodels.stats.anova import anova_lm
+
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    roc_curve, auc, confusion_matrix,
-    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
-)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression as SkLogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import (
+    roc_curve, roc_auc_score,
+    accuracy_score, precision_score, recall_score, f1_score,
+    confusion_matrix
+)
+
 # =========================================================
 # Page config
 # =========================================================
@@ -34,8 +42,9 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
+
 # =========================================================
-# CSS (fix expander white + header clipped)
+# CSS (stable + no clipping + blue sidebar + nice expanders)
 # =========================================================
 st.markdown("""
 <style>
@@ -68,7 +77,6 @@ section[data-testid="stSidebar"] .stDownloadButton button{
   font-weight: 650 !important;
   padding: 10px 12px !important;
 }
-
 section[data-testid="stSidebar"] .stButton button:hover,
 section[data-testid="stSidebar"] .stDownloadButton button:hover{
   background: rgba(255,255,255,0.18) !important;
@@ -76,7 +84,7 @@ section[data-testid="stSidebar"] .stDownloadButton button:hover{
   transform: translateY(-1px);
 }
 
-/* ===== FIX: Expander header white background ===== */
+/* Expander header styled (fix white block) */
 section[data-testid="stSidebar"] div[data-testid="stExpander"] details summary{
   background: rgba(255,255,255,0.10) !important;
   border: 1px solid rgba(255,255,255,0.30) !important;
@@ -93,7 +101,7 @@ section[data-testid="stSidebar"] div[data-testid="stExpander"] details summary s
   fill: #ffffff !important;
 }
 
-/* Force file uploader styling in sidebar (no white card) */
+/* File uploader: remove white card feeling */
 section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"],
 section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] *{
   background: transparent !important;
@@ -118,14 +126,12 @@ section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
   font-weight: 650 !important;
 }
 
-/* ===== Header =====
-   IMPORTANT: do NOT use negative left margin (it gets clipped by layout) */
+/* Header */
 .app-header {
   background: linear-gradient(90deg, #0B3A66, #0A2D4E);
   padding: 16px 28px;
-  margin: 0 0 1.0rem 0;     /* no negative margin */
+  margin: 0 0 1.0rem 0;
   border-radius: 18px;
-  overflow: visible;
 }
 .app-header h1 {
   color: #ffffff;
@@ -145,7 +151,7 @@ st.markdown(
     """
     <div class="app-header">
         <h1>Data Analysis in Health Sciences</h1>
-        <p>Unified platform for regression modeling and statistical tests, with diagnostics and exports</p>
+        <p>Regression modeling + hypothesis tests + diagnostics + reporting (SPSS-like tables)</p>
     </div>
     """,
     unsafe_allow_html=True
@@ -163,15 +169,14 @@ if "df" not in st.session_state:
 if "last_results" not in st.session_state:
     st.session_state.last_results = {}
 
-
 # =========================================================
-# Utilities: downloads
+# Utilities
 # =========================================================
 def df_to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
     bio = io.BytesIO()
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
         for sheet, _df in sheets.items():
-            _df.to_excel(writer, index=False, sheet_name=sheet[:31])
+            _df.to_excel(writer, index=False, sheet_name=str(sheet)[:31])
     bio.seek(0)
     return bio.getvalue()
 
@@ -182,14 +187,15 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
     return bio.getvalue()
 
 def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
-    n_rows, n_cols = df.shape
+    df2 = df.copy().replace([np.nan, None, "nan", "NaN"], "")
+    n_rows, n_cols = df2.shape
     fig_w = min(18, max(6, n_cols * 1.5))
     fig_h = min(18, max(2.2, (n_rows + 1) * 0.45))
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     ax.axis("off")
     if title:
         ax.set_title(title, fontsize=12, pad=8)
-    tbl = ax.table(cellText=df.values, colLabels=df.columns, cellLoc="center", loc="center")
+    tbl = ax.table(cellText=df2.values, colLabels=df2.columns, cellLoc="center", loc="center")
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(9)
     tbl.scale(1, 1.15)
@@ -221,34 +227,65 @@ def download_figure_block(fig: plt.Figure, base_name: str):
         "Download PNG",
         data=fig_to_png_bytes(fig),
         file_name=f"{base_name}.png",
-        mime="image/png",
-        use_container_width=False
+        mime="image/png"
     )
-def show_table(df: pd.DataFrame, title: str | None = None, center_all: bool = False):
-    """Unified table renderer for the whole app."""
-    if title:
-        st.markdown(f"### {title}")
 
-    df_display = df.copy()
-    df_display = df_display.replace([np.nan, None, "nan", "NaN"], "")
+def read_uploaded_file(uploaded) -> pd.DataFrame | None:
+    if uploaded is None:
+        return None
+    name = uploaded.name.lower()
+    try:
+        if name.endswith(".csv"):
+            return pd.read_csv(uploaded)
+        if name.endswith(".xlsx") or name.endswith(".xls"):
+            return pd.read_excel(uploaded)
+    except Exception as e:
+        st.error(f"Failed to read file: {e}")
+        return None
+    st.error("Unsupported file type. Please upload CSV or Excel.")
+    return None
 
-    if center_all:
-        styled = df_display.style.set_properties(**{"text-align": "center"})
-    else:
-        num_cols = df.select_dtypes(include=["number"]).columns
-        styled = df_display.style.set_properties(subset=num_cols, **{"text-align": "center"})
+def show_dataset_status():
+    if st.session_state.df is None:
+        st.info("No dataset loaded yet. Upload a CSV/XLSX in the Data section.")
+        return
+    df = st.session_state.df
+    st.success(f"Dataset loaded: {df.shape[0]} rows × {df.shape[1]} columns")
+    with st.expander("Preview (first 20 rows)", expanded=False):
+        st.dataframe(df.head(20), use_container_width=True)
 
-    st.dataframe(styled, use_container_width=True)
-
-def format_p_value(p: float) -> str:
+def format_p_value(p) -> str:
     try:
         p = float(p)
     except Exception:
+        return ""
+    if np.isnan(p):
         return ""
     if p < 0.001:
         return "< 0.001"
     return f"{p:.3f}"
 
+def yesno_from_p(p) -> str:
+    try:
+        p = float(p)
+    except Exception:
+        return ""
+    if np.isnan(p):
+        return ""
+    return "Yes" if p < 0.05 else "No"
+
+def show_table(df: pd.DataFrame, title: str, center_all: bool = True):
+    st.markdown(f"### {title}")
+    df2 = df.copy().replace([np.nan, None, "nan", "NaN"], "")
+    if center_all:
+        styled = df2.style.set_properties(**{"text-align": "center"})
+    else:
+        num_cols = df2.select_dtypes(include=["number"]).columns
+        styled = df2.style.set_properties(subset=num_cols, **{"text-align": "center"})
+    st.dataframe(styled, use_container_width=True)
+
+def q(name: str) -> str:
+    return f'Q("{name}")'
 
 # =========================================================
 # Templates
@@ -269,736 +306,48 @@ def make_linear_template() -> pd.DataFrame:
         "X3": [None, None, None],
     })
 
-def make_anova_oneway_template() -> pd.DataFrame:
-    # Long format
+def make_counts_template(r: int, c: int) -> pd.DataFrame:
+    df = pd.DataFrame(np.zeros((r, c), dtype=int))
+    df.columns = [f"Col{i+1}" for i in range(c)]
+    df.index = [f"Row{i+1}" for i in range(r)]
+    df = df.reset_index().rename(columns={"index": "Row"})
+    return df
+
+def make_gof_template() -> pd.DataFrame:
     return pd.DataFrame({
-        "Group": ["A", "A", "B", "B"],
-        "Value": [None, None, None, None]
+        "Category": ["A", "B", "C"],
+        "Observed": [None, None, None],
+        "Expected proportion (optional)": [None, None, None]
     })
 
-def make_anova_oneway_rm_template() -> pd.DataFrame:
-    # Long format (repeated measures)
+def make_mh_long_template() -> pd.DataFrame:
     return pd.DataFrame({
-        "Subject": [1, 1, 2, 2],
-        "Condition": ["T1", "T2", "T1", "T2"],
-        "Value": [None, None, None, None]
+        "Stratum": ["S1", "S1", "S1", "S1", "S2", "S2", "S2", "S2"],
+        "Exposure": ["E1", "E1", "E2", "E2", "E1", "E1", "E2", "E2"],
+        "Outcome":  [1, 0, 1, 0, 1, 0, 1, 0]
     })
 
-def make_anova_twoway_template() -> pd.DataFrame:
-    # Two-way between-subjects with replication (long format)
-    return pd.DataFrame({
-        "FactorA": ["A1", "A1", "A2", "A2"],
-        "FactorB": ["B1", "B2", "B1", "B2"],
-        "Value": [None, None, None, None]
-    })
-
-def make_anova_twoway_rm_template() -> pd.DataFrame:
-    # Two-way repeated measures (long format)
-    return pd.DataFrame({
-        "Subject": [1, 1, 1, 1, 2, 2, 2, 2],
-        "FactorA": ["A1","A1","A2","A2","A1","A1","A2","A2"],
-        "FactorB": ["B1","B2","B1","B2","B1","B2","B1","B2"],
-        "Value": [None, None, None, None, None, None, None, None]
-    })
-
-def make_ttest_one_sample_template() -> pd.DataFrame:
-    return pd.DataFrame({"Value": [None, None, None]})
-
-def make_ttest_two_ind_template() -> pd.DataFrame:
-    return pd.DataFrame({
-        "Group": ["A", "A", "B", "B"],
-        "Value": [None, None, None, None]
-    })
-
-def make_ttest_paired_template() -> pd.DataFrame:
+def make_cochran_template() -> pd.DataFrame:
     return pd.DataFrame({
         "Subject": [1, 2, 3],
-        "Before": [None, None, None],
-        "After": [None, None, None]
+        "Cond_A": [0, 1, 1],
+        "Cond_B": [0, 1, 0],
+        "Cond_C": [1, 1, 0],
     })
-def _normality_summary(x: np.ndarray) -> dict:
-    x = np.asarray(x, dtype=float)
-    x = x[~np.isnan(x)]
-    if len(x) < 3:
-        return {"n": int(len(x)), "shapiro_p": None, "is_normal": None}
-    stat, p = shapiro(x)
-    return {"n": int(len(x)), "shapiro_p": float(p), "is_normal": bool(p >= 0.05)}
 
-def _fmt_p(p):
-    if p is None or (isinstance(p, float) and np.isnan(p)):
-        return ""
-    return "< 0.001" if float(p) < 0.001 else f"{float(p):.3f}"
-
-
-# -----------------------------
-# ANOVA
-# -----------------------------
-def anova_one_way(df: pd.DataFrame, group_col="Group", value_col="Value"):
-    d = df[[group_col, value_col]].dropna().copy()
-    d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
-    d = d.dropna()
-
-    groups = [g[value_col].values for _, g in d.groupby(group_col)]
-    labels = list(d[group_col].unique())
-
-    f_stat, p = stats.f_oneway(*groups)
-
-    # Effect size: eta-squared
-    grand_mean = d[value_col].mean()
-    ss_between = sum(len(g)*(np.mean(g)-grand_mean)**2 for g in groups)
-    ss_total = sum((d[value_col]-grand_mean)**2)
-    eta2 = float(ss_between/ss_total) if ss_total != 0 else None
-
-    anova_tbl = pd.DataFrame([{
-        "Test": "One-way ANOVA",
-        "F": float(f_stat),
-        "p-value": _fmt_p(float(p)),
-        "Eta-squared": None if eta2 is None else round(eta2, 4)
-    }])
-
-    # Post-hoc Tukey (optional; only if >=3 groups)
-    tukey_df = None
-    if d[group_col].nunique() >= 3:
-        tk = pairwise_tukeyhsd(endog=d[value_col], groups=d[group_col], alpha=0.05)
-        tukey_df = pd.DataFrame(data=tk.summary().data[1:], columns=tk.summary().data[0])
-    return anova_tbl, tukey_df
-
-
-def anova_one_way_rm(df: pd.DataFrame, subject_col="Subject", within_col="Condition", value_col="Value"):
-    d = df[[subject_col, within_col, value_col]].dropna().copy()
-    d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
-    d = d.dropna()
-
-    # Repeated measures ANOVA
-    rm = sm.stats.AnovaRM(d, depvar=value_col, subject=subject_col, within=[within_col]).fit()
-    tbl = rm.anova_table.reset_index().rename(columns={"index": "Effect"})
-    # clean output
-    tbl = tbl.rename(columns={"F Value": "F", "Num DF": "df1", "Den DF": "df2", "Pr > F": "p_raw"})
-    if "p_raw" in tbl.columns:
-        tbl["p-value"] = tbl["p_raw"].apply(_fmt_p)
-        tbl = tbl.drop(columns=["p_raw"])
-    tbl = tbl.replace([np.nan, None, "nan", "NaN"], "")
-    return tbl
-
-
-def anova_two_way(df: pd.DataFrame, a="FactorA", b="FactorB", y="Value"):
-    d = df[[a, b, y]].dropna().copy()
-    d[y] = pd.to_numeric(d[y], errors="coerce")
-    d = d.dropna()
-
-    # Two-way ANOVA with interaction
-    model = smf.ols(f'Q("{y}") ~ C(Q("{a}")) * C(Q("{b}"))', data=d).fit()
-    tbl = anova_lm(model, typ=2).reset_index().rename(columns={"index": "Source"})
-    tbl = tbl.rename(columns={"sum_sq": "Sum Sq", "df": "df", "F": "F", "PR(>F)": "p_raw"})
-    tbl["p-value"] = tbl["p_raw"].apply(_fmt_p)
-    tbl = tbl.drop(columns=["p_raw"])
-    tbl = tbl.replace([np.nan, None, "nan", "NaN"], "")
-    # clean Q(...) naming
-    tbl["Source"] = tbl["Source"].astype(str).str.replace('C(Q("', "", regex=False).str.replace('"))', "", regex=False)
-    return tbl
-
-
-def anova_two_way_rm(df: pd.DataFrame, subject="Subject", a="FactorA", b="FactorB", y="Value"):
-    d = df[[subject, a, b, y]].dropna().copy()
-    d[y] = pd.to_numeric(d[y], errors="coerce")
-    d = d.dropna()
-
-    rm = sm.stats.AnovaRM(d, depvar=y, subject=subject, within=[a, b]).fit()
-    tbl = rm.anova_table.reset_index().rename(columns={"index": "Effect"})
-    tbl = tbl.rename(columns={"F Value": "F", "Num DF": "df1", "Den DF": "df2", "Pr > F": "p_raw"})
-    tbl["p-value"] = tbl["p_raw"].apply(_fmt_p)
-    tbl = tbl.drop(columns=["p_raw"])
-    tbl = tbl.replace([np.nan, None, "nan", "NaN"], "")
-    return tbl
-
-
-# -----------------------------
-# T-TEST (auto param / nonparam)
-# -----------------------------
-def test_one_sample(df: pd.DataFrame, col="Value", mu0: float = 0.0):
-    x = pd.to_numeric(df[col], errors="coerce").dropna().values.astype(float)
-    norm = _normality_summary(x)
-
-    if norm["is_normal"] is True:
-        t, p = stats.ttest_1samp(x, popmean=mu0)
-        method = "One-sample t-test"
-        stat_name = "t"
-        stat_val = float(t)
-        p_val = float(p)
-    else:
-        # Wilcoxon signed-rank on differences vs mu0
-        d = x - mu0
-        if len(d) < 3:
-            raise ValueError("Not enough data for nonparametric test.")
-        w, p = stats.wilcoxon(d)
-        method = "Wilcoxon signed-rank (one-sample)"
-        stat_name = "W"
-        stat_val = float(w)
-        p_val = float(p)
-
-    out = pd.DataFrame([{
-        "Method": method,
-        "N": norm["n"],
-        "Shapiro p-value": _fmt_p(norm["shapiro_p"]),
-        "Statistic": stat_name,
-        "Value": round(stat_val, 4),
-        "p-value": _fmt_p(p_val),
-        "Significant (p<0.05)": "Yes" if p_val < 0.05 else "No"
-    }])
-    return out
-def test_two_independent(df: pd.DataFrame, group_col="Group", value_col="Value"):
-    d = df[[group_col, value_col]].dropna().copy()
-    d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
-    d = d.dropna()
-
-    groups = list(d[group_col].unique())
-    if len(groups) != 2:
-        raise ValueError("Independent 2-sample test requires exactly 2 groups.")
-
-    x1 = d.loc[d[group_col] == groups[0], value_col].values.astype(float)
-    x2 = d.loc[d[group_col] == groups[1], value_col].values.astype(float)
-
-    n1 = _normality_summary(x1)
-    n2 = _normality_summary(x2)
-    normal = (n1["is_normal"] is True) and (n2["is_normal"] is True)
-
-    if normal:
-        # Homogeneity of variance
-        lev_stat, lev_p = stats.levene(x1, x2, center="median")
-        equal_var = bool(lev_p >= 0.05)
-
-        t, p = stats.ttest_ind(x1, x2, equal_var=equal_var)
-        method = "Independent t-test (equal variances)" if equal_var else "Welch t-test (unequal variances)"
-        stat_name = "t"
-        stat_val = float(t)
-        p_val = float(p)
-
-        extra = {
-            "Levene p-value": _fmt_p(float(lev_p)),
-            "Variance assumption": "Equal" if equal_var else "Unequal (Welch)"
-        }
-    else:
-        u, p = stats.mannwhitneyu(x1, x2, alternative="two-sided")
-        method = "Mann–Whitney U (nonparametric)"
-        stat_name = "U"
-        stat_val = float(u)
-        p_val = float(p)
-        extra = {
-            "Levene p-value": "",
-            "Variance assumption": ""
-        }
-
-    out = pd.DataFrame([{
-        "Method": method,
-        "Group 1": str(groups[0]),
-        "Group 2": str(groups[1]),
-        "N1": int(len(x1)),
-        "N2": int(len(x2)),
-        "Shapiro p (G1)": _fmt_p(n1["shapiro_p"]),
-        "Shapiro p (G2)": _fmt_p(n2["shapiro_p"]),
-        **extra,
-        "Statistic": stat_name,
-        "Value": round(stat_val, 4),
-        "p-value": _fmt_p(p_val),
-        "Significant (p<0.05)": "Yes" if p_val < 0.05 else "No"
-    }])
-    return out
-def test_paired(df: pd.DataFrame, before_col="Before", after_col="After"):
-    x1 = pd.to_numeric(df[before_col], errors="coerce")
-    x2 = pd.to_numeric(df[after_col], errors="coerce")
-    d = (x2 - x1).dropna().values.astype(float)
-
-    norm = _normality_summary(d)
-
-    if norm["is_normal"] is True:
-        t, p = stats.ttest_rel(x2.dropna().values.astype(float), x1.dropna().values.astype(float))
-        method = "Paired t-test"
-        stat_name = "t"
-        stat_val = float(t)
-        p_val = float(p)
-    else:
-        w, p = stats.wilcoxon(d)
-        method = "Wilcoxon signed-rank (paired)"
-        stat_name = "W"
-        stat_val = float(w)
-        p_val = float(p)
-
-    out = pd.DataFrame([{
-        "Method": method,
-        "N pairs": norm["n"],
-        "Shapiro p-value (diff)": _fmt_p(norm["shapiro_p"]),
-        "Statistic": stat_name,
-        "Value": round(stat_val, 4),
-        "p-value": _fmt_p(p_val),
-        "Significant (p<0.05)": "Yes" if p_val < 0.05 else "No"
-    }])
-    return out
-def _p_spss(p) -> str:
-    if p is None or (isinstance(p, float) and np.isnan(p)):
-        return ""
-    p = float(p)
-    return "< 0.001" if p < 0.001 else f"{p:.3f}"
-
-def _yesno(p) -> str:
-    if p is None or (isinstance(p, float) and np.isnan(p)):
-        return ""
-    return "Yes" if float(p) < 0.05 else "No"
-
-def _to_counts_table(df: pd.DataFrame) -> np.ndarray:
-    # df: numeric cells only
-    arr = df.apply(pd.to_numeric, errors="coerce").values
-    if np.isnan(arr).any():
-        raise ValueError("Table contains empty/non-numeric cells. Please fill all counts.")
-    if (arr < 0).any():
-        raise ValueError("Counts must be non-negative.")
-    return arr.astype(float)
-
-def calc_or_rr_ve_2x2(a, b, c, d):
-    # continuity correction if any zero
-    a,b,c,d = float(a),float(b),float(c),float(d)
-    if min(a,b,c,d) == 0:
-        a += 0.5; b += 0.5; c += 0.5; d += 0.5
-
-    # OR + CI
-    OR = (a*d)/(b*c)
-    se_or = np.sqrt(1/a + 1/b + 1/c + 1/d)
-    lo_or = np.exp(np.log(OR) - 1.96*se_or)
-    hi_or = np.exp(np.log(OR) + 1.96*se_or)
-
-    # RR + CI
-    rr = (a/(a+b)) / (c/(c+d))
-    se_rr = np.sqrt(1/a - 1/(a+b) + 1/c - 1/(c+d))
-    lo_rr = np.exp(np.log(rr) - 1.96*se_rr)
-    hi_rr = np.exp(np.log(rr) + 1.96*se_rr)
-
-    # VE + CI (VE = 1 - RR)
-    ve = (1 - rr) * 100
-    ve_lo = (1 - hi_rr) * 100
-    ve_hi = (1 - lo_rr) * 100
-
-    out = pd.DataFrame([{
-        "Measure": "Odds Ratio (OR)",
-        "Estimate": round(OR, 4),
-        "95% CI": f"{lo_or:.4f}–{hi_or:.4f}",
-        "Lower": round(lo_or, 4),
-        "Upper": round(hi_or, 4),
-    },{
-        "Measure": "Risk Ratio (RR)",
-        "Estimate": round(rr, 4),
-        "95% CI": f"{lo_rr:.4f}–{hi_rr:.4f}",
-        "Lower": round(lo_rr, 4),
-        "Upper": round(hi_rr, 4),
-    },{
-        "Measure": "Vaccine Effectiveness (VE, %)",
-        "Estimate": round(ve, 2),
-        "95% CI": f"{ve_lo:.2f}–{ve_hi:.2f}",
-        "Lower": round(ve_lo, 2),
-        "Upper": round(ve_hi, 2),
-    }])
-    return out
-
-def chi_square_tests(table: np.ndarray):
-    chi2, p, dof, expected = chi2_contingency(table, correction=False)
-    res = pd.DataFrame([{
-        "Test": "Pearson Chi-Square",
-        "Value": round(float(chi2), 4),
-        "df": int(dof),
-        "p-value": _p_spss(p),
-        "Significant (p<0.05)": _yesno(p)
-    }])
-
-    # Yates correction only for 2x2
-    yates = None
-    if table.shape == (2,2):
-        chi2_y, p_y, dof_y, _ = chi2_contingency(table, correction=True)
-        yates = pd.DataFrame([{
-            "Test": "Continuity Correction (Yates)",
-            "Value": round(float(chi2_y), 4),
-            "df": int(dof_y),
-            "p-value": _p_spss(p_y),
-            "Significant (p<0.05)": _yesno(p_y)
-        }])
-
-    expected_df = pd.DataFrame(expected, columns=[f"Col{i+1}" for i in range(table.shape[1])])
-    expected_df.insert(0, "Row", [f"Row{i+1}" for i in range(table.shape[0])])
-    return res, yates, expected_df
-
-def fisher_exact_2x2(table: np.ndarray):
-    if table.shape != (2,2):
-        raise ValueError("Fisher's Exact test requires a 2×2 table.")
-    # scipy.stats.fisher_exact returns OR + p
-    OR, p = stats.fisher_exact(table, alternative="two-sided")
-    out = pd.DataFrame([{
-        "Test": "Fisher's Exact (2-sided)",
-        "Odds Ratio": round(float(OR), 4),
-        "p-value": _p_spss(p),
-        "Significant (p<0.05)": _yesno(p)
-    }])
-    return out
-
-def goodness_of_fit(df: pd.DataFrame):
-    d = df.copy()
-    d["Observed"] = pd.to_numeric(d["Observed"], errors="coerce")
-    d = d.dropna(subset=["Observed"])
-    obs = d["Observed"].values.astype(float)
-
-    if "Expected proportion (optional)" in d.columns and d["Expected proportion (optional)"].notna().any():
-        p = pd.to_numeric(d["Expected proportion (optional)"], errors="coerce").fillna(0).values.astype(float)
-        if p.sum() <= 0:
-            raise ValueError("Expected proportions must sum to a positive value.")
-        p = p / p.sum()
-        exp = obs.sum() * p
-        chi2, pval = chisquare(f_obs=obs, f_exp=exp)
-    else:
-        chi2, pval = chisquare(f_obs=obs)  # equal expected
-        exp = np.repeat(obs.sum()/len(obs), len(obs))
-
-    exp_df = pd.DataFrame({"Category": d["Category"].astype(str).values, "Expected": np.round(exp, 4)})
-    out = pd.DataFrame([{
-        "Test": "Chi-Square Goodness-of-Fit",
-        "Value": round(float(chi2), 4),
-        "df": int(len(obs)-1),
-        "p-value": _p_spss(pval),
-        "Significant (p<0.05)": _yesno(pval)
-    }])
-    return out, exp_df
-
-def mantel_haenszel_from_long(df: pd.DataFrame, stratum="Stratum", exposure="Exposure", outcome="Outcome"):
-    d = df[[stratum, exposure, outcome]].dropna().copy()
-    d[outcome] = pd.to_numeric(d[outcome], errors="coerce")
-    d = d.dropna()
-    # outcome must be 0/1
-    if not set(d[outcome].unique()).issubset({0,1}):
-        raise ValueError("Outcome must be binary coded as 0/1.")
-
-    strata = []
-    for s, g in d.groupby(stratum):
-        # build 2x2: rows exposure levels (2), cols outcome (1/0)
-        ex_levels = list(g[exposure].unique())
-        if len(ex_levels) != 2:
-            raise ValueError(f"Each stratum must have exactly 2 exposure levels. Problem in {s}.")
-        # order: level0, level1
-        a = len(g[(g[exposure]==ex_levels[0]) & (g[outcome]==1)])
-        b = len(g[(g[exposure]==ex_levels[0]) & (g[outcome]==0)])
-        c = len(g[(g[exposure]==ex_levels[1]) & (g[outcome]==1)])
-        d0= len(g[(g[exposure]==ex_levels[1]) & (g[outcome]==0)])
-        strata.append([[a,b],[c,d0]])
-
-    stbl = StratifiedTable(strata)
-    mh_or = float(stbl.oddsratio_pooled)
-    ci_lo, ci_hi = stbl.oddsratio_pooled_confint()
-    chi2 = float(stbl.test_null_odds().statistic)
-    pval = float(stbl.test_null_odds().pvalue)
-
-    out = pd.DataFrame([{
-        "Test": "Mantel–Haenszel (Common OR)",
-        "Common OR": round(mh_or, 4),
-        "95% CI": f"{ci_lo:.4f}–{ci_hi:.4f}",
-        "Chi-square": round(chi2, 4),
-        "p-value": _p_spss(pval),
-        "Significant (p<0.05)": _yesno(pval)
-    }])
-    return out
-
-def cochran_q_with_posthoc(df: pd.DataFrame, subject_col="Subject"):
-    d = df.copy()
-    if subject_col not in d.columns:
-        raise ValueError("Subject column not found.")
-    cond_cols = [c for c in d.columns if c != subject_col]
-    if len(cond_cols) < 3:
-        raise ValueError("Cochran's Q requires 3 or more conditions (binary columns).")
-
-    # to numeric 0/1
-    X = d[cond_cols].apply(pd.to_numeric, errors="coerce")
-    X = X.dropna()
-    if not set(np.unique(X.values)).issubset({0,1}):
-        raise ValueError("Conditions must be binary coded as 0/1.")
-
-    # Cochran's Q
-    q_res = sm_cochrans_q(X.values)
-    Q = float(q_res.statistic)
-    p = float(q_res.pvalue)
-
-    main = pd.DataFrame([{
-        "Test": "Cochran's Q",
-        "Q": round(Q, 4),
-        "df": int(len(cond_cols)-1),
-        "p-value": _p_spss(p),
-        "Significant (p<0.05)": _yesno(p)
-    }])
-
-    # Post-hoc pairwise McNemar with Bonferroni
-    pairs = []
-    m = len(cond_cols)
-    n_tests = m*(m-1)//2
-    alpha_bonf = 0.05 / n_tests if n_tests > 0 else 0.05
-
-    for i in range(m):
-        for j in range(i+1, m):
-            c1, c2 = cond_cols[i], cond_cols[j]
-            tab = pd.crosstab(X[c1], X[c2]).reindex(index=[0,1], columns=[0,1], fill_value=0).values
-            # McNemar uses discordant pairs b/c
-            mc = mcnemar(tab, exact=False, correction=True)
-            p_ij = float(mc.pvalue)
-
-            pairs.append({
-                "Comparison": f"{c1} vs {c2}",
-                "McNemar chi2": round(float(mc.statistic), 4),
-                "p-value": _p_spss(p_ij),
-                "Bonferroni alpha": round(alpha_bonf, 6),
-                "Significant (Bonferroni)": "Yes" if p_ij < alpha_bonf else "No"
-            })
-
-    posthoc = pd.DataFrame(pairs)
-    return main, posthoc
-def _p_spss(p) -> str:
-    if p is None or (isinstance(p, float) and np.isnan(p)):
-        return ""
-    p = float(p)
-    return "< 0.001" if p < 0.001 else f"{p:.3f}"
-
-def _yesno(p) -> str:
-    if p is None or (isinstance(p, float) and np.isnan(p)):
-        return ""
-    return "Yes" if float(p) < 0.05 else "No"
-
-def _to_counts_table(df: pd.DataFrame) -> np.ndarray:
-    # df: numeric cells only
-    arr = df.apply(pd.to_numeric, errors="coerce").values
-    if np.isnan(arr).any():
-        raise ValueError("Table contains empty/non-numeric cells. Please fill all counts.")
-    if (arr < 0).any():
-        raise ValueError("Counts must be non-negative.")
-    return arr.astype(float)
-
-def calc_or_rr_ve_2x2(a, b, c, d):
-    # continuity correction if any zero
-    a,b,c,d = float(a),float(b),float(c),float(d)
-    if min(a,b,c,d) == 0:
-        a += 0.5; b += 0.5; c += 0.5; d += 0.5
-
-    # OR + CI
-    OR = (a*d)/(b*c)
-    se_or = np.sqrt(1/a + 1/b + 1/c + 1/d)
-    lo_or = np.exp(np.log(OR) - 1.96*se_or)
-    hi_or = np.exp(np.log(OR) + 1.96*se_or)
-
-    # RR + CI
-    rr = (a/(a+b)) / (c/(c+d))
-    se_rr = np.sqrt(1/a - 1/(a+b) + 1/c - 1/(c+d))
-    lo_rr = np.exp(np.log(rr) - 1.96*se_rr)
-    hi_rr = np.exp(np.log(rr) + 1.96*se_rr)
-
-    # VE + CI (VE = 1 - RR)
-    ve = (1 - rr) * 100
-    ve_lo = (1 - hi_rr) * 100
-    ve_hi = (1 - lo_rr) * 100
-
-    out = pd.DataFrame([{
-        "Measure": "Odds Ratio (OR)",
-        "Estimate": round(OR, 4),
-        "95% CI": f"{lo_or:.4f}–{hi_or:.4f}",
-        "Lower": round(lo_or, 4),
-        "Upper": round(hi_or, 4),
-    },{
-        "Measure": "Risk Ratio (RR)",
-        "Estimate": round(rr, 4),
-        "95% CI": f"{lo_rr:.4f}–{hi_rr:.4f}",
-        "Lower": round(lo_rr, 4),
-        "Upper": round(hi_rr, 4),
-    },{
-        "Measure": "Vaccine Effectiveness (VE, %)",
-        "Estimate": round(ve, 2),
-        "95% CI": f"{ve_lo:.2f}–{ve_hi:.2f}",
-        "Lower": round(ve_lo, 2),
-        "Upper": round(ve_hi, 2),
-    }])
-    return out
-
-def chi_square_tests(table: np.ndarray):
-    chi2, p, dof, expected = chi2_contingency(table, correction=False)
-    res = pd.DataFrame([{
-        "Test": "Pearson Chi-Square",
-        "Value": round(float(chi2), 4),
-        "df": int(dof),
-        "p-value": _p_spss(p),
-        "Significant (p<0.05)": _yesno(p)
-    }])
-
-    # Yates correction only for 2x2
-    yates = None
-    if table.shape == (2,2):
-        chi2_y, p_y, dof_y, _ = chi2_contingency(table, correction=True)
-        yates = pd.DataFrame([{
-            "Test": "Continuity Correction (Yates)",
-            "Value": round(float(chi2_y), 4),
-            "df": int(dof_y),
-            "p-value": _p_spss(p_y),
-            "Significant (p<0.05)": _yesno(p_y)
-        }])
-
-    expected_df = pd.DataFrame(expected, columns=[f"Col{i+1}" for i in range(table.shape[1])])
-    expected_df.insert(0, "Row", [f"Row{i+1}" for i in range(table.shape[0])])
-    return res, yates, expected_df
-
-def fisher_exact_2x2(table: np.ndarray):
-    if table.shape != (2,2):
-        raise ValueError("Fisher's Exact test requires a 2×2 table.")
-    # scipy.stats.fisher_exact returns OR + p
-    OR, p = stats.fisher_exact(table, alternative="two-sided")
-    out = pd.DataFrame([{
-        "Test": "Fisher's Exact (2-sided)",
-        "Odds Ratio": round(float(OR), 4),
-        "p-value": _p_spss(p),
-        "Significant (p<0.05)": _yesno(p)
-    }])
-    return out
-
-def goodness_of_fit(df: pd.DataFrame):
-    d = df.copy()
-    d["Observed"] = pd.to_numeric(d["Observed"], errors="coerce")
-    d = d.dropna(subset=["Observed"])
-    obs = d["Observed"].values.astype(float)
-
-    if "Expected proportion (optional)" in d.columns and d["Expected proportion (optional)"].notna().any():
-        p = pd.to_numeric(d["Expected proportion (optional)"], errors="coerce").fillna(0).values.astype(float)
-        if p.sum() <= 0:
-            raise ValueError("Expected proportions must sum to a positive value.")
-        p = p / p.sum()
-        exp = obs.sum() * p
-        chi2, pval = chisquare(f_obs=obs, f_exp=exp)
-    else:
-        chi2, pval = chisquare(f_obs=obs)  # equal expected
-        exp = np.repeat(obs.sum()/len(obs), len(obs))
-
-    exp_df = pd.DataFrame({"Category": d["Category"].astype(str).values, "Expected": np.round(exp, 4)})
-    out = pd.DataFrame([{
-        "Test": "Chi-Square Goodness-of-Fit",
-        "Value": round(float(chi2), 4),
-        "df": int(len(obs)-1),
-        "p-value": _p_spss(pval),
-        "Significant (p<0.05)": _yesno(pval)
-    }])
-    return out, exp_df
-
-def mantel_haenszel_from_long(df: pd.DataFrame, stratum="Stratum", exposure="Exposure", outcome="Outcome"):
-    d = df[[stratum, exposure, outcome]].dropna().copy()
-    d[outcome] = pd.to_numeric(d[outcome], errors="coerce")
-    d = d.dropna()
-    # outcome must be 0/1
-    if not set(d[outcome].unique()).issubset({0,1}):
-        raise ValueError("Outcome must be binary coded as 0/1.")
-
-    strata = []
-    for s, g in d.groupby(stratum):
-        # build 2x2: rows exposure levels (2), cols outcome (1/0)
-        ex_levels = list(g[exposure].unique())
-        if len(ex_levels) != 2:
-            raise ValueError(f"Each stratum must have exactly 2 exposure levels. Problem in {s}.")
-        # order: level0, level1
-        a = len(g[(g[exposure]==ex_levels[0]) & (g[outcome]==1)])
-        b = len(g[(g[exposure]==ex_levels[0]) & (g[outcome]==0)])
-        c = len(g[(g[exposure]==ex_levels[1]) & (g[outcome]==1)])
-        d0= len(g[(g[exposure]==ex_levels[1]) & (g[outcome]==0)])
-        strata.append([[a,b],[c,d0]])
-
-    stbl = StratifiedTable(strata)
-    mh_or = float(stbl.oddsratio_pooled)
-    ci_lo, ci_hi = stbl.oddsratio_pooled_confint()
-    chi2 = float(stbl.test_null_odds().statistic)
-    pval = float(stbl.test_null_odds().pvalue)
-
-    out = pd.DataFrame([{
-        "Test": "Mantel–Haenszel (Common OR)",
-        "Common OR": round(mh_or, 4),
-        "95% CI": f"{ci_lo:.4f}–{ci_hi:.4f}",
-        "Chi-square": round(chi2, 4),
-        "p-value": _p_spss(pval),
-        "Significant (p<0.05)": _yesno(pval)
-    }])
-    return out
-
-def cochran_q_with_posthoc(df: pd.DataFrame, subject_col="Subject"):
-    d = df.copy()
-    if subject_col not in d.columns:
-        raise ValueError("Subject column not found.")
-    cond_cols = [c for c in d.columns if c != subject_col]
-    if len(cond_cols) < 3:
-        raise ValueError("Cochran's Q requires 3 or more conditions (binary columns).")
-
-    # to numeric 0/1
-    X = d[cond_cols].apply(pd.to_numeric, errors="coerce")
-    X = X.dropna()
-    if not set(np.unique(X.values)).issubset({0,1}):
-        raise ValueError("Conditions must be binary coded as 0/1.")
-
-    # Cochran's Q
-    q_res = sm_cochrans_q(X.values)
-    Q = float(q_res.statistic)
-    p = float(q_res.pvalue)
-
-    main = pd.DataFrame([{
-        "Test": "Cochran's Q",
-        "Q": round(Q, 4),
-        "df": int(len(cond_cols)-1),
-        "p-value": _p_spss(p),
-        "Significant (p<0.05)": _yesno(p)
-    }])
-
-    # Post-hoc pairwise McNemar with Bonferroni
-    pairs = []
-    m = len(cond_cols)
-    n_tests = m*(m-1)//2
-    alpha_bonf = 0.05 / n_tests if n_tests > 0 else 0.05
-
-    for i in range(m):
-        for j in range(i+1, m):
-            c1, c2 = cond_cols[i], cond_cols[j]
-            tab = pd.crosstab(X[c1], X[c2]).reindex(index=[0,1], columns=[0,1], fill_value=0).values
-            # McNemar uses discordant pairs b/c
-            mc = mcnemar(tab, exact=False, correction=True)
-            p_ij = float(mc.pvalue)
-
-            pairs.append({
-                "Comparison": f"{c1} vs {c2}",
-                "McNemar chi2": round(float(mc.statistic), 4),
-                "p-value": _p_spss(p_ij),
-                "Bonferroni alpha": round(alpha_bonf, 6),
-                "Significant (Bonferroni)": "Yes" if p_ij < alpha_bonf else "No"
-            })
-
-    posthoc = pd.DataFrame(pairs)
-    return main, posthoc
+def make_diag2x2_template() -> pd.DataFrame:
+    # Confusion matrix style input
+    return pd.DataFrame({
+        "": ["Actual Positive", "Actual Negative"],
+        "Test Positive": [None, None],
+        "Test Negative": [None, None],
+    })
+
+def make_ci_template() -> pd.DataFrame:
+    return pd.DataFrame({"Value": [None, None, None]})
 
 # =========================================================
-# Data I/O
-# =========================================================
-def read_uploaded_file(uploaded) -> pd.DataFrame | None:
-    if uploaded is None:
-        return None
-    name = uploaded.name.lower()
-    try:
-        if name.endswith(".csv"):
-            return pd.read_csv(uploaded)
-        if name.endswith(".xlsx") or name.endswith(".xls"):
-            return pd.read_excel(uploaded)
-    except Exception as e:
-        st.error(f"Failed to read file: {e}")
-        return None
-    st.error("Unsupported file type. Please upload CSV or Excel.")
-    return None
-def show_dataset_status():
-    if st.session_state.df is None:
-        st.info("No dataset loaded yet. Please upload a CSV/XLSX file in the Data section.")
-        return
-    df = st.session_state.df
-    st.success(f"Dataset loaded: {df.shape[0]} rows × {df.shape[1]} columns")
-    with st.expander("Preview (first 20 rows)", expanded=False):
-        st.dataframe(df.head(20), use_container_width=True)
-
-
-# =========================================================
-# Logistic regression
+# Logistic regression (OR table + model compare)
 # =========================================================
 def run_logistic_or_table(df: pd.DataFrame, target: str, features: list[str]) -> pd.DataFrame:
     data = df[[target] + features].dropna().copy()
@@ -1007,7 +356,6 @@ def run_logistic_or_table(df: pd.DataFrame, target: str, features: list[str]) ->
     if y_raw.nunique() != 2:
         raise ValueError("Binary logistic regression requires exactly 2 unique target values.")
 
-    # map to 0/1 if needed
     if set(pd.unique(y_raw)) != {0, 1}:
         classes = list(pd.unique(y_raw))
         mapping = {classes[0]: 0, classes[1]: 1}
@@ -1027,31 +375,29 @@ def run_logistic_or_table(df: pd.DataFrame, target: str, features: list[str]) ->
     conf = logit.conf_int()
     pvals = logit.pvalues
 
-    odds_table = pd.DataFrame({
+    odds = pd.DataFrame({
         "Term": params.index,
-        "Coefficient (β)": params.values,
-        "Odds Ratio": np.exp(params.values),
-        "CI 2.5%": np.exp(conf[0].values),
-        "CI 97.5%": np.exp(conf[1].values),
+        "B": params.values,
+        "Exp(B)": np.exp(params.values),
+        "95% CI for Exp(B) Lower": np.exp(conf[0].values),
+        "95% CI for Exp(B) Upper": np.exp(conf[1].values),
         "p_raw": pvals.values,
     })
 
-    odds_table["p-value"] = odds_table["p_raw"].apply(format_p_value)
-    odds_table["Significant (p<0.05)"] = odds_table["p_raw"].apply(lambda p: "Yes" if float(p) < 0.05 else "")
-    odds_table = odds_table.drop(columns=["p_raw"])
+    odds["p-value"] = odds["p_raw"].apply(format_p_value)
+    odds["Significant (p<0.05)"] = odds["p_raw"].apply(lambda p: "Yes" if float(p) < 0.05 else "No")
+    odds = odds.drop(columns=["p_raw"])
 
-    # Hide OR & CI for const (SPSS style)
-    is_const = odds_table["Term"].isin(["const", "Intercept"])
-    odds_table.loc[is_const, ["Odds Ratio", "CI 2.5%", "CI 97.5%"]] = np.nan
+    # SPSS-like: hide Exp(B), CI for constant
+    is_const = odds["Term"].isin(["const", "Intercept"])
+    odds.loc[is_const, ["Exp(B)", "95% CI for Exp(B) Lower", "95% CI for Exp(B) Upper"]] = np.nan
 
-    for col in ["Coefficient (β)", "Odds Ratio", "CI 2.5%", "CI 97.5%"]:
-        odds_table[col] = pd.to_numeric(odds_table[col], errors="coerce").round(4)
+    for col in ["B", "Exp(B)", "95% CI for Exp(B) Lower", "95% CI for Exp(B) Upper"]:
+        odds[col] = pd.to_numeric(odds[col], errors="coerce").round(4)
 
-    odds_table = odds_table[
-        ["Term", "Coefficient (β)", "Odds Ratio", "CI 2.5%", "CI 97.5%", "p-value", "Significant (p<0.05)"]
+    return odds[
+        ["Term", "B", "Exp(B)", "95% CI for Exp(B) Lower", "95% CI for Exp(B) Upper", "p-value", "Significant (p<0.05)"]
     ]
-    return odds_table
-
 
 def compare_classification_models(df: pd.DataFrame, target: str, features: list[str],
                                  test_size: float = 0.25, random_state: int = 42):
@@ -1090,160 +436,103 @@ def compare_classification_models(df: pd.DataFrame, target: str, features: list[
     for name, model in models.items():
         model.fit(X_train, y_train)
 
-        # probabilities for ROC
         if hasattr(model, "predict_proba"):
             prob = model.predict_proba(X_test)[:, 1]
         else:
-            # fallback
-            prob = model.decision_function(X_test)
-            prob = (prob - prob.min()) / (prob.max() - prob.min() + 1e-12)
+            score = model.decision_function(X_test)
+            prob = (score - score.min()) / (score.max() - score.min() + 1e-12)
 
         pred = (prob >= 0.5).astype(int)
 
-        acc = accuracy_score(y_test, pred)
-        pre = precision_score(y_test, pred, zero_division=0)
-        rec = recall_score(y_test, pred, zero_division=0)
-        f1 = f1_score(y_test, pred, zero_division=0)
         auc_val = roc_auc_score(y_test, prob)
-
-        fpr, tpr, _ = roc_curve(y_test, prob)
-        roc_lines[name] = (fpr, tpr, auc_val)
-
         rows.append({
             "Model": name,
             "AUC": round(float(auc_val), 4),
-            "Accuracy": round(float(acc), 4),
-            "Precision": round(float(pre), 4),
-            "Recall": round(float(rec), 4),
-            "F1": round(float(f1), 4),
+            "Accuracy": round(float(accuracy_score(y_test, pred)), 4),
+            "Precision": round(float(precision_score(y_test, pred, zero_division=0)), 4),
+            "Recall": round(float(recall_score(y_test, pred, zero_division=0)), 4),
+            "F1": round(float(f1_score(y_test, pred, zero_division=0)), 4),
         })
 
-    metrics_df = pd.DataFrame(rows).sort_values("AUC", ascending=False).reset_index(drop=True)
+        fpr, tpr, _ = roc_curve(y_test, prob)
+        roc_lines[name] = (fpr, tpr, float(auc_val))
 
-    # Confusion matrix for top model
+    metrics_df = pd.DataFrame(rows).sort_values("AUC", ascending=False).reset_index(drop=True)
     top_name = metrics_df.loc[0, "Model"]
     top_model = models[top_name]
     if hasattr(top_model, "predict_proba"):
         top_prob = top_model.predict_proba(X_test)[:, 1]
     else:
-        top_prob = top_model.decision_function(X_test)
-        top_prob = (top_prob - top_prob.min()) / (top_prob.max() - top_prob.min() + 1e-12)
+        score = top_model.decision_function(X_test)
+        top_prob = (score - score.min()) / (score.max() - score.min() + 1e-12)
     top_pred = (top_prob >= 0.5).astype(int)
     cm = confusion_matrix(y_test, top_pred)
 
     return {"metrics": metrics_df, "roc_lines": roc_lines, "cm_top": cm, "top_model_name": top_name}
 
-
 # =========================================================
-# Linear regression (OLS via formula to fix design_info error)
+# Linear regression (OLS via formula; SPSS-like ANOVA/coef)
 # =========================================================
-def q(name: str) -> str:
-    # Patsy quote helper for any column name
-    return f'Q("{name}")'
+def _clean_term(s: str) -> str:
+    if isinstance(s, str) and s.startswith('Q("') and s.endswith('")'):
+        return s[3:-2]
+    if isinstance(s, str) and s.startswith('C(Q("') and s.endswith('"))'):
+        return s[5:-3]
+    return s
 
 def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
     data = df[[target] + features].dropna().copy()
-
-    # Ensure numeric
     data[target] = pd.to_numeric(data[target], errors="coerce")
     for c in features:
         data[c] = pd.to_numeric(data[c], errors="coerce")
     data = data.dropna()
 
     if data.shape[0] < max(10, len(features) + 3):
-        raise ValueError("Not enough rows after cleaning. Please check missing or non-numeric values.")
-
-    # Build formula (for ANOVA compatibility)
-    def q(name: str) -> str:
-        return f'Q("{name}")'
+        raise ValueError("Not enough rows after cleaning.")
 
     formula = f'{q(target)} ~ ' + " + ".join(q(c) for c in features)
-
     model = smf.ols(formula=formula, data=data).fit()
 
-    # =========================
-    # Coefficients table
-    # =========================
     conf = model.conf_int()
-
     coef_df = pd.DataFrame({
         "Term": model.params.index,
-        "Coefficient (B)": model.params.values,
+        "B": model.params.values,
         "Std. Error": model.bse.values,
         "t": model.tvalues.values,
         "p_raw": model.pvalues.values,
-        "CI 2.5%": conf[0].values,
-        "CI 97.5%": conf[1].values,
+        "95% CI Lower": conf[0].values,
+        "95% CI Upper": conf[1].values,
     })
-
-    # Clean Q("var") → var
-    def _clean_term(s: str) -> str:
-        if isinstance(s, str) and s.startswith('Q("') and s.endswith('")'):
-            return s[3:-2]
-        return s
-
     coef_df["Term"] = coef_df["Term"].apply(_clean_term)
-
     coef_df["p-value"] = coef_df["p_raw"].apply(format_p_value)
-    coef_df["Significant (p<0.05)"] = coef_df["p_raw"].apply(
-        lambda p: "Yes" if float(p) < 0.05 else "No"
-    )
+    coef_df["Significant (p<0.05)"] = coef_df["p_raw"].apply(lambda p: "Yes" if float(p) < 0.05 else "No")
     coef_df = coef_df.drop(columns=["p_raw"])
-
-    for col in ["Coefficient (B)", "Std. Error", "t", "CI 2.5%", "CI 97.5%"]:
+    for col in ["B", "Std. Error", "t", "95% CI Lower", "95% CI Upper"]:
         coef_df[col] = pd.to_numeric(coef_df[col], errors="coerce").round(4)
 
-    coef_df = coef_df[
-        ["Term", "Coefficient (B)", "Std. Error", "t", "CI 2.5%", "CI 97.5%", "p-value", "Significant (p<0.05)"]
-    ]
-
-    # =========================
-    # ANOVA table
-    # =========================
     anova_df = anova_lm(model, typ=1).reset_index().rename(columns={"index": "Source"})
     anova_df["Source"] = anova_df["Source"].apply(_clean_term)
-
-    anova_df = anova_df.rename(columns={
-        "df": "df",
-        "sum_sq": "Sum Sq",
-        "mean_sq": "Mean Sq",
-        "F": "F",
-        "PR(>F)": "p_raw"
-    })
-
+    anova_df = anova_df.rename(columns={"sum_sq": "Sum Sq", "mean_sq": "Mean Sq", "PR(>F)": "p_raw"})
     if "p_raw" in anova_df.columns:
         anova_df["p-value"] = anova_df["p_raw"].apply(format_p_value)
         anova_df = anova_df.drop(columns=["p_raw"])
-
     for col in ["Sum Sq", "Mean Sq", "F"]:
         if col in anova_df.columns:
             anova_df[col] = pd.to_numeric(anova_df[col], errors="coerce").round(4)
 
-    # Replace NaN -> None (SPSS-style)  ✅ apply to the whole ANOVA table
-    anova_df = anova_df.astype(object).where(pd.notna(anova_df), None)
-    # Final cleanup: show empty cells instead of None / NaN / "nan"
-    anova_df = anova_df.replace(
-        [np.nan, "nan", "NaN", None],
-        ""
-    )
+    # IMPORTANT: display blanks instead of nan/None everywhere
+    anova_df = anova_df.replace([np.nan, None, "nan", "NaN"], "")
 
-
-    # =========================
-    # Model fit metrics
-    # =========================
     metrics = pd.DataFrame([{
         "N": int(model.nobs),
         "R-squared": round(float(model.rsquared), 4),
         "Adj. R-squared": round(float(model.rsquared_adj), 4),
         "AIC": round(float(model.aic), 4),
         "BIC": round(float(model.bic), 4),
-        "F-statistic": round(float(model.fvalue), 4) if model.fvalue is not None else None,
-        "F p-value": format_p_value(float(model.f_pvalue)) if model.f_pvalue is not None else None,
+        "F": round(float(model.fvalue), 4) if model.fvalue is not None else "",
+        "Sig.": format_p_value(float(model.f_pvalue)) if model.f_pvalue is not None else "",
     }])
 
-    # =========================
-    # Diagnostics
-    # =========================
     resid = model.resid
     fitted = model.fittedvalues
 
@@ -1254,35 +543,24 @@ def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
     for i, col in enumerate(X_sm.columns):
         if col == "const":
             continue
-        vif_rows.append({
-            "Variable": col,
-            "VIF": round(float(variance_inflation_factor(X_sm.values, i)), 4)
-        })
+        vif_rows.append({"Variable": col, "VIF": round(float(variance_inflation_factor(X_sm.values, i)), 4)})
     vif_df = pd.DataFrame(vif_rows).sort_values("VIF", ascending=False).reset_index(drop=True)
 
-    # Normality
-    s_stat, s_p = shapiro(resid)
-    shapiro_df = pd.DataFrame([{
-        "Test": "Shapiro-Wilk",
-        "Statistic": round(float(s_stat), 4),
-        "p-value": format_p_value(float(s_p))
-    }])
+    # Residual diagnostics
+    s_stat, s_p = shapiro(resid) if len(resid) >= 3 else (np.nan, np.nan)
+    shapiro_df = pd.DataFrame([{"Test": "Shapiro-Wilk", "Statistic": round(float(s_stat), 4) if not np.isnan(s_stat) else "",
+                               "Sig.": format_p_value(float(s_p)) if not np.isnan(s_p) else ""}])
 
-    # Homoscedasticity
     lm, lm_p, fval, f_p = het_breuschpagan(resid, sm.add_constant(X))
     bp_df = pd.DataFrame([{
         "Test": "Breusch-Pagan",
-        "LM Statistic": round(float(lm), 4),
-        "LM p-value": format_p_value(float(lm_p)),
-        "F Statistic": round(float(fval), 4),
-        "F p-value": format_p_value(float(f_p)),
+        "LM": round(float(lm), 4),
+        "Sig. (LM)": format_p_value(float(lm_p)),
+        "F": round(float(fval), 4),
+        "Sig. (F)": format_p_value(float(f_p)),
     }])
 
-    # Independence
-    dw_df = pd.DataFrame([{
-        "Test": "Durbin-Watson",
-        "Statistic": round(float(durbin_watson(resid)), 4)
-    }])
+    dw_df = pd.DataFrame([{"Test": "Durbin-Watson", "Statistic": round(float(durbin_watson(resid)), 4)}])
 
     return {
         "model": model,
@@ -1297,6 +575,276 @@ def run_linear_regression(df: pd.DataFrame, target: str, features: list[str]):
         "dw": dw_df
     }
 
+# =========================================================
+# Categorical metrics (OR/RR/VE + Diagnostic accuracy 2x2)
+# =========================================================
+def _cc_if_zero(a, b, c, d):
+    a, b, c, d = float(a), float(b), float(c), float(d)
+    if min(a, b, c, d) == 0:
+        return a + 0.5, b + 0.5, c + 0.5, d + 0.5
+    return a, b, c, d
+
+def _log_ci(est, se):
+    lo = math.exp(math.log(est) - 1.96 * se)
+    hi = math.exp(math.log(est) + 1.96 * se)
+    return lo, hi
+
+def calc_or_rr_ve_2x2(a, b, c, d):
+    a, b, c, d = _cc_if_zero(a, b, c, d)
+
+    OR = (a * d) / (b * c)
+    se_or = math.sqrt(1/a + 1/b + 1/c + 1/d)
+    lo_or, hi_or = _log_ci(OR, se_or)
+
+    rr = (a/(a+b)) / (c/(c+d))
+    se_rr = math.sqrt(1/a - 1/(a+b) + 1/c - 1/(c+d))
+    lo_rr, hi_rr = _log_ci(rr, se_rr)
+
+    ve = (1 - rr) * 100
+    ve_lo = (1 - hi_rr) * 100
+    ve_hi = (1 - lo_rr) * 100
+
+    out = pd.DataFrame([
+        {"Measure": "Odds Ratio (OR)", "Estimate": round(OR, 4), "95% CI Lower": round(lo_or, 4), "95% CI Upper": round(hi_or, 4)},
+        {"Measure": "Risk Ratio (RR)", "Estimate": round(rr, 4), "95% CI Lower": round(lo_rr, 4), "95% CI Upper": round(hi_rr, 4)},
+        {"Measure": "Vaccine Effectiveness (VE, %)", "Estimate": round(ve, 2), "95% CI Lower": round(ve_lo, 2), "95% CI Upper": round(ve_hi, 2)},
+    ])
+    return out
+
+def wilson_ci(x, n, alpha=0.05):
+    if n <= 0:
+        return (np.nan, np.nan)
+    z = stats.norm.ppf(1 - alpha/2)
+    phat = x / n
+    denom = 1 + (z**2)/n
+    center = (phat + (z**2)/(2*n)) / denom
+    half = (z * math.sqrt((phat*(1-phat) + (z**2)/(4*n)) / n)) / denom
+    return (max(0.0, center-half), min(1.0, center+half))
+
+def diagnostic_accuracy_2x2(tp, fp, fn, tn):
+    tp, fp, fn, tn = float(tp), float(fp), float(fn), float(tn)
+    # rates
+    sens = tp / (tp + fn) if (tp+fn) > 0 else np.nan
+    spec = tn / (tn + fp) if (tn+fp) > 0 else np.nan
+    fpr = 1 - spec if not np.isnan(spec) else np.nan
+    fnr = 1 - sens if not np.isnan(sens) else np.nan
+    ppv = tp / (tp + fp) if (tp+fp) > 0 else np.nan
+    npv = tn / (tn + fn) if (tn+fn) > 0 else np.nan
+
+    # LR+ LR-
+    lr_pos = sens / (1 - spec) if (not np.isnan(sens) and not np.isnan(spec) and (1-spec) > 0) else np.nan
+    lr_neg = (1 - sens) / spec if (not np.isnan(sens) and not np.isnan(spec) and spec > 0) else np.nan
+
+    # Wilson CI for proportions
+    sens_ci = wilson_ci(tp, tp+fn) if (tp+fn) > 0 else (np.nan, np.nan)
+    spec_ci = wilson_ci(tn, tn+fp) if (tn+fp) > 0 else (np.nan, np.nan)
+    ppv_ci  = wilson_ci(tp, tp+fp) if (tp+fp) > 0 else (np.nan, np.nan)
+    npv_ci  = wilson_ci(tn, tn+fn) if (tn+fn) > 0 else (np.nan, np.nan)
+
+    def fmt_ci(lo, hi, pct=True):
+        if np.isnan(lo) or np.isnan(hi):
+            return ""
+        if pct:
+            return f"{lo*100:.1f}–{hi*100:.1f}"
+        return f"{lo:.4f}–{hi:.4f}"
+
+    out = pd.DataFrame([
+        {"Measure": "Sensitivity", "Estimate": "" if np.isnan(sens) else round(sens*100, 1), "95% CI": fmt_ci(*sens_ci, pct=True)},
+        {"Measure": "Specificity", "Estimate": "" if np.isnan(spec) else round(spec*100, 1), "95% CI": fmt_ci(*spec_ci, pct=True)},
+        {"Measure": "False Positive Rate", "Estimate": "" if np.isnan(fpr) else round(fpr*100, 1), "95% CI": ""},
+        {"Measure": "False Negative Rate", "Estimate": "" if np.isnan(fnr) else round(fnr*100, 1), "95% CI": ""},
+        {"Measure": "PPV", "Estimate": "" if np.isnan(ppv) else round(ppv*100, 1), "95% CI": fmt_ci(*ppv_ci, pct=True)},
+        {"Measure": "NPV", "Estimate": "" if np.isnan(npv) else round(npv*100, 1), "95% CI": fmt_ci(*npv_ci, pct=True)},
+        {"Measure": "LR+", "Estimate": "" if np.isnan(lr_pos) else round(lr_pos, 4), "95% CI": ""},
+        {"Measure": "LR-", "Estimate": "" if np.isnan(lr_neg) else round(lr_neg, 4), "95% CI": ""},
+    ])
+    return out
+
+def chi_square_tests(table: np.ndarray):
+    chi2, p, dof, expected = chi2_contingency(table, correction=False)
+    out = pd.DataFrame([{
+        "Test": "Pearson Chi-Square",
+        "Value": round(float(chi2), 4),
+        "df": int(dof),
+        "Asymp. Sig. (2-sided)": format_p_value(p),
+        "Significant (p<0.05)": yesno_from_p(p)
+    }])
+
+    yates_df = None
+    if table.shape == (2, 2):
+        chi2_y, p_y, dof_y, _ = chi2_contingency(table, correction=True)
+        yates_df = pd.DataFrame([{
+            "Test": "Continuity Correction (Yates)",
+            "Value": round(float(chi2_y), 4),
+            "df": int(dof_y),
+            "Asymp. Sig. (2-sided)": format_p_value(p_y),
+            "Significant (p<0.05)": yesno_from_p(p_y)
+        }])
+
+    expected_df = pd.DataFrame(expected)
+    expected_df.columns = [f"Col{i+1}" for i in range(expected_df.shape[1])]
+    expected_df.insert(0, "Row", [f"Row{i+1}" for i in range(expected_df.shape[0])])
+    return out, yates_df, expected_df
+
+def fisher_exact_2x2(table: np.ndarray):
+    if table.shape != (2, 2):
+        raise ValueError("Fisher's Exact requires a 2×2 table.")
+    OR, p = stats.fisher_exact(table, alternative="two-sided")
+    out = pd.DataFrame([{
+        "Test": "Fisher's Exact Test",
+        "Odds Ratio": round(float(OR), 4),
+        "Exact Sig. (2-sided)": format_p_value(p),
+        "Significant (p<0.05)": yesno_from_p(p)
+    }])
+    return out
+
+def goodness_of_fit(df: pd.DataFrame):
+    d = df.copy()
+    d["Observed"] = pd.to_numeric(d["Observed"], errors="coerce")
+    d = d.dropna(subset=["Observed"])
+    obs = d["Observed"].values.astype(float)
+
+    if "Expected proportion (optional)" in d.columns and d["Expected proportion (optional)"].notna().any():
+        p = pd.to_numeric(d["Expected proportion (optional)"], errors="coerce").fillna(0).values.astype(float)
+        if p.sum() <= 0:
+            raise ValueError("Expected proportions must sum to a positive value.")
+        p = p / p.sum()
+        exp = obs.sum() * p
+        chi2, pval = chisquare(f_obs=obs, f_exp=exp)
+    else:
+        chi2, pval = chisquare(f_obs=obs)
+        exp = np.repeat(obs.sum()/len(obs), len(obs))
+
+    exp_df = pd.DataFrame({"Category": d["Category"].astype(str).values, "Expected": np.round(exp, 4)})
+    out = pd.DataFrame([{
+        "Test": "Chi-Square Goodness-of-Fit",
+        "Value": round(float(chi2), 4),
+        "df": int(len(obs)-1),
+        "Asymp. Sig.": format_p_value(pval),
+        "Significant (p<0.05)": yesno_from_p(pval)
+    }])
+    return out, exp_df
+
+def mantel_haenszel_from_long(df: pd.DataFrame, stratum="Stratum", exposure="Exposure", outcome="Outcome"):
+    d = df[[stratum, exposure, outcome]].dropna().copy()
+    d[outcome] = pd.to_numeric(d[outcome], errors="coerce")
+    d = d.dropna()
+    if not set(d[outcome].unique()).issubset({0, 1}):
+        raise ValueError("Outcome must be binary coded as 0/1.")
+
+    strata_tables = []
+    for s, g in d.groupby(stratum):
+        ex_levels = list(g[exposure].unique())
+        if len(ex_levels) != 2:
+            raise ValueError(f"Each stratum must have exactly 2 exposure levels. Problem in {s}.")
+        a = len(g[(g[exposure]==ex_levels[0]) & (g[outcome]==1)])
+        b = len(g[(g[exposure]==ex_levels[0]) & (g[outcome]==0)])
+        c = len(g[(g[exposure]==ex_levels[1]) & (g[outcome]==1)])
+        d0= len(g[(g[exposure]==ex_levels[1]) & (g[outcome]==0)])
+        strata_tables.append([[a,b],[c,d0]])
+
+    stbl = StratifiedTable(strata_tables)
+    mh_or = float(stbl.oddsratio_pooled)
+    ci_lo, ci_hi = stbl.oddsratio_pooled_confint()
+    chi2 = float(stbl.test_null_odds().statistic)
+    pval = float(stbl.test_null_odds().pvalue)
+
+    out = pd.DataFrame([{
+        "Test": "Mantel–Haenszel Common Odds Ratio",
+        "Common OR": round(mh_or, 4),
+        "95% CI Lower": round(float(ci_lo), 4),
+        "95% CI Upper": round(float(ci_hi), 4),
+        "Chi-Square": round(chi2, 4),
+        "Asymp. Sig.": format_p_value(pval),
+        "Significant (p<0.05)": yesno_from_p(pval)
+    }])
+    return out
+
+def cochran_q_with_posthoc(df: pd.DataFrame, subject_col="Subject"):
+    d = df.copy()
+    if subject_col not in d.columns:
+        raise ValueError("Subject column not found.")
+    cond_cols = [c for c in d.columns if c != subject_col]
+    if len(cond_cols) < 3:
+        raise ValueError("Cochran's Q requires 3+ condition columns.")
+
+    X = d[cond_cols].apply(pd.to_numeric, errors="coerce").dropna()
+    if not set(np.unique(X.values)).issubset({0, 1}):
+        raise ValueError("Conditions must be binary coded as 0/1.")
+
+    q_res = sm_cochrans_q(X.values)
+    Q = float(q_res.statistic)
+    p = float(q_res.pvalue)
+
+    main = pd.DataFrame([{
+        "Test": "Cochran's Q Test",
+        "Q": round(Q, 4),
+        "df": int(len(cond_cols)-1),
+        "Asymp. Sig.": format_p_value(p),
+        "Significant (p<0.05)": yesno_from_p(p)
+    }])
+
+    # McNemar post-hoc + Bonferroni
+    pairs = []
+    m = len(cond_cols)
+    n_tests = m*(m-1)//2
+    alpha_bonf = 0.05 / n_tests if n_tests > 0 else 0.05
+
+    for i in range(m):
+        for j in range(i+1, m):
+            c1, c2 = cond_cols[i], cond_cols[j]
+            tab = pd.crosstab(X[c1], X[c2]).reindex(index=[0,1], columns=[0,1], fill_value=0).values
+            mc = mcnemar(tab, exact=False, correction=True)
+            p_ij = float(mc.pvalue)
+            pairs.append({
+                "Comparison": f"{c1} vs {c2}",
+                "McNemar Chi-Square": round(float(mc.statistic), 4),
+                "Sig.": format_p_value(p_ij),
+                "Bonferroni alpha": round(alpha_bonf, 6),
+                "Significant (Bonferroni)": "Yes" if p_ij < alpha_bonf else "No"
+            })
+
+    posthoc = pd.DataFrame(pairs)
+    return main, posthoc
+
+# =========================================================
+# CI Estimation
+# =========================================================
+def ci_mean(x: np.ndarray, alpha=0.05):
+    x = x[~np.isnan(x)]
+    n = len(x)
+    if n < 2:
+        raise ValueError("Need at least 2 values.")
+    m = np.mean(x)
+    s = np.std(x, ddof=1)
+    tcrit = stats.t.ppf(1-alpha/2, df=n-1)
+    half = tcrit * s / math.sqrt(n)
+    return m, m-half, m+half
+
+def ci_variance(x: np.ndarray, alpha=0.05):
+    x = x[~np.isnan(x)]
+    n = len(x)
+    if n < 2:
+        raise ValueError("Need at least 2 values.")
+    s2 = np.var(x, ddof=1)
+    df = n - 1
+    lo = df * s2 / stats.chi2.ppf(1 - alpha/2, df)
+    hi = df * s2 / stats.chi2.ppf(alpha/2, df)
+    return s2, lo, hi
+
+def ci_median_bootstrap(x: np.ndarray, alpha=0.05, n_boot=2000, seed=42):
+    x = x[~np.isnan(x)]
+    if len(x) < 3:
+        raise ValueError("Need at least 3 values.")
+    rng = np.random.default_rng(seed)
+    meds = []
+    for _ in range(n_boot):
+        samp = rng.choice(x, size=len(x), replace=True)
+        meds.append(np.median(samp))
+    meds = np.array(meds)
+    lo = np.quantile(meds, alpha/2)
+    hi = np.quantile(meds, 1-alpha/2)
+    return np.median(x), lo, hi
 
 # =========================================================
 # Sidebar navigation (Expander + Buttons)
@@ -1314,7 +862,7 @@ with st.sidebar:
         if st.button("Modeling (OR Table)", use_container_width=True):
             st.session_state.main_menu = "Logistic Regression"
             st.session_state.sub_menu = "Modeling"
-        if st.button("Model Comparison (ML)", use_container_width=True):
+        if st.button("Model Comparison (ML + ROC)", use_container_width=True):
             st.session_state.main_menu = "Logistic Regression"
             st.session_state.sub_menu = "Comparison"
         if st.button("Export", use_container_width=True):
@@ -1338,50 +886,30 @@ with st.sidebar:
             st.session_state.main_menu = "Linear Regression"
             st.session_state.sub_menu = "Export"
 
-    with st.expander("ANOVA", expanded=(st.session_state.main_menu == "ANOVA")):
-        if st.button("One-way (between-subjects)", key="a1", use_container_width=True):
-            st.session_state.main_menu = "ANOVA"
-            st.session_state.sub_menu = "One-way"
-        if st.button("One-way (repeated measures)", key="a2", use_container_width=True):
-            st.session_state.main_menu = "ANOVA"
-            st.session_state.sub_menu = "One-way RM"
-        if st.button("Two-way (with replication)", key="a3", use_container_width=True):
-            st.session_state.main_menu = "ANOVA"
-            st.session_state.sub_menu = "Two-way"
-        if st.button("Two-way (repeated measures)", key="a4", use_container_width=True):
-            st.session_state.main_menu = "ANOVA"
-            st.session_state.sub_menu = "Two-way RM"
-
-    with st.expander("t-test", expanded=(st.session_state.main_menu == "t-test")):
-        if st.button("One-sample", key="t1", use_container_width=True):
-            st.session_state.main_menu = "t-test"
-            st.session_state.sub_menu = "One-sample"
-        if st.button("Independent 2-sample", key="t2", use_container_width=True):
-            st.session_state.main_menu = "t-test"
-            st.session_state.sub_menu = "Two-independent"
-        if st.button("Paired", key="t3", use_container_width=True):
-            st.session_state.main_menu = "t-test"
-            st.session_state.sub_menu = "Paired"
     with st.expander("Categorical Tests", expanded=(st.session_state.main_menu == "Categorical")):
         if st.button("Contingency Table (r×c) / Chi-square", key="c1", use_container_width=True):
             st.session_state.main_menu = "Categorical"
             st.session_state.sub_menu = "Chi-square"
-
         if st.button("Fisher's Exact (2×2)", key="c2", use_container_width=True):
             st.session_state.main_menu = "Categorical"
             st.session_state.sub_menu = "Fisher"
-
         if st.button("Goodness-of-fit", key="c3", use_container_width=True):
             st.session_state.main_menu = "Categorical"
             st.session_state.sub_menu = "GOF"
-
         if st.button("Mantel–Haenszel (stratified 2×2)", key="c4", use_container_width=True):
             st.session_state.main_menu = "Categorical"
             st.session_state.sub_menu = "MH"
-
         if st.button("Cochran's Q (+ McNemar post-hoc)", key="c5", use_container_width=True):
             st.session_state.main_menu = "Categorical"
             st.session_state.sub_menu = "CochranQ"
+        if st.button("Diagnostic Accuracy (2×2)", key="c6", use_container_width=True):
+            st.session_state.main_menu = "Categorical"
+            st.session_state.sub_menu = "Diag2x2"
+
+    with st.expander("Estimation (Confidence Intervals)", expanded=(st.session_state.main_menu == "Estimation")):
+        if st.button("Mean / Variance / Median CI", key="e1", use_container_width=True):
+            st.session_state.main_menu = "Estimation"
+            st.session_state.sub_menu = "CI"
 
 # =========================================================
 # Main routing
@@ -1416,139 +944,108 @@ if main == "Logistic Regression" and sub == "Data":
 
     show_dataset_status()
 
-# =========================================================
 # LOGISTIC: EDA
-# =========================================================
 elif main == "Logistic Regression" and sub == "EDA":
     st.markdown("## Explore (EDA)")
     show_dataset_status()
     if st.session_state.df is not None:
         df = st.session_state.df
-
-        desc = df.describe(include="all").transpose().reset_index().rename(columns={"index": "Column"})
-        st.markdown("### Summary")
-        st.dataframe(desc, use_container_width=True)
-        download_table_block(desc, "eda_summary", "EDA Summary")
+        desc = df.describe(include="all").transpose().reset_index().rename(columns={"index": "Variable"})
+        show_table(desc, "Descriptive Statistics", center_all=True)
+        download_table_block(desc, "eda_descriptives", "Descriptive Statistics")
 
         miss = pd.DataFrame({
-            "Column": df.columns,
-            "Missing count": df.isna().sum().values,
+            "Variable": df.columns,
+            "Missing": df.isna().sum().values,
             "Missing %": (df.isna().mean().values * 100).round(2),
         }).sort_values("Missing %", ascending=False).reset_index(drop=True)
-
-        st.markdown("### Missing values")
-        st.dataframe(miss, use_container_width=True)
+        show_table(miss, "Missing Values", center_all=True)
         download_table_block(miss, "eda_missing", "Missing Values")
 
-# =========================================================
-# LOGISTIC: Modeling (OR table)
-# =========================================================
+# LOGISTIC: Modeling
 elif main == "Logistic Regression" and sub == "Modeling":
-    st.markdown("### Modeling (Logistic Regression)")
+    st.markdown("## Logistic Regression")
     show_dataset_status()
-
     if st.session_state.df is not None:
         df = st.session_state.df
         cols = list(df.columns)
+        target = st.selectbox("Dependent Variable (binary)", options=cols)
+        features = st.multiselect("Covariates", options=[c for c in cols if c != target])
 
-        target = st.selectbox("Target (binary)", options=cols)
-        features = st.multiselect("Predictors", options=[c for c in cols if c != target])
-
-        run = st.button("Run Logistic OR Table", type="primary", use_container_width=True)
-        if run:
+        if st.button("Run Logistic Regression", type="primary", use_container_width=True):
             try:
                 odds_table = run_logistic_or_table(df, target, features)
                 st.session_state.last_results["logistic_or"] = {"odds_table": odds_table}
 
-                st.markdown("### Variables in the Equation")
-                st.dataframe(odds_table, use_container_width=True)
+                show_table(odds_table, "Variables in the Equation", center_all=True)
                 download_table_block(odds_table, "logistic_variables_in_equation", "Variables in the Equation")
             except Exception as e:
                 st.error(f"Modeling failed: {e}")
 
-# =========================================================
-# LOGISTIC: Comparison (restore ML comparison + ROC legend)
-# =========================================================
+# LOGISTIC: Comparison
 elif main == "Logistic Regression" and sub == "Comparison":
     st.markdown("## Model Comparison (Classification)")
     show_dataset_status()
-
     if st.session_state.df is not None:
         df = st.session_state.df
         cols = list(df.columns)
 
-        st.markdown("### Setup")
         target = st.selectbox("Target (binary)", options=cols, key="cmp_target")
         features = st.multiselect("Predictors", options=[c for c in cols if c != target], key="cmp_features")
 
         c1, c2 = st.columns([1, 1])
         with c1:
-            test_size = st.slider("Test size", 0.1, 0.5, 0.25, 0.05, key="cmp_test")
+            test_size = st.slider("Test size", 0.1, 0.5, 0.25, 0.05)
         with c2:
-            random_state = st.number_input("Random state", value=42, step=1, key="cmp_rs")
+            random_state = st.number_input("Random state", value=42, step=1)
 
-        run = st.button("Run Model Comparison", type="primary", use_container_width=True)
-
-        if run:
+        if st.button("Run Comparison", type="primary", use_container_width=True):
             try:
-                res = compare_classification_models(
-                    df, target, features, test_size=float(test_size), random_state=int(random_state)
-                )
+                res = compare_classification_models(df, target, features, float(test_size), int(random_state))
                 st.session_state.last_results["logistic_cmp"] = res
 
-                st.markdown("### Performance metrics")
-                st.dataframe(res["metrics"], use_container_width=True)
-                download_table_block(res["metrics"], "classification_model_comparison", "Model Comparison Metrics")
+                show_table(res["metrics"], "Model Summary (AUC, Accuracy, Precision, Recall, F1)", center_all=True)
+                download_table_block(res["metrics"], "model_comparison", "Model Summary")
 
-                st.markdown("### ROC curves (with AUC legend)")
+                st.markdown("### ROC Curve")
                 fig, ax = plt.subplots()
                 for name, (fpr, tpr, auc_val) in res["roc_lines"].items():
                     ax.plot(fpr, tpr, label=f"{name} (AUC={auc_val:.3f})")
                 ax.plot([0, 1], [0, 1], linestyle="--", label="Chance")
                 ax.set_xlabel("False Positive Rate")
                 ax.set_ylabel("True Positive Rate")
-                ax.set_title("ROC Curves")
+                ax.set_title("ROC Curve")
                 ax.legend(loc="lower right")
                 st.pyplot(fig)
-                download_figure_block(fig, "roc_model_comparison")
+                download_figure_block(fig, "roc_curve_comparison")
                 plt.close(fig)
 
-                st.info(f"Top model by AUC: {res['top_model_name']}")
-
-                st.markdown("### Confusion matrix (Top model, threshold=0.5)")
+                st.markdown("### Confusion Matrix (Top model, threshold=0.5)")
                 cm = res["cm_top"]
                 fig, ax = plt.subplots()
                 im = ax.imshow(cm)
-                ax.set_title("Confusion Matrix (Top model)")
                 ax.set_xlabel("Predicted")
                 ax.set_ylabel("Actual")
+                ax.set_title(f"Confusion Matrix: {res['top_model_name']}")
                 for (i, j), v in np.ndenumerate(cm):
                     ax.text(j, i, str(v), ha="center", va="center")
                 fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
                 st.pyplot(fig)
-                download_figure_block(fig, "confusion_matrix_top_model")
+                download_figure_block(fig, "confusion_matrix_top")
                 plt.close(fig)
 
             except Exception as e:
                 st.error(f"Comparison failed: {e}")
 
-# =========================================================
 # LOGISTIC: Export
-# =========================================================
 elif main == "Logistic Regression" and sub == "Export":
     st.markdown("## Export (Logistic)")
     show_dataset_status()
 
-    if st.session_state.df is not None:
-        st.download_button(
-            "Download dataset as Excel",
-            data=df_to_excel_bytes({"dataset": st.session_state.df}),
-            file_name="dataset.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-
     sheets = {}
+    if st.session_state.df is not None:
+        sheets["Dataset"] = st.session_state.df
+
     if "logistic_or" in st.session_state.last_results:
         sheets["Variables_in_Equation"] = st.session_state.last_results["logistic_or"]["odds_table"]
     if "logistic_cmp" in st.session_state.last_results:
@@ -1556,21 +1053,20 @@ elif main == "Logistic Regression" and sub == "Export":
 
     if sheets:
         st.download_button(
-            "Download latest logistic outputs (Excel)",
+            "Download (Excel)",
             data=df_to_excel_bytes(sheets),
-            file_name="logistic_outputs.xlsx",
+            file_name="logistic_export.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
     else:
-        st.info("No logistic outputs yet. Run a model first.")
+        st.info("No outputs available yet.")
 
 # =========================================================
-# LINEAR: Data
+# LINEAR
 # =========================================================
 elif main == "Linear Regression" and sub == "Data":
     st.markdown("## Data (Linear Regression)")
-
     c1, c2 = st.columns([1, 2])
     with c1:
         st.download_button(
@@ -1581,355 +1077,438 @@ elif main == "Linear Regression" and sub == "Data":
             use_container_width=True
         )
     with c2:
-        st.info("Upload a CSV/XLSX file. The linear outcome must be numeric (continuous).")
+        st.info("Upload a CSV/XLSX file. Outcome must be numeric (continuous).")
 
-    uploaded = st.file_uploader(
-        "Upload CSV/XLSX", type=["csv", "xlsx", "xls"], label_visibility="collapsed", key="lin_upload"
-    )
+    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], label_visibility="collapsed", key="lin_up")
     df_new = read_uploaded_file(uploaded)
     if df_new is not None:
         st.session_state.df = df_new
         st.session_state.last_results = {}
-
     show_dataset_status()
 
-# =========================================================
-# LINEAR: Modeling
-# =========================================================
 elif main == "Linear Regression" and sub == "Modeling":
-    st.markdown("## Modeling (Multivariable Linear Regression / OLS)")
+    st.markdown("## Multivariable Linear Regression (OLS)")
     show_dataset_status()
-
     if st.session_state.df is not None:
         df = st.session_state.df
         cols = list(df.columns)
+        target = st.selectbox("Dependent Variable (numeric)", options=cols, key="lin_target")
+        features = st.multiselect("Independent Variables", options=[c for c in cols if c != target], key="lin_feat")
 
-        target = st.selectbox("Outcome (numeric)", options=cols, key="lin_target")
-        features = st.multiselect("Predictors", options=[c for c in cols if c != target], key="lin_features")
-
-        run = st.button("Run Linear Regression (OLS)", type="primary", use_container_width=True)
-        if run:
+        if st.button("Run Linear Regression", type="primary", use_container_width=True):
             try:
                 res = run_linear_regression(df, target, features)
                 st.session_state.last_results["linear"] = res
-
-                st.markdown("### Model fit")
-                st.dataframe(res["metrics"], use_container_width=True)
-                download_table_block(res["metrics"], "linear_model_fit", "Model Fit")
-
-                st.success("Model fitted successfully.")
+                show_table(res["metrics"], "Model Summary", center_all=True)
+                download_table_block(res["metrics"], "linear_model_summary", "Model Summary")
             except Exception as e:
                 st.error(f"Modeling failed: {e}")
 
-# =========================================================
-# LINEAR: Tables
-# =========================================================
 elif main == "Linear Regression" and sub == "Tables":
-    st.markdown("## ANOVA & Coefficients")
+    st.markdown("## Linear Regression Tables")
     show_dataset_status()
-
     if "linear" not in st.session_state.last_results:
-        st.info("No linear results yet. Run the model in 'Modeling (OLS)' first.")
+        st.info("Run the model first (Modeling).")
     else:
         res = st.session_state.last_results["linear"]
+        show_table(res["anova_table"], "ANOVA", center_all=True)
+        download_table_block(res["anova_table"], "linear_anova", "ANOVA")
 
-        st.markdown("### ANOVA")
-        st.dataframe(res["anova_table"], use_container_width=True)
-        download_table_block(res["anova_table"], "linear_anova", "ANOVA Table")
-
-        st.markdown("### Coefficients")
-        st.dataframe(res["coef_table"], use_container_width=True)
+        show_table(res["coef_table"], "Coefficients", center_all=True)
         download_table_block(res["coef_table"], "linear_coefficients", "Coefficients")
 
-# =========================================================
-# LINEAR: Diagnostics
-# =========================================================
 elif main == "Linear Regression" and sub == "Diagnostics":
     st.markdown("## Assumptions & Diagnostics")
     show_dataset_status()
-
     if "linear" not in st.session_state.last_results:
-        st.info("No linear results yet. Run the model in 'Modeling (OLS)' first.")
+        st.info("Run the model first (Modeling).")
     else:
         res = st.session_state.last_results["linear"]
         resid = res["resid"]
         fitted = res["fitted"]
 
-        st.markdown("### Linearity: Residuals vs Fitted")
+        st.markdown("### Residuals vs Fitted")
         fig, ax = plt.subplots()
         ax.scatter(fitted, resid)
         ax.axhline(0)
-        ax.set_xlabel("Fitted values")
+        ax.set_xlabel("Fitted")
         ax.set_ylabel("Residuals")
-        ax.set_title("Residuals vs Fitted")
         st.pyplot(fig)
         download_figure_block(fig, "linear_residuals_vs_fitted")
         plt.close(fig)
 
-        st.markdown("### Normality of residuals")
+        st.markdown("### Q-Q Plot (Residuals)")
         fig = sm.qqplot(resid, line="45")
-        plt.title("Q-Q Plot of Residuals")
         st.pyplot(fig)
-        download_figure_block(plt.gcf(), "linear_qqplot_residuals")
+        download_figure_block(plt.gcf(), "linear_qqplot")
         plt.close(plt.gcf())
 
-        st.dataframe(res["shapiro"], use_container_width=True)
-        download_table_block(res["shapiro"], "linear_shapiro", "Normality Test")
+        show_table(res["shapiro"], "Tests of Normality", center_all=True)
+        download_table_block(res["shapiro"], "linear_normality", "Tests of Normality")
 
-        st.markdown("### Homoscedasticity")
-        st.dataframe(res["bp"], use_container_width=True)
-        download_table_block(res["bp"], "linear_breusch_pagan", "Homoscedasticity")
+        show_table(res["bp"], "Homoscedasticity (Breusch-Pagan)", center_all=True)
+        download_table_block(res["bp"], "linear_breusch_pagan", "Breusch-Pagan")
 
-        st.markdown("### Multicollinearity: VIF")
-        st.dataframe(res["vif"], use_container_width=True)
-        download_table_block(res["vif"], "linear_vif", "VIF Table")
+        show_table(res["vif"], "Collinearity Statistics (VIF)", center_all=True)
+        download_table_block(res["vif"], "linear_vif", "VIF")
 
-        st.markdown("### Independence of errors")
-        st.dataframe(res["dw"], use_container_width=True)
-        download_table_block(res["dw"], "linear_durbin_watson", "Independence of Errors")
+        show_table(res["dw"], "Independence of Errors (Durbin-Watson)", center_all=True)
+        download_table_block(res["dw"], "linear_dw", "Durbin-Watson")
 
-# =========================================================
-# LINEAR: Export
-# =========================================================
 elif main == "Linear Regression" and sub == "Export":
     st.markdown("## Export (Linear)")
     show_dataset_status()
 
+    sheets = {}
     if st.session_state.df is not None:
-        st.download_button(
-            "Download dataset as Excel",
-            data=df_to_excel_bytes({"dataset": st.session_state.df}),
-            file_name="dataset.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-
+        sheets["Dataset"] = st.session_state.df
     if "linear" in st.session_state.last_results:
         res = st.session_state.last_results["linear"]
+        sheets["Model_Summary"] = res["metrics"]
+        sheets["ANOVA"] = res["anova_table"]
+        sheets["Coefficients"] = res["coef_table"]
+        sheets["VIF"] = res["vif"]
+        sheets["Normality"] = res["shapiro"]
+        sheets["Breusch_Pagan"] = res["bp"]
+        sheets["Durbin_Watson"] = res["dw"]
+
+    if sheets:
         st.download_button(
-            "Download latest linear outputs (Excel)",
-            data=df_to_excel_bytes({
-                "Model_Fit": res["metrics"],
-                "ANOVA": res["anova_table"],
-                "Coefficients": res["coef_table"],
-                "VIF": res["vif"],
-                "Shapiro": res["shapiro"],
-                "Breusch_Pagan": res["bp"],
-                "Durbin_Watson": res["dw"],
-            }),
-            file_name="linear_outputs.xlsx",
+            "Download (Excel)",
+            data=df_to_excel_bytes(sheets),
+            file_name="linear_export.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
     else:
-        st.info("No linear outputs yet. Run a model first.")
+        st.info("No outputs available yet.")
+
 # =========================================================
-# ANOVA
+# CATEGORICAL TESTS
 # =========================================================
-elif main == "ANOVA" and sub == "One-way":
-    st.markdown("## ANOVA: One-way (between-subjects)")
+elif main == "Categorical" and sub == "Chi-square":
+    st.markdown("## Contingency Table (r×c) and Chi-square")
+
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        r = st.number_input("Rows (r)", min_value=2, max_value=20, value=2, step=1)
+    with c2:
+        c = st.number_input("Columns (c)", min_value=2, max_value=20, value=2, step=1)
+    with c3:
+        st.info("You can edit counts directly, or download a template and upload back.")
+
+    # Editable table
+    if "ctable_df" not in st.session_state or st.session_state.get("ctable_shape") != (int(r), int(c)):
+        st.session_state.ctable_shape = (int(r), int(c))
+        st.session_state.ctable_df = make_counts_template(int(r), int(c))
+
     st.download_button(
-        "Download Excel template",
-        data=df_to_excel_bytes({"template": make_anova_oneway_template()}),
-        file_name="anova_oneway_template.xlsx",
+        "Download Excel template (counts table)",
+        data=df_to_excel_bytes({"contingency_table": st.session_state.ctable_df}),
+        file_name=f"contingency_{int(r)}x{int(c)}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
-    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="anova1_upload")
-    df_new = read_uploaded_file(uploaded)
-    if df_new is not None:
-        st.session_state.df = df_new
+    up = st.file_uploader("Or upload counts table (Excel/CSV)", type=["xlsx", "xls", "csv"], key="chi_up")
+    if up is not None:
+        df_up = read_uploaded_file(up)
+        if df_up is not None:
+            st.session_state.ctable_df = df_up.copy()
+
+    st.markdown("### Input counts (edit here)")
+    edited = st.data_editor(st.session_state.ctable_df, use_container_width=True, num_rows="fixed")
+    st.session_state.ctable_df = edited
+
+    if st.button("Run Chi-square", type="primary", use_container_width=True):
+        try:
+            df_in = st.session_state.ctable_df.copy()
+            if "Row" in df_in.columns:
+                df_in = df_in.drop(columns=["Row"])
+            table = df_in.apply(pd.to_numeric, errors="coerce").values
+            if np.isnan(table).any():
+                raise ValueError("Please fill all cells with numeric counts.")
+            if (table < 0).any():
+                raise ValueError("Counts must be non-negative.")
+
+            chi_df, yates_df, expected_df = chi_square_tests(table)
+
+            show_table(chi_df, "Chi-Square Tests", center_all=True)
+            download_table_block(chi_df, "chi_square_tests", "Chi-Square Tests")
+
+            if yates_df is not None:
+                show_table(yates_df, "Continuity Correction (2×2)", center_all=True)
+                download_table_block(yates_df, "chi_square_yates", "Continuity Correction")
+
+            show_table(expected_df, "Expected Counts", center_all=True)
+            download_table_block(expected_df, "expected_counts", "Expected Counts")
+
+            # If 2x2: Risk estimate + Diagnostic accuracy
+            if table.shape == (2, 2):
+                a, b = table[0, 0], table[0, 1]
+                c0, d0 = table[1, 0], table[1, 1]
+
+                risk_df = calc_or_rr_ve_2x2(a, b, c0, d0)
+                show_table(risk_df, "Risk Estimate (OR / RR / VE)", center_all=True)
+                download_table_block(risk_df, "risk_estimate", "Risk Estimate")
+
+                # Assume table layout is:
+                # Row1/Row2 are "Exposure" groups and Col1/Col2 are outcomes? That's ambiguous.
+                # For Diagnostic Accuracy we need TP/FP/FN/TN. We'll ask user to use Diag2x2 menu for that.
+                st.info("For diagnostic performance metrics (Sensitivity/Specificity/LR/PPV/NPV), use 'Diagnostic Accuracy (2×2)' menu to input TP/FP/FN/TN explicitly.")
+
+        except Exception as e:
+            st.error(f"Failed: {e}")
+
+elif main == "Categorical" and sub == "Fisher":
+    st.markdown("## Fisher's Exact Test (2×2)")
+
+    st.download_button(
+        "Download Excel template (2×2 counts)",
+        data=df_to_excel_bytes({"contingency_2x2": make_counts_template(2, 2)}),
+        file_name="fisher_2x2_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+    if "fisher_df" not in st.session_state:
+        st.session_state.fisher_df = make_counts_template(2, 2)
+
+    up = st.file_uploader("Upload counts table (2×2)", type=["xlsx", "xls", "csv"], key="fisher_up")
+    if up is not None:
+        df_up = read_uploaded_file(up)
+        if df_up is not None:
+            st.session_state.fisher_df = df_up.copy()
+
+    st.markdown("### Input counts (edit here)")
+    edited = st.data_editor(st.session_state.fisher_df, use_container_width=True, num_rows="fixed")
+    st.session_state.fisher_df = edited
+
+    if st.button("Run Fisher's Exact", type="primary", use_container_width=True):
+        try:
+            df_in = st.session_state.fisher_df.copy()
+            if "Row" in df_in.columns:
+                df_in = df_in.drop(columns=["Row"])
+            table = df_in.apply(pd.to_numeric, errors="coerce").values
+            if table.shape != (2, 2):
+                raise ValueError("Input must be 2×2.")
+            if np.isnan(table).any():
+                raise ValueError("Fill all cells with numeric counts.")
+            if (table < 0).any():
+                raise ValueError("Counts must be non-negative.")
+
+            fish_df = fisher_exact_2x2(table)
+            show_table(fish_df, "Fisher's Exact Test", center_all=True)
+            download_table_block(fish_df, "fisher_exact", "Fisher's Exact Test")
+
+            a, b = table[0, 0], table[0, 1]
+            c0, d0 = table[1, 0], table[1, 1]
+            risk_df = calc_or_rr_ve_2x2(a, b, c0, d0)
+            show_table(risk_df, "Risk Estimate (OR / RR / VE)", center_all=True)
+            download_table_block(risk_df, "risk_estimate_fisher", "Risk Estimate")
+
+        except Exception as e:
+            st.error(f"Failed: {e}")
+
+elif main == "Categorical" and sub == "GOF":
+    st.markdown("## Chi-square Goodness-of-fit")
+
+    st.download_button(
+        "Download Excel template",
+        data=df_to_excel_bytes({"goodness_of_fit": make_gof_template()}),
+        file_name="goodness_of_fit_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+    up = st.file_uploader("Upload GOF dataset", type=["xlsx", "xls", "csv"], key="gof_up")
+    if up is not None:
+        df_new = read_uploaded_file(up)
+        if df_new is not None:
+            st.session_state.df = df_new
 
     show_dataset_status()
     if st.session_state.df is not None:
         df = st.session_state.df
-        group_col = st.selectbox("Group column", df.columns, index=0)
-        value_col = st.selectbox("Value column", df.columns, index=min(1, len(df.columns)-1))
-        if st.button("Run One-way ANOVA", type="primary", use_container_width=True):
+        st.markdown("### Input data")
+        st.dataframe(df, use_container_width=True)
+
+        if st.button("Run Goodness-of-fit", type="primary", use_container_width=True):
             try:
-                tbl, tukey = anova_one_way(df, group_col, value_col)
-                show_table(tbl, "ANOVA result", center_all=True)
-                download_table_block(tbl, "anova_oneway_result", "One-way ANOVA")
+                out, exp = goodness_of_fit(df)
+                show_table(out, "Chi-Square Goodness-of-Fit", center_all=True)
+                download_table_block(out, "gof_test", "Goodness-of-Fit")
 
-                if tukey is not None:
-                    show_table(tukey, "Post-hoc (Tukey HSD)")
-                    download_table_block(tukey, "anova_oneway_tukey", "Tukey HSD")
+                show_table(exp, "Expected Frequencies", center_all=True)
+                download_table_block(exp, "gof_expected", "Expected Frequencies")
             except Exception as e:
-                st.error(f"ANOVA failed: {e}")
+                st.error(f"Failed: {e}")
 
-elif main == "ANOVA" and sub == "One-way RM":
-    st.markdown("## ANOVA: One-way (repeated measures)")
+elif main == "Categorical" and sub == "MH":
+    st.markdown("## Mantel–Haenszel (Stratified 2×2)")
+
     st.download_button(
         "Download Excel template",
-        data=df_to_excel_bytes({"template": make_anova_oneway_rm_template()}),
-        file_name="anova_oneway_repeated_template.xlsx",
+        data=df_to_excel_bytes({"mh_long": make_mh_long_template()}),
+        file_name="mantel_haenszel_long_template.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
-    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="anova1rm_upload")
-    df_new = read_uploaded_file(uploaded)
-    if df_new is not None:
-        st.session_state.df = df_new
+    up = st.file_uploader("Upload long-format dataset", type=["xlsx", "xls", "csv"], key="mh_up")
+    if up is not None:
+        df_new = read_uploaded_file(up)
+        if df_new is not None:
+            st.session_state.df = df_new
 
     show_dataset_status()
     if st.session_state.df is not None:
         df = st.session_state.df
-        subject = st.selectbox("Subject column", df.columns)
-        within = st.selectbox("Within factor (Condition)", df.columns)
-        value = st.selectbox("Value column", df.columns)
-        if st.button("Run One-way RM ANOVA", type="primary", use_container_width=True):
-            try:
-                tbl = anova_one_way_rm(df, subject, within, value)
-                show_table(tbl, "Repeated Measures ANOVA")
-                download_table_block(tbl, "anova_oneway_rm", "RM ANOVA")
-            except Exception as e:
-                st.error(f"ANOVA failed: {e}")
+        cols = list(df.columns)
+        s = st.selectbox("Stratum", cols, index=0)
+        e = st.selectbox("Exposure (2 levels)", cols, index=min(1, len(cols)-1))
+        o = st.selectbox("Outcome (0/1)", cols, index=min(2, len(cols)-1))
 
-elif main == "ANOVA" and sub == "Two-way":
-    st.markdown("## ANOVA: Two-way (with replication)")
+        if st.button("Run Mantel–Haenszel", type="primary", use_container_width=True):
+            try:
+                out = mantel_haenszel_from_long(df, s, e, o)
+                show_table(out, "Mantel–Haenszel Test", center_all=True)
+                download_table_block(out, "mantel_haenszel", "Mantel–Haenszel")
+            except Exception as ex:
+                st.error(f"Failed: {ex}")
+
+elif main == "Categorical" and sub == "CochranQ":
+    st.markdown("## Cochran's Q (+ McNemar post-hoc Bonferroni)")
+
     st.download_button(
         "Download Excel template",
-        data=df_to_excel_bytes({"template": make_anova_twoway_template()}),
-        file_name="anova_twoway_template.xlsx",
+        data=df_to_excel_bytes({"cochran_q": make_cochran_template()}),
+        file_name="cochran_q_template.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
-    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="anova2_upload")
-    df_new = read_uploaded_file(uploaded)
-    if df_new is not None:
-        st.session_state.df = df_new
+    up = st.file_uploader("Upload dataset", type=["xlsx", "xls", "csv"], key="cq_up")
+    if up is not None:
+        df_new = read_uploaded_file(up)
+        if df_new is not None:
+            st.session_state.df = df_new
 
     show_dataset_status()
     if st.session_state.df is not None:
         df = st.session_state.df
-        a = st.selectbox("Factor A column", df.columns)
-        b = st.selectbox("Factor B column", df.columns)
-        y = st.selectbox("Value column", df.columns)
-        if st.button("Run Two-way ANOVA", type="primary", use_container_width=True):
-            try:
-                tbl = anova_two_way(df, a, b, y)
-                show_table(tbl, "Two-way ANOVA")
-                download_table_block(tbl, "anova_twoway", "Two-way ANOVA")
-            except Exception as e:
-                st.error(f"ANOVA failed: {e}")
+        subject = st.selectbox("Subject column", df.columns, index=0)
 
-elif main == "ANOVA" and sub == "Two-way RM":
-    st.markdown("## ANOVA: Two-way (repeated measures)")
+        if st.button("Run Cochran's Q", type="primary", use_container_width=True):
+            try:
+                main_df, post_df = cochran_q_with_posthoc(df, subject_col=subject)
+                show_table(main_df, "Cochran's Q Test", center_all=True)
+                download_table_block(main_df, "cochran_q", "Cochran's Q")
+
+                show_table(post_df, "Pairwise McNemar Tests (Bonferroni)", center_all=True)
+                download_table_block(post_df, "mcnemar_posthoc", "McNemar Post-hoc")
+            except Exception as ex:
+                st.error(f"Failed: {ex}")
+
+elif main == "Categorical" and sub == "Diag2x2":
+    st.markdown("## Diagnostic Accuracy (2×2)")
+
     st.download_button(
-        "Download Excel template",
-        data=df_to_excel_bytes({"template": make_anova_twoway_rm_template()}),
-        file_name="anova_twoway_repeated_template.xlsx",
+        "Download Excel template (TP/FP/FN/TN)",
+        data=df_to_excel_bytes({"diagnostic_2x2": make_diag2x2_template()}),
+        file_name="diagnostic_2x2_template.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
-    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="anova2rm_upload")
-    df_new = read_uploaded_file(uploaded)
-    if df_new is not None:
-        st.session_state.df = df_new
+    if "diag_df" not in st.session_state:
+        st.session_state.diag_df = make_diag2x2_template()
 
-    show_dataset_status()
-    if st.session_state.df is not None:
-        df = st.session_state.df
-        subject = st.selectbox("Subject column", df.columns)
-        a = st.selectbox("Within factor A column", df.columns)
-        b = st.selectbox("Within factor B column", df.columns)
-        y = st.selectbox("Value column", df.columns)
-        if st.button("Run Two-way RM ANOVA", type="primary", use_container_width=True):
-            try:
-                tbl = anova_two_way_rm(df, subject, a, b, y)
-                show_table(tbl, "Two-way Repeated Measures ANOVA")
-                download_table_block(tbl, "anova_twoway_rm", "Two-way RM ANOVA")
-            except Exception as e:
-                st.error(f"ANOVA failed: {e}")
+    up = st.file_uploader("Upload diagnostic 2×2 table", type=["xlsx", "xls", "csv"], key="diag_up")
+    if up is not None:
+        df_up = read_uploaded_file(up)
+        if df_up is not None:
+            st.session_state.diag_df = df_up.copy()
 
+    st.markdown("### Input table (edit here)")
+    edited = st.data_editor(st.session_state.diag_df, use_container_width=True, num_rows="fixed")
+    st.session_state.diag_df = edited
+
+    if st.button("Compute Diagnostic Metrics", type="primary", use_container_width=True):
+        try:
+            d = st.session_state.diag_df.copy()
+            # Expect rows: Actual Positive/Actual Negative; cols: Test Positive/Test Negative
+            if d.shape[0] < 2 or d.shape[1] < 3:
+                raise ValueError("Template must have 2 rows and 2 count columns.")
+
+            tp = float(pd.to_numeric(d.loc[0, "Test Positive"], errors="coerce"))
+            fn = float(pd.to_numeric(d.loc[0, "Test Negative"], errors="coerce"))
+            fp = float(pd.to_numeric(d.loc[1, "Test Positive"], errors="coerce"))
+            tn = float(pd.to_numeric(d.loc[1, "Test Negative"], errors="coerce"))
+
+            if any(np.isnan([tp, fn, fp, tn])):
+                raise ValueError("Fill all four cells (TP, FN, FP, TN).")
+            if min(tp, fn, fp, tn) < 0:
+                raise ValueError("Counts must be non-negative.")
+
+            # SPSS-like: show the table too
+            show_table(pd.DataFrame([{
+                "TP": tp, "FN": fn, "FP": fp, "TN": tn
+            }]), "Case Processing Summary", center_all=True)
+
+            acc = diagnostic_accuracy_2x2(tp, fp, fn, tn)
+            show_table(acc, "Classification Statistics", center_all=True)
+            download_table_block(acc, "diagnostic_accuracy", "Classification Statistics")
+
+        except Exception as e:
+            st.error(f"Failed: {e}")
 
 # =========================================================
-# T-TEST
+# ESTIMATION: CI
 # =========================================================
-elif main == "t-test" and sub == "One-sample":
-    st.markdown("## One-sample test (auto parametric / nonparametric)")
+elif main == "Estimation" and sub == "CI":
+    st.markdown("## Confidence Intervals (Estimation)")
+
     st.download_button(
         "Download Excel template",
-        data=df_to_excel_bytes({"template": make_ttest_one_sample_template()}),
-        file_name="ttest_one_sample_template.xlsx",
+        data=df_to_excel_bytes({"values": make_ci_template()}),
+        file_name="ci_template.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
-    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="t1_upload")
-    df_new = read_uploaded_file(uploaded)
-    if df_new is not None:
-        st.session_state.df = df_new
+    up = st.file_uploader("Upload dataset", type=["xlsx", "xls", "csv"], key="ci_up")
+    if up is not None:
+        df_new = read_uploaded_file(up)
+        if df_new is not None:
+            st.session_state.df = df_new
 
     show_dataset_status()
     if st.session_state.df is not None:
         df = st.session_state.df
         col = st.selectbox("Value column", df.columns)
-        mu0 = st.number_input("Hypothesized mean/median (mu0)", value=0.0)
-        if st.button("Run One-sample Test", type="primary", use_container_width=True):
+        alpha = st.slider("Alpha (1 - confidence level)", 0.01, 0.20, 0.05, 0.01)
+
+        x = pd.to_numeric(df[col], errors="coerce").dropna().values.astype(float)
+        if st.button("Compute CI", type="primary", use_container_width=True):
             try:
-                out = test_one_sample(df, col, float(mu0))
-                show_table(out, "Result", center_all=True)
-                download_table_block(out, "ttest_one_sample_result", "One-sample Result")
+                m, lo, hi = ci_mean(x, alpha=float(alpha))
+                v, vlo, vhi = ci_variance(x, alpha=float(alpha))
+                med, med_lo, med_hi = ci_median_bootstrap(x, alpha=float(alpha))
+
+                out = pd.DataFrame([
+                    {"Parameter": "Mean", "Estimate": round(m, 4), "CI Lower": round(lo, 4), "CI Upper": round(hi, 4)},
+                    {"Parameter": "Variance", "Estimate": round(v, 4), "CI Lower": round(vlo, 4), "CI Upper": round(vhi, 4)},
+                    {"Parameter": "Std. Deviation", "Estimate": round(math.sqrt(v), 4),
+                     "CI Lower": round(math.sqrt(vlo), 4), "CI Upper": round(math.sqrt(vhi), 4)},
+                    {"Parameter": "Median (bootstrap)", "Estimate": round(med, 4), "CI Lower": round(med_lo, 4), "CI Upper": round(med_hi, 4)},
+                ])
+
+                show_table(out, "Estimates and Confidence Intervals", center_all=True)
+                download_table_block(out, "confidence_intervals", "Estimates and CI")
+
             except Exception as e:
-                st.error(f"Test failed: {e}")
+                st.error(f"Failed: {e}")
 
-elif main == "t-test" and sub == "Two-independent":
-    st.markdown("## Independent 2-sample test (auto parametric / nonparametric)")
-    st.download_button(
-        "Download Excel template",
-        data=df_to_excel_bytes({"template": make_ttest_two_ind_template()}),
-        file_name="ttest_two_independent_template.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
-
-    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="t2_upload")
-    df_new = read_uploaded_file(uploaded)
-    if df_new is not None:
-        st.session_state.df = df_new
-
-    show_dataset_status()
-    if st.session_state.df is not None:
-        df = st.session_state.df
-        g = st.selectbox("Group column", df.columns)
-        v = st.selectbox("Value column", df.columns)
-        if st.button("Run Independent 2-sample Test", type="primary", use_container_width=True):
-            try:
-                out = test_two_independent(df, g, v)
-                show_table(out, "Result", center_all=True)
-                download_table_block(out, "ttest_two_independent_result", "Independent 2-sample Result")
-            except Exception as e:
-                st.error(f"Test failed: {e}")
-
-elif main == "t-test" and sub == "Paired":
-    st.markdown("## Paired test (auto parametric / nonparametric)")
-    st.download_button(
-        "Download Excel template",
-        data=df_to_excel_bytes({"template": make_ttest_paired_template()}),
-        file_name="ttest_paired_template.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
-
-    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="t3_upload")
-    df_new = read_uploaded_file(uploaded)
-    if df_new is not None:
-        st.session_state.df = df_new
-
-    show_dataset_status()
-    if st.session_state.df is not None:
-        df = st.session_state.df
-        before = st.selectbox("Before column", df.columns)
-        after = st.selectbox("After column", df.columns, index=min(1, len(df.columns)-1))
-        if st.button("Run Paired Test", type="primary", use_container_width=True):
-            try:
-                out = test_paired(df, before, after)
-                show_table(out, "Result", center_all=True)
-                download_table_block(out, "ttest_paired_result", "Paired Result")
-            except Exception as e:
-                st.error(f"Test failed: {e}")
+else:
+    st.info("Select a function from the sidebar.")
