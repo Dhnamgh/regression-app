@@ -3,18 +3,18 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
-
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from scipy.stats import shapiro
 from scipy import stats
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
-
+from scipy.stats import chi2_contingency, chisquare
+from statsmodels.stats.contingency_tables import mcnemar, StratifiedTable
+from statsmodels.stats.contingency_tables import cochrans_q as sm_cochrans_q
 from statsmodels.stats.diagnostic import het_breuschpagan
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from statsmodels.stats.stattools import durbin_watson
 from statsmodels.stats.anova import anova_lm
-
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     roc_curve, auc, confusion_matrix,
@@ -26,8 +26,6 @@ from sklearn.linear_model import LogisticRegression as SkLogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
-
-
 # =========================================================
 # Page config
 # =========================================================
@@ -36,7 +34,6 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
-
 # =========================================================
 # CSS (fix expander white + header clipped)
 # =========================================================
@@ -449,8 +446,6 @@ def test_one_sample(df: pd.DataFrame, col="Value", mu0: float = 0.0):
         "Significant (p<0.05)": "Yes" if p_val < 0.05 else "No"
     }])
     return out
-
-
 def test_two_independent(df: pd.DataFrame, group_col="Group", value_col="Value"):
     d = df[[group_col, value_col]].dropna().copy()
     d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
@@ -508,8 +503,6 @@ def test_two_independent(df: pd.DataFrame, group_col="Group", value_col="Value")
         "Significant (p<0.05)": "Yes" if p_val < 0.05 else "No"
     }])
     return out
-
-
 def test_paired(df: pd.DataFrame, before_col="Before", after_col="After"):
     x1 = pd.to_numeric(df[before_col], errors="coerce")
     x2 = pd.to_numeric(df[after_col], errors="coerce")
@@ -540,6 +533,442 @@ def test_paired(df: pd.DataFrame, before_col="Before", after_col="After"):
         "Significant (p<0.05)": "Yes" if p_val < 0.05 else "No"
     }])
     return out
+def _p_spss(p) -> str:
+    if p is None or (isinstance(p, float) and np.isnan(p)):
+        return ""
+    p = float(p)
+    return "< 0.001" if p < 0.001 else f"{p:.3f}"
+
+def _yesno(p) -> str:
+    if p is None or (isinstance(p, float) and np.isnan(p)):
+        return ""
+    return "Yes" if float(p) < 0.05 else "No"
+
+def _to_counts_table(df: pd.DataFrame) -> np.ndarray:
+    # df: numeric cells only
+    arr = df.apply(pd.to_numeric, errors="coerce").values
+    if np.isnan(arr).any():
+        raise ValueError("Table contains empty/non-numeric cells. Please fill all counts.")
+    if (arr < 0).any():
+        raise ValueError("Counts must be non-negative.")
+    return arr.astype(float)
+
+def calc_or_rr_ve_2x2(a, b, c, d):
+    # continuity correction if any zero
+    a,b,c,d = float(a),float(b),float(c),float(d)
+    if min(a,b,c,d) == 0:
+        a += 0.5; b += 0.5; c += 0.5; d += 0.5
+
+    # OR + CI
+    OR = (a*d)/(b*c)
+    se_or = np.sqrt(1/a + 1/b + 1/c + 1/d)
+    lo_or = np.exp(np.log(OR) - 1.96*se_or)
+    hi_or = np.exp(np.log(OR) + 1.96*se_or)
+
+    # RR + CI
+    rr = (a/(a+b)) / (c/(c+d))
+    se_rr = np.sqrt(1/a - 1/(a+b) + 1/c - 1/(c+d))
+    lo_rr = np.exp(np.log(rr) - 1.96*se_rr)
+    hi_rr = np.exp(np.log(rr) + 1.96*se_rr)
+
+    # VE + CI (VE = 1 - RR)
+    ve = (1 - rr) * 100
+    ve_lo = (1 - hi_rr) * 100
+    ve_hi = (1 - lo_rr) * 100
+
+    out = pd.DataFrame([{
+        "Measure": "Odds Ratio (OR)",
+        "Estimate": round(OR, 4),
+        "95% CI": f"{lo_or:.4f}–{hi_or:.4f}",
+        "Lower": round(lo_or, 4),
+        "Upper": round(hi_or, 4),
+    },{
+        "Measure": "Risk Ratio (RR)",
+        "Estimate": round(rr, 4),
+        "95% CI": f"{lo_rr:.4f}–{hi_rr:.4f}",
+        "Lower": round(lo_rr, 4),
+        "Upper": round(hi_rr, 4),
+    },{
+        "Measure": "Vaccine Effectiveness (VE, %)",
+        "Estimate": round(ve, 2),
+        "95% CI": f"{ve_lo:.2f}–{ve_hi:.2f}",
+        "Lower": round(ve_lo, 2),
+        "Upper": round(ve_hi, 2),
+    }])
+    return out
+
+def chi_square_tests(table: np.ndarray):
+    chi2, p, dof, expected = chi2_contingency(table, correction=False)
+    res = pd.DataFrame([{
+        "Test": "Pearson Chi-Square",
+        "Value": round(float(chi2), 4),
+        "df": int(dof),
+        "p-value": _p_spss(p),
+        "Significant (p<0.05)": _yesno(p)
+    }])
+
+    # Yates correction only for 2x2
+    yates = None
+    if table.shape == (2,2):
+        chi2_y, p_y, dof_y, _ = chi2_contingency(table, correction=True)
+        yates = pd.DataFrame([{
+            "Test": "Continuity Correction (Yates)",
+            "Value": round(float(chi2_y), 4),
+            "df": int(dof_y),
+            "p-value": _p_spss(p_y),
+            "Significant (p<0.05)": _yesno(p_y)
+        }])
+
+    expected_df = pd.DataFrame(expected, columns=[f"Col{i+1}" for i in range(table.shape[1])])
+    expected_df.insert(0, "Row", [f"Row{i+1}" for i in range(table.shape[0])])
+    return res, yates, expected_df
+
+def fisher_exact_2x2(table: np.ndarray):
+    if table.shape != (2,2):
+        raise ValueError("Fisher's Exact test requires a 2×2 table.")
+    # scipy.stats.fisher_exact returns OR + p
+    OR, p = stats.fisher_exact(table, alternative="two-sided")
+    out = pd.DataFrame([{
+        "Test": "Fisher's Exact (2-sided)",
+        "Odds Ratio": round(float(OR), 4),
+        "p-value": _p_spss(p),
+        "Significant (p<0.05)": _yesno(p)
+    }])
+    return out
+
+def goodness_of_fit(df: pd.DataFrame):
+    d = df.copy()
+    d["Observed"] = pd.to_numeric(d["Observed"], errors="coerce")
+    d = d.dropna(subset=["Observed"])
+    obs = d["Observed"].values.astype(float)
+
+    if "Expected proportion (optional)" in d.columns and d["Expected proportion (optional)"].notna().any():
+        p = pd.to_numeric(d["Expected proportion (optional)"], errors="coerce").fillna(0).values.astype(float)
+        if p.sum() <= 0:
+            raise ValueError("Expected proportions must sum to a positive value.")
+        p = p / p.sum()
+        exp = obs.sum() * p
+        chi2, pval = chisquare(f_obs=obs, f_exp=exp)
+    else:
+        chi2, pval = chisquare(f_obs=obs)  # equal expected
+        exp = np.repeat(obs.sum()/len(obs), len(obs))
+
+    exp_df = pd.DataFrame({"Category": d["Category"].astype(str).values, "Expected": np.round(exp, 4)})
+    out = pd.DataFrame([{
+        "Test": "Chi-Square Goodness-of-Fit",
+        "Value": round(float(chi2), 4),
+        "df": int(len(obs)-1),
+        "p-value": _p_spss(pval),
+        "Significant (p<0.05)": _yesno(pval)
+    }])
+    return out, exp_df
+
+def mantel_haenszel_from_long(df: pd.DataFrame, stratum="Stratum", exposure="Exposure", outcome="Outcome"):
+    d = df[[stratum, exposure, outcome]].dropna().copy()
+    d[outcome] = pd.to_numeric(d[outcome], errors="coerce")
+    d = d.dropna()
+    # outcome must be 0/1
+    if not set(d[outcome].unique()).issubset({0,1}):
+        raise ValueError("Outcome must be binary coded as 0/1.")
+
+    strata = []
+    for s, g in d.groupby(stratum):
+        # build 2x2: rows exposure levels (2), cols outcome (1/0)
+        ex_levels = list(g[exposure].unique())
+        if len(ex_levels) != 2:
+            raise ValueError(f"Each stratum must have exactly 2 exposure levels. Problem in {s}.")
+        # order: level0, level1
+        a = len(g[(g[exposure]==ex_levels[0]) & (g[outcome]==1)])
+        b = len(g[(g[exposure]==ex_levels[0]) & (g[outcome]==0)])
+        c = len(g[(g[exposure]==ex_levels[1]) & (g[outcome]==1)])
+        d0= len(g[(g[exposure]==ex_levels[1]) & (g[outcome]==0)])
+        strata.append([[a,b],[c,d0]])
+
+    stbl = StratifiedTable(strata)
+    mh_or = float(stbl.oddsratio_pooled)
+    ci_lo, ci_hi = stbl.oddsratio_pooled_confint()
+    chi2 = float(stbl.test_null_odds().statistic)
+    pval = float(stbl.test_null_odds().pvalue)
+
+    out = pd.DataFrame([{
+        "Test": "Mantel–Haenszel (Common OR)",
+        "Common OR": round(mh_or, 4),
+        "95% CI": f"{ci_lo:.4f}–{ci_hi:.4f}",
+        "Chi-square": round(chi2, 4),
+        "p-value": _p_spss(pval),
+        "Significant (p<0.05)": _yesno(pval)
+    }])
+    return out
+
+def cochran_q_with_posthoc(df: pd.DataFrame, subject_col="Subject"):
+    d = df.copy()
+    if subject_col not in d.columns:
+        raise ValueError("Subject column not found.")
+    cond_cols = [c for c in d.columns if c != subject_col]
+    if len(cond_cols) < 3:
+        raise ValueError("Cochran's Q requires 3 or more conditions (binary columns).")
+
+    # to numeric 0/1
+    X = d[cond_cols].apply(pd.to_numeric, errors="coerce")
+    X = X.dropna()
+    if not set(np.unique(X.values)).issubset({0,1}):
+        raise ValueError("Conditions must be binary coded as 0/1.")
+
+    # Cochran's Q
+    q_res = sm_cochrans_q(X.values)
+    Q = float(q_res.statistic)
+    p = float(q_res.pvalue)
+
+    main = pd.DataFrame([{
+        "Test": "Cochran's Q",
+        "Q": round(Q, 4),
+        "df": int(len(cond_cols)-1),
+        "p-value": _p_spss(p),
+        "Significant (p<0.05)": _yesno(p)
+    }])
+
+    # Post-hoc pairwise McNemar with Bonferroni
+    pairs = []
+    m = len(cond_cols)
+    n_tests = m*(m-1)//2
+    alpha_bonf = 0.05 / n_tests if n_tests > 0 else 0.05
+
+    for i in range(m):
+        for j in range(i+1, m):
+            c1, c2 = cond_cols[i], cond_cols[j]
+            tab = pd.crosstab(X[c1], X[c2]).reindex(index=[0,1], columns=[0,1], fill_value=0).values
+            # McNemar uses discordant pairs b/c
+            mc = mcnemar(tab, exact=False, correction=True)
+            p_ij = float(mc.pvalue)
+
+            pairs.append({
+                "Comparison": f"{c1} vs {c2}",
+                "McNemar chi2": round(float(mc.statistic), 4),
+                "p-value": _p_spss(p_ij),
+                "Bonferroni alpha": round(alpha_bonf, 6),
+                "Significant (Bonferroni)": "Yes" if p_ij < alpha_bonf else "No"
+            })
+
+    posthoc = pd.DataFrame(pairs)
+    return main, posthoc
+def _p_spss(p) -> str:
+    if p is None or (isinstance(p, float) and np.isnan(p)):
+        return ""
+    p = float(p)
+    return "< 0.001" if p < 0.001 else f"{p:.3f}"
+
+def _yesno(p) -> str:
+    if p is None or (isinstance(p, float) and np.isnan(p)):
+        return ""
+    return "Yes" if float(p) < 0.05 else "No"
+
+def _to_counts_table(df: pd.DataFrame) -> np.ndarray:
+    # df: numeric cells only
+    arr = df.apply(pd.to_numeric, errors="coerce").values
+    if np.isnan(arr).any():
+        raise ValueError("Table contains empty/non-numeric cells. Please fill all counts.")
+    if (arr < 0).any():
+        raise ValueError("Counts must be non-negative.")
+    return arr.astype(float)
+
+def calc_or_rr_ve_2x2(a, b, c, d):
+    # continuity correction if any zero
+    a,b,c,d = float(a),float(b),float(c),float(d)
+    if min(a,b,c,d) == 0:
+        a += 0.5; b += 0.5; c += 0.5; d += 0.5
+
+    # OR + CI
+    OR = (a*d)/(b*c)
+    se_or = np.sqrt(1/a + 1/b + 1/c + 1/d)
+    lo_or = np.exp(np.log(OR) - 1.96*se_or)
+    hi_or = np.exp(np.log(OR) + 1.96*se_or)
+
+    # RR + CI
+    rr = (a/(a+b)) / (c/(c+d))
+    se_rr = np.sqrt(1/a - 1/(a+b) + 1/c - 1/(c+d))
+    lo_rr = np.exp(np.log(rr) - 1.96*se_rr)
+    hi_rr = np.exp(np.log(rr) + 1.96*se_rr)
+
+    # VE + CI (VE = 1 - RR)
+    ve = (1 - rr) * 100
+    ve_lo = (1 - hi_rr) * 100
+    ve_hi = (1 - lo_rr) * 100
+
+    out = pd.DataFrame([{
+        "Measure": "Odds Ratio (OR)",
+        "Estimate": round(OR, 4),
+        "95% CI": f"{lo_or:.4f}–{hi_or:.4f}",
+        "Lower": round(lo_or, 4),
+        "Upper": round(hi_or, 4),
+    },{
+        "Measure": "Risk Ratio (RR)",
+        "Estimate": round(rr, 4),
+        "95% CI": f"{lo_rr:.4f}–{hi_rr:.4f}",
+        "Lower": round(lo_rr, 4),
+        "Upper": round(hi_rr, 4),
+    },{
+        "Measure": "Vaccine Effectiveness (VE, %)",
+        "Estimate": round(ve, 2),
+        "95% CI": f"{ve_lo:.2f}–{ve_hi:.2f}",
+        "Lower": round(ve_lo, 2),
+        "Upper": round(ve_hi, 2),
+    }])
+    return out
+
+def chi_square_tests(table: np.ndarray):
+    chi2, p, dof, expected = chi2_contingency(table, correction=False)
+    res = pd.DataFrame([{
+        "Test": "Pearson Chi-Square",
+        "Value": round(float(chi2), 4),
+        "df": int(dof),
+        "p-value": _p_spss(p),
+        "Significant (p<0.05)": _yesno(p)
+    }])
+
+    # Yates correction only for 2x2
+    yates = None
+    if table.shape == (2,2):
+        chi2_y, p_y, dof_y, _ = chi2_contingency(table, correction=True)
+        yates = pd.DataFrame([{
+            "Test": "Continuity Correction (Yates)",
+            "Value": round(float(chi2_y), 4),
+            "df": int(dof_y),
+            "p-value": _p_spss(p_y),
+            "Significant (p<0.05)": _yesno(p_y)
+        }])
+
+    expected_df = pd.DataFrame(expected, columns=[f"Col{i+1}" for i in range(table.shape[1])])
+    expected_df.insert(0, "Row", [f"Row{i+1}" for i in range(table.shape[0])])
+    return res, yates, expected_df
+
+def fisher_exact_2x2(table: np.ndarray):
+    if table.shape != (2,2):
+        raise ValueError("Fisher's Exact test requires a 2×2 table.")
+    # scipy.stats.fisher_exact returns OR + p
+    OR, p = stats.fisher_exact(table, alternative="two-sided")
+    out = pd.DataFrame([{
+        "Test": "Fisher's Exact (2-sided)",
+        "Odds Ratio": round(float(OR), 4),
+        "p-value": _p_spss(p),
+        "Significant (p<0.05)": _yesno(p)
+    }])
+    return out
+
+def goodness_of_fit(df: pd.DataFrame):
+    d = df.copy()
+    d["Observed"] = pd.to_numeric(d["Observed"], errors="coerce")
+    d = d.dropna(subset=["Observed"])
+    obs = d["Observed"].values.astype(float)
+
+    if "Expected proportion (optional)" in d.columns and d["Expected proportion (optional)"].notna().any():
+        p = pd.to_numeric(d["Expected proportion (optional)"], errors="coerce").fillna(0).values.astype(float)
+        if p.sum() <= 0:
+            raise ValueError("Expected proportions must sum to a positive value.")
+        p = p / p.sum()
+        exp = obs.sum() * p
+        chi2, pval = chisquare(f_obs=obs, f_exp=exp)
+    else:
+        chi2, pval = chisquare(f_obs=obs)  # equal expected
+        exp = np.repeat(obs.sum()/len(obs), len(obs))
+
+    exp_df = pd.DataFrame({"Category": d["Category"].astype(str).values, "Expected": np.round(exp, 4)})
+    out = pd.DataFrame([{
+        "Test": "Chi-Square Goodness-of-Fit",
+        "Value": round(float(chi2), 4),
+        "df": int(len(obs)-1),
+        "p-value": _p_spss(pval),
+        "Significant (p<0.05)": _yesno(pval)
+    }])
+    return out, exp_df
+
+def mantel_haenszel_from_long(df: pd.DataFrame, stratum="Stratum", exposure="Exposure", outcome="Outcome"):
+    d = df[[stratum, exposure, outcome]].dropna().copy()
+    d[outcome] = pd.to_numeric(d[outcome], errors="coerce")
+    d = d.dropna()
+    # outcome must be 0/1
+    if not set(d[outcome].unique()).issubset({0,1}):
+        raise ValueError("Outcome must be binary coded as 0/1.")
+
+    strata = []
+    for s, g in d.groupby(stratum):
+        # build 2x2: rows exposure levels (2), cols outcome (1/0)
+        ex_levels = list(g[exposure].unique())
+        if len(ex_levels) != 2:
+            raise ValueError(f"Each stratum must have exactly 2 exposure levels. Problem in {s}.")
+        # order: level0, level1
+        a = len(g[(g[exposure]==ex_levels[0]) & (g[outcome]==1)])
+        b = len(g[(g[exposure]==ex_levels[0]) & (g[outcome]==0)])
+        c = len(g[(g[exposure]==ex_levels[1]) & (g[outcome]==1)])
+        d0= len(g[(g[exposure]==ex_levels[1]) & (g[outcome]==0)])
+        strata.append([[a,b],[c,d0]])
+
+    stbl = StratifiedTable(strata)
+    mh_or = float(stbl.oddsratio_pooled)
+    ci_lo, ci_hi = stbl.oddsratio_pooled_confint()
+    chi2 = float(stbl.test_null_odds().statistic)
+    pval = float(stbl.test_null_odds().pvalue)
+
+    out = pd.DataFrame([{
+        "Test": "Mantel–Haenszel (Common OR)",
+        "Common OR": round(mh_or, 4),
+        "95% CI": f"{ci_lo:.4f}–{ci_hi:.4f}",
+        "Chi-square": round(chi2, 4),
+        "p-value": _p_spss(pval),
+        "Significant (p<0.05)": _yesno(pval)
+    }])
+    return out
+
+def cochran_q_with_posthoc(df: pd.DataFrame, subject_col="Subject"):
+    d = df.copy()
+    if subject_col not in d.columns:
+        raise ValueError("Subject column not found.")
+    cond_cols = [c for c in d.columns if c != subject_col]
+    if len(cond_cols) < 3:
+        raise ValueError("Cochran's Q requires 3 or more conditions (binary columns).")
+
+    # to numeric 0/1
+    X = d[cond_cols].apply(pd.to_numeric, errors="coerce")
+    X = X.dropna()
+    if not set(np.unique(X.values)).issubset({0,1}):
+        raise ValueError("Conditions must be binary coded as 0/1.")
+
+    # Cochran's Q
+    q_res = sm_cochrans_q(X.values)
+    Q = float(q_res.statistic)
+    p = float(q_res.pvalue)
+
+    main = pd.DataFrame([{
+        "Test": "Cochran's Q",
+        "Q": round(Q, 4),
+        "df": int(len(cond_cols)-1),
+        "p-value": _p_spss(p),
+        "Significant (p<0.05)": _yesno(p)
+    }])
+
+    # Post-hoc pairwise McNemar with Bonferroni
+    pairs = []
+    m = len(cond_cols)
+    n_tests = m*(m-1)//2
+    alpha_bonf = 0.05 / n_tests if n_tests > 0 else 0.05
+
+    for i in range(m):
+        for j in range(i+1, m):
+            c1, c2 = cond_cols[i], cond_cols[j]
+            tab = pd.crosstab(X[c1], X[c2]).reindex(index=[0,1], columns=[0,1], fill_value=0).values
+            # McNemar uses discordant pairs b/c
+            mc = mcnemar(tab, exact=False, correction=True)
+            p_ij = float(mc.pvalue)
+
+            pairs.append({
+                "Comparison": f"{c1} vs {c2}",
+                "McNemar chi2": round(float(mc.statistic), 4),
+                "p-value": _p_spss(p_ij),
+                "Bonferroni alpha": round(alpha_bonf, 6),
+                "Significant (Bonferroni)": "Yes" if p_ij < alpha_bonf else "No"
+            })
+
+    posthoc = pd.DataFrame(pairs)
+    return main, posthoc
 
 # =========================================================
 # Data I/O
@@ -558,8 +987,6 @@ def read_uploaded_file(uploaded) -> pd.DataFrame | None:
         return None
     st.error("Unsupported file type. Please upload CSV or Excel.")
     return None
-
-
 def show_dataset_status():
     if st.session_state.df is None:
         st.info("No dataset loaded yet. Please upload a CSV/XLSX file in the Data section.")
@@ -935,6 +1362,26 @@ with st.sidebar:
         if st.button("Paired", key="t3", use_container_width=True):
             st.session_state.main_menu = "t-test"
             st.session_state.sub_menu = "Paired"
+    with st.expander("Categorical Tests", expanded=(st.session_state.main_menu == "Categorical")):
+        if st.button("Contingency Table (r×c) / Chi-square", key="c1", use_container_width=True):
+            st.session_state.main_menu = "Categorical"
+            st.session_state.sub_menu = "Chi-square"
+
+        if st.button("Fisher's Exact (2×2)", key="c2", use_container_width=True):
+            st.session_state.main_menu = "Categorical"
+            st.session_state.sub_menu = "Fisher"
+
+        if st.button("Goodness-of-fit", key="c3", use_container_width=True):
+            st.session_state.main_menu = "Categorical"
+            st.session_state.sub_menu = "GOF"
+
+        if st.button("Mantel–Haenszel (stratified 2×2)", key="c4", use_container_width=True):
+            st.session_state.main_menu = "Categorical"
+            st.session_state.sub_menu = "MH"
+
+        if st.button("Cochran's Q (+ McNemar post-hoc)", key="c5", use_container_width=True):
+            st.session_state.main_menu = "Categorical"
+            st.session_state.sub_menu = "CochranQ"
 
 # =========================================================
 # Main routing
