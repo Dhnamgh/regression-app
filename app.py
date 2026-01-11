@@ -1172,28 +1172,22 @@ if main == "Tests" and sub == "CI":
 
         st.markdown("### Confidence Interval Results")
         if st.button("Compute CI", type="primary", use_container_width=True):
-            try:
-                if use_boot:
-                    t1 = bootstrap_ci_mean(x, n_boot=n_boot, alpha=alpha_tail)
-                    t2 = bootstrap_ci_variance(x, n_boot=n_boot, alpha=alpha_tail)
-                    show_table(t1, "Confidence Interval for Mean (Bootstrap)")
-                    download_table_block(t1, "ci_mean_bootstrap", "CI Mean Bootstrap")
+            if len(x) >= 2:
+    try:
+        t1 = ci_mean(x, alpha=alpha_tail)
+        t2 = ci_variance(x, alpha=alpha_tail)
 
-                    show_table(t2, "Confidence Interval for Variance (Bootstrap)")
-                    download_table_block(t2, "ci_variance_bootstrap", "CI Variance Bootstrap")
-                else:
-                    t1 = ci_mean(x, alpha=alpha_tail)
-                    t2 = ci_variance(x, alpha=alpha_tail)
-                    show_table(t1, "Confidence Interval for Mean")
-                    download_table_block(t1, "ci_mean", "CI Mean")
+        show_table(t1, "Confidence Interval for Mean")
+        download_table_block(t1, "ci_mean", "CI Mean")
 
-                    show_table(t2, "Confidence Interval for Variance")
-                    download_table_block(t2, "ci_variance", "CI Variance")
-            except Exception as e:
-                st.error(f"Failed: {e}")
+        show_table(t2, "Confidence Interval for Variance")
+        download_table_block(t2, "ci_variance", "CI Variance")
 
-    else:
-        st.info("Provide at least 2 numeric values.")
+    except Exception as e:
+        st.error(f"Failed: {e}")
+else:
+    st.info("Provide at least 2 numeric values.")
+
 
 # =========================================================
 # Page: Tests - t-test (minimal robust)
