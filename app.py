@@ -911,7 +911,7 @@ with st.sidebar:
             st.session_state.main_menu = "Linear Regression"
             st.session_state.sub_menu = "Export"
 
-        with st.expander("ANOVA", expanded=(st.session_state.main_menu == "ANOVA")):
+      with st.expander("ANOVA", expanded=(st.session_state.main_menu == "ANOVA")):
         if st.button("One-way (between-subjects)", key="a1", use_container_width=True):
             st.session_state.main_menu = "ANOVA"
             st.session_state.sub_menu = "One-way"
