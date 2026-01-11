@@ -6,8 +6,10 @@ import streamlit as st
 
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
-
 from scipy.stats import shapiro
+from scipy import stats
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
+
 from statsmodels.stats.diagnostic import het_breuschpagan
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from statsmodels.stats.stattools import durbin_watson
@@ -225,6 +227,21 @@ def download_figure_block(fig: plt.Figure, base_name: str):
         mime="image/png",
         use_container_width=False
     )
+def show_table(df: pd.DataFrame, title: str | None = None, center_all: bool = False):
+    """Unified table renderer for the whole app."""
+    if title:
+        st.markdown(f"### {title}")
+
+    df_display = df.copy()
+    df_display = df_display.replace([np.nan, None, "nan", "NaN"], "")
+
+    if center_all:
+        styled = df_display.style.set_properties(**{"text-align": "center"})
+    else:
+        num_cols = df.select_dtypes(include=["number"]).columns
+        styled = df_display.style.set_properties(subset=num_cols, **{"text-align": "center"})
+
+    st.dataframe(styled, use_container_width=True)
 
 def format_p_value(p: float) -> str:
     try:
@@ -255,6 +272,274 @@ def make_linear_template() -> pd.DataFrame:
         "X3": [None, None, None],
     })
 
+def make_anova_oneway_template() -> pd.DataFrame:
+    # Long format
+    return pd.DataFrame({
+        "Group": ["A", "A", "B", "B"],
+        "Value": [None, None, None, None]
+    })
+
+def make_anova_oneway_rm_template() -> pd.DataFrame:
+    # Long format (repeated measures)
+    return pd.DataFrame({
+        "Subject": [1, 1, 2, 2],
+        "Condition": ["T1", "T2", "T1", "T2"],
+        "Value": [None, None, None, None]
+    })
+
+def make_anova_twoway_template() -> pd.DataFrame:
+    # Two-way between-subjects with replication (long format)
+    return pd.DataFrame({
+        "FactorA": ["A1", "A1", "A2", "A2"],
+        "FactorB": ["B1", "B2", "B1", "B2"],
+        "Value": [None, None, None, None]
+    })
+
+def make_anova_twoway_rm_template() -> pd.DataFrame:
+    # Two-way repeated measures (long format)
+    return pd.DataFrame({
+        "Subject": [1, 1, 1, 1, 2, 2, 2, 2],
+        "FactorA": ["A1","A1","A2","A2","A1","A1","A2","A2"],
+        "FactorB": ["B1","B2","B1","B2","B1","B2","B1","B2"],
+        "Value": [None, None, None, None, None, None, None, None]
+    })
+
+def make_ttest_one_sample_template() -> pd.DataFrame:
+    return pd.DataFrame({"Value": [None, None, None]})
+
+def make_ttest_two_ind_template() -> pd.DataFrame:
+    return pd.DataFrame({
+        "Group": ["A", "A", "B", "B"],
+        "Value": [None, None, None, None]
+    })
+
+def make_ttest_paired_template() -> pd.DataFrame:
+    return pd.DataFrame({
+        "Subject": [1, 2, 3],
+        "Before": [None, None, None],
+        "After": [None, None, None]
+    })
+def _normality_summary(x: np.ndarray) -> dict:
+    x = np.asarray(x, dtype=float)
+    x = x[~np.isnan(x)]
+    if len(x) < 3:
+        return {"n": int(len(x)), "shapiro_p": None, "is_normal": None}
+    stat, p = shapiro(x)
+    return {"n": int(len(x)), "shapiro_p": float(p), "is_normal": bool(p >= 0.05)}
+
+def _fmt_p(p):
+    if p is None or (isinstance(p, float) and np.isnan(p)):
+        return ""
+    return "< 0.001" if float(p) < 0.001 else f"{float(p):.3f}"
+
+
+# -----------------------------
+# ANOVA
+# -----------------------------
+def anova_one_way(df: pd.DataFrame, group_col="Group", value_col="Value"):
+    d = df[[group_col, value_col]].dropna().copy()
+    d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
+    d = d.dropna()
+
+    groups = [g[value_col].values for _, g in d.groupby(group_col)]
+    labels = list(d[group_col].unique())
+
+    f_stat, p = stats.f_oneway(*groups)
+
+    # Effect size: eta-squared
+    grand_mean = d[value_col].mean()
+    ss_between = sum(len(g)*(np.mean(g)-grand_mean)**2 for g in groups)
+    ss_total = sum((d[value_col]-grand_mean)**2)
+    eta2 = float(ss_between/ss_total) if ss_total != 0 else None
+
+    anova_tbl = pd.DataFrame([{
+        "Test": "One-way ANOVA",
+        "F": float(f_stat),
+        "p-value": _fmt_p(float(p)),
+        "Eta-squared": None if eta2 is None else round(eta2, 4)
+    }])
+
+    # Post-hoc Tukey (optional; only if >=3 groups)
+    tukey_df = None
+    if d[group_col].nunique() >= 3:
+        tk = pairwise_tukeyhsd(endog=d[value_col], groups=d[group_col], alpha=0.05)
+        tukey_df = pd.DataFrame(data=tk.summary().data[1:], columns=tk.summary().data[0])
+    return anova_tbl, tukey_df
+
+
+def anova_one_way_rm(df: pd.DataFrame, subject_col="Subject", within_col="Condition", value_col="Value"):
+    d = df[[subject_col, within_col, value_col]].dropna().copy()
+    d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
+    d = d.dropna()
+
+    # Repeated measures ANOVA
+    rm = sm.stats.AnovaRM(d, depvar=value_col, subject=subject_col, within=[within_col]).fit()
+    tbl = rm.anova_table.reset_index().rename(columns={"index": "Effect"})
+    # clean output
+    tbl = tbl.rename(columns={"F Value": "F", "Num DF": "df1", "Den DF": "df2", "Pr > F": "p_raw"})
+    if "p_raw" in tbl.columns:
+        tbl["p-value"] = tbl["p_raw"].apply(_fmt_p)
+        tbl = tbl.drop(columns=["p_raw"])
+    tbl = tbl.replace([np.nan, None, "nan", "NaN"], "")
+    return tbl
+
+
+def anova_two_way(df: pd.DataFrame, a="FactorA", b="FactorB", y="Value"):
+    d = df[[a, b, y]].dropna().copy()
+    d[y] = pd.to_numeric(d[y], errors="coerce")
+    d = d.dropna()
+
+    # Two-way ANOVA with interaction
+    model = smf.ols(f'Q("{y}") ~ C(Q("{a}")) * C(Q("{b}"))', data=d).fit()
+    tbl = anova_lm(model, typ=2).reset_index().rename(columns={"index": "Source"})
+    tbl = tbl.rename(columns={"sum_sq": "Sum Sq", "df": "df", "F": "F", "PR(>F)": "p_raw"})
+    tbl["p-value"] = tbl["p_raw"].apply(_fmt_p)
+    tbl = tbl.drop(columns=["p_raw"])
+    tbl = tbl.replace([np.nan, None, "nan", "NaN"], "")
+    # clean Q(...) naming
+    tbl["Source"] = tbl["Source"].astype(str).str.replace('C(Q("', "", regex=False).str.replace('"))', "", regex=False)
+    return tbl
+
+
+def anova_two_way_rm(df: pd.DataFrame, subject="Subject", a="FactorA", b="FactorB", y="Value"):
+    d = df[[subject, a, b, y]].dropna().copy()
+    d[y] = pd.to_numeric(d[y], errors="coerce")
+    d = d.dropna()
+
+    rm = sm.stats.AnovaRM(d, depvar=y, subject=subject, within=[a, b]).fit()
+    tbl = rm.anova_table.reset_index().rename(columns={"index": "Effect"})
+    tbl = tbl.rename(columns={"F Value": "F", "Num DF": "df1", "Den DF": "df2", "Pr > F": "p_raw"})
+    tbl["p-value"] = tbl["p_raw"].apply(_fmt_p)
+    tbl = tbl.drop(columns=["p_raw"])
+    tbl = tbl.replace([np.nan, None, "nan", "NaN"], "")
+    return tbl
+
+
+# -----------------------------
+# T-TEST (auto param / nonparam)
+# -----------------------------
+def test_one_sample(df: pd.DataFrame, col="Value", mu0: float = 0.0):
+    x = pd.to_numeric(df[col], errors="coerce").dropna().values.astype(float)
+    norm = _normality_summary(x)
+
+    if norm["is_normal"] is True:
+        t, p = stats.ttest_1samp(x, popmean=mu0)
+        method = "One-sample t-test"
+        stat_name = "t"
+        stat_val = float(t)
+        p_val = float(p)
+    else:
+        # Wilcoxon signed-rank on differences vs mu0
+        d = x - mu0
+        if len(d) < 3:
+            raise ValueError("Not enough data for nonparametric test.")
+        w, p = stats.wilcoxon(d)
+        method = "Wilcoxon signed-rank (one-sample)"
+        stat_name = "W"
+        stat_val = float(w)
+        p_val = float(p)
+
+    out = pd.DataFrame([{
+        "Method": method,
+        "N": norm["n"],
+        "Shapiro p-value": _fmt_p(norm["shapiro_p"]),
+        "Statistic": stat_name,
+        "Value": round(stat_val, 4),
+        "p-value": _fmt_p(p_val),
+        "Significant (p<0.05)": "Yes" if p_val < 0.05 else "No"
+    }])
+    return out
+
+
+def test_two_independent(df: pd.DataFrame, group_col="Group", value_col="Value"):
+    d = df[[group_col, value_col]].dropna().copy()
+    d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
+    d = d.dropna()
+
+    groups = list(d[group_col].unique())
+    if len(groups) != 2:
+        raise ValueError("Independent 2-sample test requires exactly 2 groups.")
+
+    x1 = d.loc[d[group_col] == groups[0], value_col].values.astype(float)
+    x2 = d.loc[d[group_col] == groups[1], value_col].values.astype(float)
+
+    n1 = _normality_summary(x1)
+    n2 = _normality_summary(x2)
+    normal = (n1["is_normal"] is True) and (n2["is_normal"] is True)
+
+    if normal:
+        # Homogeneity of variance
+        lev_stat, lev_p = stats.levene(x1, x2, center="median")
+        equal_var = bool(lev_p >= 0.05)
+
+        t, p = stats.ttest_ind(x1, x2, equal_var=equal_var)
+        method = "Independent t-test (equal variances)" if equal_var else "Welch t-test (unequal variances)"
+        stat_name = "t"
+        stat_val = float(t)
+        p_val = float(p)
+
+        extra = {
+            "Levene p-value": _fmt_p(float(lev_p)),
+            "Variance assumption": "Equal" if equal_var else "Unequal (Welch)"
+        }
+    else:
+        u, p = stats.mannwhitneyu(x1, x2, alternative="two-sided")
+        method = "Mann–Whitney U (nonparametric)"
+        stat_name = "U"
+        stat_val = float(u)
+        p_val = float(p)
+        extra = {
+            "Levene p-value": "",
+            "Variance assumption": ""
+        }
+
+    out = pd.DataFrame([{
+        "Method": method,
+        "Group 1": str(groups[0]),
+        "Group 2": str(groups[1]),
+        "N1": int(len(x1)),
+        "N2": int(len(x2)),
+        "Shapiro p (G1)": _fmt_p(n1["shapiro_p"]),
+        "Shapiro p (G2)": _fmt_p(n2["shapiro_p"]),
+        **extra,
+        "Statistic": stat_name,
+        "Value": round(stat_val, 4),
+        "p-value": _fmt_p(p_val),
+        "Significant (p<0.05)": "Yes" if p_val < 0.05 else "No"
+    }])
+    return out
+
+
+def test_paired(df: pd.DataFrame, before_col="Before", after_col="After"):
+    x1 = pd.to_numeric(df[before_col], errors="coerce")
+    x2 = pd.to_numeric(df[after_col], errors="coerce")
+    d = (x2 - x1).dropna().values.astype(float)
+
+    norm = _normality_summary(d)
+
+    if norm["is_normal"] is True:
+        t, p = stats.ttest_rel(x2.dropna().values.astype(float), x1.dropna().values.astype(float))
+        method = "Paired t-test"
+        stat_name = "t"
+        stat_val = float(t)
+        p_val = float(p)
+    else:
+        w, p = stats.wilcoxon(d)
+        method = "Wilcoxon signed-rank (paired)"
+        stat_name = "W"
+        stat_val = float(w)
+        p_val = float(p)
+
+    out = pd.DataFrame([{
+        "Method": method,
+        "N pairs": norm["n"],
+        "Shapiro p-value (diff)": _fmt_p(norm["shapiro_p"]),
+        "Statistic": stat_name,
+        "Value": round(stat_val, 4),
+        "p-value": _fmt_p(p_val),
+        "Significant (p<0.05)": "Yes" if p_val < 0.05 else "No"
+    }])
+    return out
 
 # =========================================================
 # Data I/O
@@ -626,6 +911,30 @@ with st.sidebar:
             st.session_state.main_menu = "Linear Regression"
             st.session_state.sub_menu = "Export"
 
+        with st.expander("ANOVA", expanded=(st.session_state.main_menu == "ANOVA")):
+        if st.button("One-way (between-subjects)", key="a1", use_container_width=True):
+            st.session_state.main_menu = "ANOVA"
+            st.session_state.sub_menu = "One-way"
+        if st.button("One-way (repeated measures)", key="a2", use_container_width=True):
+            st.session_state.main_menu = "ANOVA"
+            st.session_state.sub_menu = "One-way RM"
+        if st.button("Two-way (with replication)", key="a3", use_container_width=True):
+            st.session_state.main_menu = "ANOVA"
+            st.session_state.sub_menu = "Two-way"
+        if st.button("Two-way (repeated measures)", key="a4", use_container_width=True):
+            st.session_state.main_menu = "ANOVA"
+            st.session_state.sub_menu = "Two-way RM"
+
+    with st.expander("t-test", expanded=(st.session_state.main_menu == "t-test")):
+        if st.button("One-sample", key="t1", use_container_width=True):
+            st.session_state.main_menu = "t-test"
+            st.session_state.sub_menu = "One-sample"
+        if st.button("Independent 2-sample", key="t2", use_container_width=True):
+            st.session_state.main_menu = "t-test"
+            st.session_state.sub_menu = "Two-independent"
+        if st.button("Paired", key="t3", use_container_width=True):
+            st.session_state.main_menu = "t-test"
+            st.session_state.sub_menu = "Paired"
 
 # =========================================================
 # Main routing
@@ -967,3 +1276,213 @@ elif main == "Linear Regression" and sub == "Export":
         )
     else:
         st.info("No linear outputs yet. Run a model first.")
+# =========================================================
+# ANOVA
+# =========================================================
+elif main == "ANOVA" and sub == "One-way":
+    st.markdown("## ANOVA: One-way (between-subjects)")
+    st.download_button(
+        "Download Excel template",
+        data=df_to_excel_bytes({"template": make_anova_oneway_template()}),
+        file_name="anova_oneway_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="anova1_upload")
+    df_new = read_uploaded_file(uploaded)
+    if df_new is not None:
+        st.session_state.df = df_new
+
+    show_dataset_status()
+    if st.session_state.df is not None:
+        df = st.session_state.df
+        group_col = st.selectbox("Group column", df.columns, index=0)
+        value_col = st.selectbox("Value column", df.columns, index=min(1, len(df.columns)-1))
+        if st.button("Run One-way ANOVA", type="primary", use_container_width=True):
+            try:
+                tbl, tukey = anova_one_way(df, group_col, value_col)
+                show_table(tbl, "ANOVA result", center_all=True)
+                download_table_block(tbl, "anova_oneway_result", "One-way ANOVA")
+
+                if tukey is not None:
+                    show_table(tukey, "Post-hoc (Tukey HSD)")
+                    download_table_block(tukey, "anova_oneway_tukey", "Tukey HSD")
+            except Exception as e:
+                st.error(f"ANOVA failed: {e}")
+
+elif main == "ANOVA" and sub == "One-way RM":
+    st.markdown("## ANOVA: One-way (repeated measures)")
+    st.download_button(
+        "Download Excel template",
+        data=df_to_excel_bytes({"template": make_anova_oneway_rm_template()}),
+        file_name="anova_oneway_repeated_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="anova1rm_upload")
+    df_new = read_uploaded_file(uploaded)
+    if df_new is not None:
+        st.session_state.df = df_new
+
+    show_dataset_status()
+    if st.session_state.df is not None:
+        df = st.session_state.df
+        subject = st.selectbox("Subject column", df.columns)
+        within = st.selectbox("Within factor (Condition)", df.columns)
+        value = st.selectbox("Value column", df.columns)
+        if st.button("Run One-way RM ANOVA", type="primary", use_container_width=True):
+            try:
+                tbl = anova_one_way_rm(df, subject, within, value)
+                show_table(tbl, "Repeated Measures ANOVA")
+                download_table_block(tbl, "anova_oneway_rm", "RM ANOVA")
+            except Exception as e:
+                st.error(f"ANOVA failed: {e}")
+
+elif main == "ANOVA" and sub == "Two-way":
+    st.markdown("## ANOVA: Two-way (with replication)")
+    st.download_button(
+        "Download Excel template",
+        data=df_to_excel_bytes({"template": make_anova_twoway_template()}),
+        file_name="anova_twoway_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="anova2_upload")
+    df_new = read_uploaded_file(uploaded)
+    if df_new is not None:
+        st.session_state.df = df_new
+
+    show_dataset_status()
+    if st.session_state.df is not None:
+        df = st.session_state.df
+        a = st.selectbox("Factor A column", df.columns)
+        b = st.selectbox("Factor B column", df.columns)
+        y = st.selectbox("Value column", df.columns)
+        if st.button("Run Two-way ANOVA", type="primary", use_container_width=True):
+            try:
+                tbl = anova_two_way(df, a, b, y)
+                show_table(tbl, "Two-way ANOVA")
+                download_table_block(tbl, "anova_twoway", "Two-way ANOVA")
+            except Exception as e:
+                st.error(f"ANOVA failed: {e}")
+
+elif main == "ANOVA" and sub == "Two-way RM":
+    st.markdown("## ANOVA: Two-way (repeated measures)")
+    st.download_button(
+        "Download Excel template",
+        data=df_to_excel_bytes({"template": make_anova_twoway_rm_template()}),
+        file_name="anova_twoway_repeated_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="anova2rm_upload")
+    df_new = read_uploaded_file(uploaded)
+    if df_new is not None:
+        st.session_state.df = df_new
+
+    show_dataset_status()
+    if st.session_state.df is not None:
+        df = st.session_state.df
+        subject = st.selectbox("Subject column", df.columns)
+        a = st.selectbox("Within factor A column", df.columns)
+        b = st.selectbox("Within factor B column", df.columns)
+        y = st.selectbox("Value column", df.columns)
+        if st.button("Run Two-way RM ANOVA", type="primary", use_container_width=True):
+            try:
+                tbl = anova_two_way_rm(df, subject, a, b, y)
+                show_table(tbl, "Two-way Repeated Measures ANOVA")
+                download_table_block(tbl, "anova_twoway_rm", "Two-way RM ANOVA")
+            except Exception as e:
+                st.error(f"ANOVA failed: {e}")
+
+
+# =========================================================
+# T-TEST
+# =========================================================
+elif main == "t-test" and sub == "One-sample":
+    st.markdown("## One-sample test (auto parametric / nonparametric)")
+    st.download_button(
+        "Download Excel template",
+        data=df_to_excel_bytes({"template": make_ttest_one_sample_template()}),
+        file_name="ttest_one_sample_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="t1_upload")
+    df_new = read_uploaded_file(uploaded)
+    if df_new is not None:
+        st.session_state.df = df_new
+
+    show_dataset_status()
+    if st.session_state.df is not None:
+        df = st.session_state.df
+        col = st.selectbox("Value column", df.columns)
+        mu0 = st.number_input("Hypothesized mean/median (mu0)", value=0.0)
+        if st.button("Run One-sample Test", type="primary", use_container_width=True):
+            try:
+                out = test_one_sample(df, col, float(mu0))
+                show_table(out, "Result", center_all=True)
+                download_table_block(out, "ttest_one_sample_result", "One-sample Result")
+            except Exception as e:
+                st.error(f"Test failed: {e}")
+
+elif main == "t-test" and sub == "Two-independent":
+    st.markdown("## Independent 2-sample test (auto parametric / nonparametric)")
+    st.download_button(
+        "Download Excel template",
+        data=df_to_excel_bytes({"template": make_ttest_two_ind_template()}),
+        file_name="ttest_two_independent_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="t2_upload")
+    df_new = read_uploaded_file(uploaded)
+    if df_new is not None:
+        st.session_state.df = df_new
+
+    show_dataset_status()
+    if st.session_state.df is not None:
+        df = st.session_state.df
+        g = st.selectbox("Group column", df.columns)
+        v = st.selectbox("Value column", df.columns)
+        if st.button("Run Independent 2-sample Test", type="primary", use_container_width=True):
+            try:
+                out = test_two_independent(df, g, v)
+                show_table(out, "Result", center_all=True)
+                download_table_block(out, "ttest_two_independent_result", "Independent 2-sample Result")
+            except Exception as e:
+                st.error(f"Test failed: {e}")
+
+elif main == "t-test" and sub == "Paired":
+    st.markdown("## Paired test (auto parametric / nonparametric)")
+    st.download_button(
+        "Download Excel template",
+        data=df_to_excel_bytes({"template": make_ttest_paired_template()}),
+        file_name="ttest_paired_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+    uploaded = st.file_uploader("Upload CSV/XLSX", type=["csv", "xlsx", "xls"], key="t3_upload")
+    df_new = read_uploaded_file(uploaded)
+    if df_new is not None:
+        st.session_state.df = df_new
+
+    show_dataset_status()
+    if st.session_state.df is not None:
+        df = st.session_state.df
+        before = st.selectbox("Before column", df.columns)
+        after = st.selectbox("After column", df.columns, index=min(1, len(df.columns)-1))
+        if st.button("Run Paired Test", type="primary", use_container_width=True):
+            try:
+                out = test_paired(df, before, after)
+                show_table(out, "Result", center_all=True)
+                download_table_block(out, "ttest_paired_result", "Paired Result")
+            except Exception as e:
+                st.error(f"Test failed: {e}")
