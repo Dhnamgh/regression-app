@@ -929,7 +929,12 @@ def default_subject_col(df: pd.DataFrame):
 def default_within_col(df: pd.DataFrame, exclude: Optional[List[str]] = None):
     cats = categorical_candidate_cols(df, exclude=exclude)
     valid = [c for c in cats if df[c].dropna().astype(str).nunique() >= 2]
-    return first_existing(valid, ["time", "factor_b", "condition", "visit", "period", "within"], valid[0] if valid else None)
+    preferred = ["time", "factor_b", "condition", "visit", "period", "within", "occasion", "measurement"]
+    picked = first_existing(valid, preferred, None)
+    if picked is not None:
+        return picked
+    non_group = [c for c in valid if str(c).lower() not in {"group", "grouping", "factor_a", "treatment", "arm"}]
+    return non_group[0] if non_group else (valid[0] if valid else None)
 
 def level_selector(df: pd.DataFrame, group_col: str, prefix: str):
     levels = sorted([str(x) for x in df[group_col].dropna().astype(str).unique()])
@@ -1844,8 +1849,10 @@ elif section == "Quantitative Tests":
                         d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
                         d = d.dropna()
                         wide = d.pivot_table(index=subject_col, columns=within_col, values=value_col, aggfunc="mean").dropna()
-                        if wide.shape[1] < 2 or wide.shape[0] < 2:
-                            raise ValueError("Friedman test requires at least 2 related conditions and 2 complete subjects.")
+                        if wide.shape[0] < 2:
+                            raise ValueError("Friedman test requires at least 2 complete subjects.")
+                        if wide.shape[1] < 3:
+                            raise ValueError("Friedman test requires at least 3 related conditions. For 2 related conditions, use Wilcoxon signed-rank.")
                         stat, pval = stats.friedmanchisquare(*[wide[c].values for c in wide.columns])
                         show_table(compact_numeric_df(wide.reset_index(), 4), "Complete Repeated-Measures Data")
                         show_table(nonparam_result_table("Friedman Test", float(stat), float(pval)), "Test Statistics")
@@ -1906,9 +1913,13 @@ elif section == "Quantitative Tests":
                         out["Sig."] = out["Sig."].apply(format_p_value)
                         show_table(compact_numeric_df(out, 4), "Tests of Within-Subjects Effects")
                         wide = d.pivot_table(index=subject_col, columns=within_col, values=value_col, aggfunc="mean").dropna()
-                        if wide.shape[1] >= 2 and wide.shape[0] >= 2:
-                            fr_stat, fr_p = stats.friedmanchisquare(*[wide[c].values for c in wide.columns])
-                            show_table(nonparam_result_table("Friedman Test", float(fr_stat), float(fr_p)), "Nonparametric Alternative")
+                        if wide.shape[0] >= 2:
+                            if wide.shape[1] >= 3:
+                                fr_stat, fr_p = stats.friedmanchisquare(*[wide[c].values for c in wide.columns])
+                                show_table(nonparam_result_table("Friedman Test", float(fr_stat), float(fr_p)), "Nonparametric Alternative")
+                            elif wide.shape[1] == 2:
+                                w_stat, w_p = stats.wilcoxon(wide.iloc[:, 0].values, wide.iloc[:, 1].values, zero_method="wilcox", alternative="two-sided")
+                                show_table(nonparam_result_table("Wilcoxon Signed-Rank Test", float(w_stat), float(w_p)), "Nonparametric Alternative")
                 else:
                     value_col = selectbox_default("Dependent variable", numeric_cols, default_numeric_col(df), key="anova2_value")
                     factor_candidates = categorical_candidate_cols(df, exclude=[value_col])
