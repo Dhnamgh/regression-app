@@ -654,12 +654,13 @@ def run_logistic_statsmodels(df: pd.DataFrame, target: str, features: List[str],
 
     X = data[features].astype(float)
 
-    # Case Processing Summary
+    # Case Processing Summary    
     case_summary = pd.DataFrame([
-        ["Selected Cases", "Included in Analysis", included_n, included_n / raw_n * 100 if raw_n else np.nan],
-        ["Selected Cases", "Missing Cases", excluded_n, excluded_n / raw_n * 100 if raw_n else np.nan],
+        ["Selected Cases", "Included in Analysis", included_n, included_n / raw_n * 100],
+        ["Selected Cases", "Missing Cases", excluded_n, excluded_n / raw_n * 100],
         ["Selected Cases", "Total", raw_n, 100.0],
-    ], columns=["", "", "N", "Percent"])
+    ], columns=["Case Type", "Status", "N", "Percent"])
+    case_summary["Percent"] = case_summary["Percent"].round(1)
 
     # Dependent Variable Encoding
     encoding_tbl = pd.DataFrame(encoding_rows, columns=["Original Value", "Internal Value"])
