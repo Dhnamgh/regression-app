@@ -166,27 +166,21 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
     fig.savefig(bio, format="png", dpi=dpi, bbox_inches="tight")
     bio.seek(0)
     return bio.getvalue()
-    
 def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     df2 = df.copy().fillna("").astype(str)
 
-    # Tính width theo độ dài text
-    col_widths = []
-    for col in df2.columns:
-        max_len = max(
-            df2[col].astype(str).map(len).max(),
-            len(col)
-        )
-        col_widths.append(min(max_len * 0.12, 0.4))
+    n_rows, n_cols = df2.shape
 
-    fig_w = sum(col_widths) * 10
-    fig_h = max(2.5, (df2.shape[0] + 1) * 0.6)
+    fig_w = max(9, min(14, n_cols * 2.2))
+    fig_h = max(2.8, min(10, (n_rows + 1) * 0.55 + 1.0))
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     ax.axis("off")
 
     if title:
         ax.set_title(title, fontsize=16, fontweight="bold", pad=12)
+
+    col_widths = [1.0 / n_cols] * n_cols
 
     tbl = ax.table(
         cellText=df2.values,
@@ -196,21 +190,26 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         colWidths=col_widths
     )
 
-    # Font chuẩn
     tbl.auto_set_font_size(False)
-    tbl.set_fontsize(12)
+    tbl.set_fontsize(11)
+    tbl.scale(1, 1.45)
 
-    # Header đậm + wrap
     for (row, col), cell in tbl.get_celld().items():
+        cell.set_edgecolor("black")
+        cell.set_linewidth(0.8)
+
         if row == 0:
-            cell.set_text_props(weight="bold")
-            cell.set_facecolor("#f0f0f0")
+            cell.set_text_props(weight="bold", fontsize=11)
+            cell.set_facecolor("#f2f2f2")
+        else:
+            cell.set_text_props(fontsize=11)
+
         cell.get_text().set_wrap(True)
 
-    tbl.scale(1, 1.4)
+    fig.tight_layout()
 
     bio = io.BytesIO()
-    plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight")
+    fig.savefig(bio, format="png", dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     bio.seek(0)
     return bio.getvalue()
