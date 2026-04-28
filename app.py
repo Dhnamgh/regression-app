@@ -133,7 +133,7 @@ st.markdown(
     """
 <div class="header-banner">
   <h1>Data Analysis in Health Sciences</h1>
-  <p>Regression, categorical analysis, quantitative tests, diagnostics and SPSS-like outputs.</p>
+  <p>Regression, categorical analysis, quantitative tests and diagnostics for health sciences.</p>
 </div>
 """,
     unsafe_allow_html=True
@@ -207,7 +207,7 @@ def show_table(df: pd.DataFrame, title: str):
     st.dataframe(df.fillna(""), use_container_width=True)
 
 # =========================================================
-# SPSS-like formatting
+# Output formatting
 # =========================================================
 def format_p_value(p: Optional[float]) -> str:
     if p is None:
@@ -559,11 +559,11 @@ def two_by_two_measures(obs2x2: np.ndarray, alpha=0.05) -> pd.DataFrame:
 
 
 # =========================================================
-# Logistic regression (statsmodels): SPSS-like "Variables in the Equation"
+# Logistic regression (statsmodels): Variables in the Equation
 # =========================================================
 def hosmer_lemeshow_table(y_true, y_prob, g=10):
     """
-    SPSS-like Hosmer-Lemeshow test table.
+    Hosmer-Lemeshow test table.
     Groups predicted probabilities into up to g groups and compares observed vs expected.
     """
     tmp = pd.DataFrame({"y": np.asarray(y_true, dtype=float), "p": np.asarray(y_prob, dtype=float)})
@@ -609,7 +609,7 @@ def hosmer_lemeshow_table(y_true, y_prob, g=10):
 
 def run_logistic_statsmodels(df: pd.DataFrame, target: str, features: List[str], cutoff: float = 0.5) -> Dict[str, object]:
     """
-    Fit binary logistic regression and return SPSS-like output tables:
+    Fit binary logistic regression and return output tables:
     Case Processing Summary, Dependent Variable Encoding, Omnibus Tests,
     Model Summary, Hosmer-Lemeshow, Classification Table, Variables in the Equation.
     """
@@ -1011,7 +1011,7 @@ def normality_overall_ok(groups: Dict[str, np.ndarray]) -> bool:
     return ok
 
 def recommendation_table(recommendation: str) -> pd.DataFrame:
-    return pd.DataFrame([[recommendation]], columns=["SPSS-like recommendation"])
+    return pd.DataFrame([[recommendation]], columns=["Recommendation"])
 
 def nonparam_result_table(test_name: str, statistic: float, pval: float) -> pd.DataFrame:
     out = pd.DataFrame([[test_name, statistic, format_p_value(pval), "Yes" if pval < 0.05 else "No", conclusion_text(pval)]], columns=["Test", "Statistic", "Sig.", "Significant (p<0.05)", "Conclusion"])
@@ -1031,7 +1031,7 @@ def chi_square_expected_assumption_table(expected: np.ndarray) -> pd.DataFrame:
     pct_lt5 = cells_lt5 / total_cells * 100 if total_cells else np.nan
     ok_strict = bool(cells_lt5 == 0)
     ok_spss = bool(min_expected >= 1 and pct_lt5 <= 20)
-    return compact_numeric_df(pd.DataFrame([[total_cells, cells_lt5, pct_lt5, min_expected, "Yes" if ok_strict else "No", "Yes" if ok_spss else "No"]], columns=["Cells", "Expected < 5", "% Expected < 5", "Minimum Expected Count", "All expected >= 5", "SPSS rule acceptable"]), 4)
+    return compact_numeric_df(pd.DataFrame([[total_cells, cells_lt5, pct_lt5, min_expected, "Yes" if ok_strict else "No", "Yes" if ok_spss else "No"]], columns=["Cells", "Expected < 5", "% Expected < 5", "Minimum Expected Count", "All expected >= 5", "Common rule acceptable"]), 4)
 
 def chi_square_guidance(obs: np.ndarray, expected: np.ndarray) -> str:
     expected = np.asarray(expected, dtype=float)
@@ -1040,6 +1040,64 @@ def chi_square_guidance(obs: np.ndarray, expected: np.ndarray) -> str:
     if obs.shape == (2, 2):
         return "Some expected counts are below 5. Prefer Fisher's Exact Test for a 2x2 table."
     return "Some expected counts are below 5. Consider combining sparse categories or using an exact/Monte Carlo test instead of relying only on Pearson Chi-square."
+
+
+def chi_square_alternative_test_table(obs: np.ndarray, expected: np.ndarray, n_resamples: int = 10000, seed: int = 123) -> pd.DataFrame:
+    obs = np.asarray(obs, dtype=int)
+    expected = np.asarray(expected, dtype=float)
+
+    if obs.shape == (2, 2):
+        oddsratio, pval = stats.fisher_exact(obs, alternative="two-sided")
+        out = pd.DataFrame([[
+            "Fisher's Exact Test",
+            oddsratio,
+            format_p_value(pval),
+            "Yes" if pval < 0.05 else "No",
+            conclusion_text(pval)
+        ]], columns=["Alternative test", "Statistic / Odds Ratio", "Sig.", "Significant (p<0.05)", "Conclusion"])
+        return compact_numeric_df(out, 4)
+
+    if not hasattr(stats, "random_table"):
+        out = pd.DataFrame([[
+            "Exact / Monte Carlo test",
+            "",
+            "",
+            "",
+            "For tables larger than 2x2, use an exact or Monte Carlo test, or combine sparse categories."
+        ]], columns=["Alternative test", "Statistic / Odds Ratio", "Sig.", "Significant (p<0.05)", "Conclusion"])
+        return out
+
+    row_sums = obs.sum(axis=1)
+    col_sums = obs.sum(axis=0)
+
+    if obs.sum() <= 0:
+        raise ValueError("Total count must be > 0.")
+
+    obs_stat = float(np.nansum((obs - expected) ** 2 / expected))
+    rng = np.random.default_rng(seed)
+    greater_equal = 0
+
+    for _ in range(int(n_resamples)):
+        try:
+            sim = stats.random_table.rvs(row_sums, col_sums, random_state=rng)
+        except TypeError:
+            sim = stats.random_table(row_sums, col_sums).rvs(random_state=rng)
+
+        sim_expected = np.outer(sim.sum(axis=1), sim.sum(axis=0)) / sim.sum()
+        sim_stat = float(np.nansum((sim - sim_expected) ** 2 / sim_expected))
+        if sim_stat >= obs_stat - 1e-12:
+            greater_equal += 1
+
+    pval = (greater_equal + 1) / (int(n_resamples) + 1)
+    out = pd.DataFrame([[
+        f"Monte Carlo Chi-square ({int(n_resamples)} samples)",
+        obs_stat,
+        format_p_value(pval),
+        "Yes" if pval < 0.05 else "No",
+        conclusion_text(pval)
+    ]], columns=["Alternative test", "Statistic / Odds Ratio", "Sig.", "Significant (p<0.05)", "Conclusion"])
+    return compact_numeric_df(out, 4)
+
 
 def one_sample_ttest_table(x: np.ndarray, mu: float, alpha: float = 0.05) -> pd.DataFrame:
     x = np.asarray(x, dtype=float)
@@ -1420,7 +1478,7 @@ elif section == "Linear Regression":
             try:
                 model, data_used = fit_linear_ols(df, y_col, x_cols)
 
-                # ANOVA (SPSS-like)
+                # ANOVA
                 a = anova_lm(model, typ=1).reset_index().rename(columns={"index": "Source"})
                 a["Source"] = a["Source"].apply(clean_term_name)
                 a = a.rename(columns={"df": "df", "sum_sq": "Sum Sq", "mean_sq": "Mean Sq", "F": "F", "PR(>F)": "Sig."})
@@ -1433,7 +1491,7 @@ elif section == "Linear Regression":
                 show_table(a, "ANOVA")
                 download_table_block(a, "linear_anova", "ANOVA")
 
-                # Coefficients (SPSS-like)
+                # Coefficients
                 b = model.summary2().tables[1].reset_index().rename(columns={"index": "Term"})
                 b["Term"] = b["Term"].apply(clean_term_name)
 
@@ -1495,8 +1553,9 @@ elif section == "Categorical Tests":
                 expected_assumption = chi_square_expected_assumption_table(expected)
                 show_table(expected_assumption, "Expected Count Assumption")
                 guidance = chi_square_guidance(obs, expected)
-                show_table(recommendation_table(guidance), "SPSS-like Recommendation")
-                if not (np.asarray(expected, dtype=float) >= 5).all():
+                show_table(recommendation_table(guidance), "Recommendation")
+                expected_ok = bool((np.asarray(expected, dtype=float) >= 5).all())
+                if not expected_ok:
                     st.warning(guidance)
 
                 chi_tbl = pd.DataFrame([[
@@ -1509,7 +1568,12 @@ elif section == "Categorical Tests":
                 show_table(chi_tbl, "Chi-Square Tests")
                 download_table_block(chi_tbl, "chisq_tests", "Chi-Square Tests")
 
-                # Expected table (SPSS-like with totals)
+                if not expected_ok:
+                    alt_tbl = chi_square_alternative_test_table(obs, expected)
+                    show_table(alt_tbl, "Alternative Test")
+                    download_table_block(alt_tbl, "chisq_alternative_test", "Alternative Test")
+
+                # Expected table (with totals)
                 # Use current group labels from editor state
                 group_labels = st.session_state.get("ct_chisq", pd.DataFrame()).get("Group", pd.Series([""]*obs.shape[0])).tolist()
                 exp_df = pd.DataFrame(expected, columns=observed_df.columns)
@@ -1828,7 +1892,7 @@ elif section == "Quantitative Tests":
                                 raise ValueError("At least 2 valid observations are required.")
                             show_table(descriptives_for_groups({value_col: x}), "Descriptive Statistics")
                             show_table(normality_by_group_table({value_col: x}), "Tests of Normality")
-                            show_table(recommendation_table(assumption_recommendation(normality_overall_ok({value_col: x}), None, "one-sample t test", "one-sample Wilcoxon signed-rank test")), "SPSS-like Recommendation")
+                            show_table(recommendation_table(assumption_recommendation(normality_overall_ok({value_col: x}), None, "one-sample t test", "one-sample Wilcoxon signed-rank test")), "Recommendation")
                             show_table(one_sample_ttest_table(x, mu, alpha), "One-Sample Test")
                             if np.any((x - mu) != 0):
                                 w_stat, w_p = stats.wilcoxon(x - mu, zero_method="wilcox", alternative="two-sided")
@@ -1854,7 +1918,7 @@ elif section == "Quantitative Tests":
                                 raise ValueError("No selected group has at least 2 valid numeric observations.")
                             show_table(descriptives_for_groups(desc_groups), "Descriptive Statistics")
                             show_table(normality_by_group_table(norm_groups), "Tests of Normality")
-                            show_table(recommendation_table(assumption_recommendation(normality_overall_ok(norm_groups), None, "one-sample t test", "one-sample Wilcoxon signed-rank test")), "SPSS-like Recommendation")
+                            show_table(recommendation_table(assumption_recommendation(normality_overall_ok(norm_groups), None, "one-sample t test", "one-sample Wilcoxon signed-rank test")), "Recommendation")
                             show_table(compact_numeric_df(pd.concat(t_rows, ignore_index=True), 4), "One-Sample Test")
                             if w_rows:
                                 show_table(compact_numeric_df(pd.concat(w_rows, ignore_index=True), 4), "Nonparametric Alternative")
@@ -1876,7 +1940,7 @@ elif section == "Quantitative Tests":
                             lev_ok = str(lev_tbl.loc[0, "Decision"]).startswith("Equal variances assumed")
                         except Exception:
                             lev_ok = None
-                        show_table(recommendation_table(assumption_recommendation(normality_overall_ok(groups), lev_ok, "independent-samples t test", "Mann-Whitney U test")), "SPSS-like Recommendation")
+                        show_table(recommendation_table(assumption_recommendation(normality_overall_ok(groups), lev_ok, "independent-samples t test", "Mann-Whitney U test")), "Recommendation")
                         show_table(t_tbl, "Independent Samples Test")
                         levels2 = list(groups.keys())
                         u_stat, u_p = stats.mannwhitneyu(groups[levels2[0]], groups[levels2[1]], alternative="two-sided")
@@ -1893,7 +1957,7 @@ elif section == "Quantitative Tests":
                         groups, t_tbl = paired_ttest_table(d, before_col, after_col, alpha)
                         show_table(descriptives_for_groups({before_col: d[before_col].values, after_col: d[after_col].values}), "Paired Samples Statistics")
                         show_table(normality_by_group_table(groups), "Tests of Normality for Paired Difference")
-                        show_table(recommendation_table(assumption_recommendation(normality_overall_ok(groups), None, "paired-samples t test", "Wilcoxon signed-rank test")), "SPSS-like Recommendation")
+                        show_table(recommendation_table(assumption_recommendation(normality_overall_ok(groups), None, "paired-samples t test", "Wilcoxon signed-rank test")), "Recommendation")
                         show_table(t_tbl, "Paired Samples Test")
                         w_stat, w_p = stats.wilcoxon(d[before_col].astype(float).values, d[after_col].astype(float).values, zero_method="wilcox", alternative="two-sided")
                         show_table(nonparam_result_table("Wilcoxon Signed-Rank Test", float(w_stat), float(w_p)), "Nonparametric Alternative")
@@ -2010,7 +2074,7 @@ elif section == "Quantitative Tests":
                         show_table(normality_by_group_table(groups), "Tests of Normality")
                         lev_stat, lev_p = stats.levene(*groups.values(), center="mean")
                         show_table(compact_numeric_df(pd.DataFrame([["Levene's Test", lev_stat, format_p_value(lev_p), "Yes" if lev_p >= 0.05 else "No"]], columns=["Test", "Statistic", "Sig.", "Equal variances assumption"]), 4), "Test of Homogeneity of Variances")
-                        show_table(recommendation_table(assumption_recommendation(normality_overall_ok(groups), bool(lev_p >= 0.05), "one-way ANOVA", "Kruskal-Wallis test")), "SPSS-like Recommendation")
+                        show_table(recommendation_table(assumption_recommendation(normality_overall_ok(groups), bool(lev_p >= 0.05), "one-way ANOVA", "Kruskal-Wallis test")), "Recommendation")
                         model = smf.ols(f'Q("{value_col}") ~ C(Q("{factor_col}"))', data=d).fit()
                         show_table(anova_summary_table(model, typ=2), "ANOVA")
                         kw_stat, kw_p = stats.kruskal(*groups.values())
