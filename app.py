@@ -251,10 +251,7 @@ def compact_numeric_df(df, decimals: int = 4):
         if pd.api.types.is_numeric_dtype(out[c]):
             out[c] = out[c].round(decimals)
 
-    # pandas >= 2.1 supports DataFrame.map; older versions use applymap
-    if hasattr(out, "map"):
-        return out.map(clean_cell)
-    return out.applymap(clean_cell)
+    return out.apply(lambda col: col.map(clean_cell))
 
 def clean_term_name(s: str) -> str:
     # Remove Q("...") wrappers used by formula
@@ -787,11 +784,10 @@ def statsmodels_roc(y_true: np.ndarray, y_prob: np.ndarray):
         thr_list.append(t if np.isfinite(t) else 1.0)
     return np.array(fpr), np.array(tpr), np.array(thr_list)
 
-from sklearn.metrics import auc
-
-def auc_from_roc(fpr, tpr):
+def auc_from_roc(fpr: np.ndarray, tpr: np.ndarray) -> float:
     order = np.argsort(fpr)
-    return float(auc(fpr[order], tpr[order]))
+    return float(np.trapezoid(tpr[order], fpr[order]))
+
 def roc_outputs(model, y: pd.Series, X: pd.DataFrame):
     X_sm = sm.add_constant(X)
     p = model.predict(X_sm)
@@ -801,7 +797,7 @@ def roc_outputs(model, y: pd.Series, X: pd.DataFrame):
 
     auc_tbl = pd.DataFrame([["Area Under the Curve", auc_val]], columns=["Measure", "Value"])
     auc_tbl["Value"] = pd.to_numeric(auc_tbl["Value"], errors="coerce").round(4)
-    auc_tbl = auc_tbl.applymap(clean_cell)
+    auc_tbl = auc_tbl.apply(lambda col: col.map(clean_cell))
 
     roc_tbl = pd.DataFrame({
         "Threshold": thr,
@@ -1200,7 +1196,7 @@ elif section == "Linear Regression":
                 for col in ["Sum Sq", "Mean Sq", "F"]:
                     if col in a.columns:
                         a[col] = pd.to_numeric(a[col], errors="coerce").round(4)
-                a = a.applymap(clean_cell)
+                a = a.apply(lambda col: col.map(clean_cell))
 
                 show_table(a, "ANOVA")
                 download_table_block(a, "linear_anova", "ANOVA")
@@ -1238,7 +1234,7 @@ elif section == "Linear Regression":
                 for col in ["B", "S.E.", "t", "CI 2.5%", "CI 97.5%"]:
                     if col in b.columns:
                         b[col] = pd.to_numeric(b[col], errors="coerce").round(4)
-                b = b.applymap(clean_cell)
+                b = b.apply(lambda col: col.map(clean_cell))
 
                 show_table(b, "Coefficients")
                 download_table_block(b, "linear_coefficients", "Coefficients")
@@ -1269,7 +1265,7 @@ elif section == "Categorical Tests":
                     "Yes" if p < 0.05 else "No"
                 ]], columns=["Test", "Value", "df", "Asymp. Sig. (2-sided)", "Significant (p<0.05)"])
                 chi_tbl["Value"] = pd.to_numeric(chi_tbl["Value"], errors="coerce").round(6)
-                chi_tbl = chi_tbl.applymap(clean_cell)
+                chi_tbl = chi_tbl.apply(lambda col: col.map(clean_cell))
 
                 show_table(chi_tbl, "Chi-Square Tests")
                 download_table_block(chi_tbl, "chisq_tests", "Chi-Square Tests")
@@ -1289,7 +1285,7 @@ elif section == "Categorical Tests":
 
                 for c in observed_df.columns.tolist() + ["Total"]:
                     exp_df[c] = pd.to_numeric(exp_df[c], errors="coerce").round(4)
-                exp_df = exp_df.applymap(clean_cell)
+                exp_df = exp_df.apply(lambda col: col.map(clean_cell))
 
                 show_table(exp_df, "Expected Frequencies")
                 download_table_block(exp_df, "chisq_expected", "Expected Frequencies")
@@ -1324,7 +1320,7 @@ elif section == "Categorical Tests":
                     "Yes" if p < 0.05 else "No"
                 ]], columns=["Test", "Odds Ratio", "Exact Sig. (2-sided)", "Significant (p<0.05)"])
                 tbl["Odds Ratio"] = pd.to_numeric(tbl["Odds Ratio"], errors="coerce").round(4)
-                tbl = tbl.applymap(clean_cell)
+                tbl = tbl.apply(lambda col: col.map(clean_cell))
 
                 show_table(tbl, "Fisher's Exact Test")
                 download_table_block(tbl, "fisher_exact", "Fisher's Exact Test")
@@ -1380,7 +1376,7 @@ elif section == "Categorical Tests":
                         "Yes" if p < 0.05 else "No"
                     ]], columns=["Test", "Value", "df", "Asymp. Sig. (2-sided)", "Significant (p<0.05)"])
                     tbl["Value"] = pd.to_numeric(tbl["Value"], errors="coerce").round(6)
-                    tbl = tbl.applymap(clean_cell)
+                    tbl = tbl.apply(lambda col: col.map(clean_cell))
 
                     show_table(tbl, "Chi-Square Tests")
                     download_table_block(tbl, "gof_chisq", "Goodness-of-fit")
