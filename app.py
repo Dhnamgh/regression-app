@@ -790,7 +790,7 @@ def statsmodels_roc(y_true: np.ndarray, y_prob: np.ndarray):
 from sklearn.metrics import auc
 
 def auc_from_roc(fpr, tpr):
-    return float(auc(fpr, tpr))
+    return float(auc(fpr[order], tpr[order]))
 def roc_outputs(model, y: pd.Series, X: pd.DataFrame):
     X_sm = sm.add_constant(X)
     p = model.predict(X_sm)
