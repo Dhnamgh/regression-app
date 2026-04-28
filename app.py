@@ -1337,8 +1337,7 @@ elif section == "Categorical Tests":
 
         template = pd.DataFrame({
             "Category": ["A", "B", "C"],
-            "Observed": [30, 50, 20],
-            "Expected(optional)": [33.3, 33.3, 33.3]
+            "Observed": [30, 50, 20]
         })
 
         st.download_button(
@@ -1358,25 +1357,82 @@ elif section == "Categorical Tests":
                 if "Observed" not in df.columns:
                     raise ValueError("Missing 'Observed' column.")
 
-                obs = pd.to_numeric(df["Observed"], errors="coerce")
-                if obs.isna().any():
+                obs_s = pd.to_numeric(df["Observed"], errors="coerce")
+                if obs_s.isna().any():
                     raise ValueError("Observed counts must be numeric.")
-                obs = obs.astype(float).values
+                if (obs_s < 0).any():
+                    raise ValueError("Observed counts must be non-negative.")
 
-                exp = None
-                if "Expected(optional)" in df.columns:
-                    exp_s = pd.to_numeric(df["Expected(optional)"], errors="coerce")
-                    if not exp_s.isna().all():
-                        exp = exp_s.fillna(0).astype(float).values
+                obs = obs_s.astype(float).values
+                if np.sum(obs) <= 0:
+                    raise ValueError("Observed counts must have total > 0.")
+
+                if "Category" in df.columns:
+                    categories = df["Category"].astype(str).tolist()
+                else:
+                    categories = [f"Category {i+1}" for i in range(len(obs))]
+
+                expected_method = st.radio(
+                    "Expected distribution",
+                    ["Equal proportions", "Custom proportions / weights"],
+                    horizontal=True
+                )
+
+                expected_input = None
+                if expected_method == "Custom proportions / weights":
+                    default_weights = np.ones(len(obs), dtype=float)
+                    custom_df = pd.DataFrame({
+                        "Category": categories,
+                        "Expected proportion / weight": default_weights
+                    })
+                    expected_input = st.data_editor(
+                        custom_df,
+                        key="gof_expected_weights_editor",
+                        use_container_width=True,
+                        num_rows="fixed",
+                        column_config={
+                            "Category": st.column_config.TextColumn("Category", disabled=True),
+                            "Expected proportion / weight": st.column_config.NumberColumn(
+                                "Expected proportion / weight",
+                                min_value=0.0,
+                                step=0.01,
+                                format="%.6f"
+                            )
+                        }
+                    )
 
                 if st.button("Run Goodness-of-fit", type="primary", use_container_width=True):
+                    if expected_method == "Equal proportions":
+                        weights = np.ones(len(obs), dtype=float)
+                    else:
+                        weights = pd.to_numeric(expected_input["Expected proportion / weight"], errors="coerce").fillna(0).astype(float).values
+                        if len(weights) != len(obs):
+                            raise ValueError("Expected proportions must have the same number of rows as Observed.")
+                        if np.any(weights < 0):
+                            raise ValueError("Expected proportions must be non-negative.")
+                        if np.sum(weights) <= 0:
+                            raise ValueError("Expected proportions must have total > 0.")
+
+                    exp = weights / np.sum(weights) * np.sum(obs)
                     stat, p = stats.chisquare(f_obs=obs, f_exp=exp)
+
+                    expected_tbl = pd.DataFrame({
+                        "Category": categories,
+                        "Observed": obs,
+                        "Expected": exp,
+                        "Expected proportion": exp / np.sum(exp)
+                    })
+                    expected_tbl = compact_numeric_df(expected_tbl, decimals=4)
+
                     tbl = pd.DataFrame([[
                         "Chi-square", stat, len(obs)-1, format_p_value(p),
                         "Yes" if p < 0.05 else "No"
                     ]], columns=["Test", "Value", "df", "Asymp. Sig. (2-sided)", "Significant (p<0.05)"])
                     tbl["Value"] = pd.to_numeric(tbl["Value"], errors="coerce").round(6)
                     tbl = tbl.apply(lambda col: col.map(clean_cell))
+
+                    show_table(expected_tbl, "Observed and Expected Frequencies")
+                    download_table_block(expected_tbl, "gof_observed_expected", "Observed and Expected Frequencies")
 
                     show_table(tbl, "Chi-Square Tests")
                     download_table_block(tbl, "gof_chisq", "Goodness-of-fit")
