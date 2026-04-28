@@ -205,6 +205,9 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
     return bio.getvalue()
 
 def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
+    """Export a DataFrame as a compact, readable PNG table.
+    Long tables are truncated for PNG; Excel remains the full export.
+    """
     df2 = df.copy().fillna("").astype(str)
 
     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
@@ -216,187 +219,179 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         except Exception:
             return ImageFont.load_default()
 
-    n_rows, n_cols = df2.shape
-    if n_cols == 0:
+    if df2.shape[1] == 0:
         df2 = pd.DataFrame({"": [""]})
-        n_rows, n_cols = df2.shape
 
-    max_rows_png = 60
+    total_rows, n_cols = df2.shape
+    max_rows_png = 45
     truncated_msg = ""
-    if n_rows > max_rows_png:
-        truncated_msg = f"PNG shows first {max_rows_png} of {n_rows} rows. Download Excel for the full table."
+    if total_rows > max_rows_png:
+        truncated_msg = f"PNG shows first {max_rows_png} of {total_rows} rows. Download Excel for the full table."
         df2 = df2.head(max_rows_png).copy()
-        n_rows = len(df2)
 
     if n_cols <= 3:
-        body_size, header_size, title_size = 44, 46, 58
-        min_text_w, min_num_w = 250, 140
-        max_text_w, max_num_w = 620, 230
-    elif n_cols <= 5:
-        body_size, header_size, title_size = 40, 42, 56
-        min_text_w, min_num_w = 220, 130
-        max_text_w, max_num_w = 520, 220
-    elif n_cols <= 8:
-        body_size, header_size, title_size = 34, 36, 52
-        min_text_w, min_num_w = 170, 115
-        max_text_w, max_num_w = 410, 190
+        body_size, header_size, title_size = 32, 34, 38
+    elif n_cols <= 6:
+        body_size, header_size, title_size = 28, 30, 36
+    elif n_cols <= 9:
+        body_size, header_size, title_size = 24, 26, 34
     else:
-        body_size, header_size, title_size = 30, 32, 48
-        min_text_w, min_num_w = 150, 105
-        max_text_w, max_num_w = 330, 170
+        body_size, header_size, title_size = 21, 23, 32
 
     body_font = load_font(font_path, body_size)
     header_font = load_font(bold_path, header_size)
     title_font = load_font(bold_path, title_size)
-    note_font = load_font(font_path, max(24, int(body_size * 0.75)))
+    note_font = load_font(font_path, max(18, body_size - 6))
 
-    tmp_img = Image.new("RGB", (10, 10), "white")
-    draw = ImageDraw.Draw(tmp_img)
+    probe = Image.new("RGB", (10, 10), "white")
+    draw = ImageDraw.Draw(probe)
+
+    def text_bbox(text: str, font):
+        return draw.textbbox((0, 0), str(text), font=font)
 
     def text_w(text: str, font) -> int:
-        text = str(text)
-        if text == "":
-            return 0
-        bbox = draw.textbbox((0, 0), text, font=font)
-        return bbox[2] - bbox[0]
+        b = text_bbox(text, font)
+        return b[2] - b[0]
 
-    def text_h(font) -> int:
-        bbox = draw.textbbox((0, 0), "Ag", font=font)
-        return bbox[3] - bbox[1]
+    def line_h(font) -> int:
+        b = text_bbox("Ag", font)
+        return (b[3] - b[1]) + 6
 
     def is_numeric_like(series: pd.Series) -> bool:
         converted = pd.to_numeric(series.replace("", np.nan), errors="coerce")
         return converted.notna().mean() >= 0.75 if len(series) else False
 
-    def wrap_by_width(text: str, font, max_width: int) -> list:
+    def wrap_text(text: str, font, max_width: int) -> list:
         text = str(text)
-        if text == "":
+        if not text:
             return [""]
-        out = []
+        lines = []
         for para in text.split("\n"):
-            words = para.split(" ")
+            words = para.split()
+            if not words:
+                lines.append("")
+                continue
             cur = ""
             for word in words:
-                candidate = word if cur == "" else cur + " " + word
-                if text_w(candidate, font) <= max_width:
-                    cur = candidate
+                cand = word if not cur else f"{cur} {word}"
+                if text_w(cand, font) <= max_width:
+                    cur = cand
                 else:
                     if cur:
-                        out.append(cur)
+                        lines.append(cur)
+                    if text_w(word, font) <= max_width:
                         cur = word
                     else:
                         part = ""
                         for ch in word:
-                            candidate_part = part + ch
-                            if text_w(candidate_part, font) <= max_width:
-                                part = candidate_part
+                            cand_part = part + ch
+                            if text_w(cand_part, font) <= max_width:
+                                part = cand_part
                             else:
                                 if part:
-                                    out.append(part)
+                                    lines.append(part)
                                 part = ch
                         cur = part
             if cur:
-                out.append(cur)
-        return out if out else [""]
+                lines.append(cur)
+        return lines or [""]
 
     pad_x = 18
-    pad_y = 12
-    line_gap = 8
+    pad_y = 10
+    min_text_w = 170 if n_cols <= 6 else 140
+    min_num_w = 120 if n_cols <= 6 else 95
+    max_text_w = 360 if n_cols <= 6 else 270
+    max_num_w = 180 if n_cols <= 6 else 140
 
     numeric_cols = []
     col_widths = []
     for col in df2.columns:
-        vals = df2[col].astype(str).tolist()
         is_num = is_numeric_like(df2[col])
         numeric_cols.append(is_num)
-
-        sample_vals = vals[:80]
-        max_body = max([text_w(v, body_font) for v in sample_vals], default=0)
+        vals = df2[col].astype(str).tolist()
+        max_val_w = max([text_w(v, body_font) for v in vals[:60]], default=0)
         header_w = text_w(str(col), header_font)
-
         if is_num:
-            width = max(min_num_w, min(max(max_body, min(header_w, 260)) + 2 * pad_x, max_num_w))
+            width = max(min_num_w, min(max(max_val_w, header_w) + 2 * pad_x, max_num_w))
         else:
-            width = max(min_text_w, min(max(max_body, header_w) + 2 * pad_x, max_text_w))
+            width = max(min_text_w, min(max(max_val_w, header_w) + 2 * pad_x, max_text_w))
         col_widths.append(int(width))
 
-    table_w = sum(col_widths)
-    max_table_w = 2400 if n_cols >= 8 else 1900 if n_cols >= 5 else 1350
-    if table_w > max_table_w:
-        overflow = table_w - max_table_w
-        reducible = [max(0, col_widths[i] - (min_num_w if numeric_cols[i] else min_text_w)) for i in range(n_cols)]
-        total_reducible = sum(reducible)
-        if total_reducible > 0:
-            for i in range(n_cols):
-                cut = int(overflow * reducible[i] / total_reducible)
-                col_widths[i] = max(min_num_w if numeric_cols[i] else min_text_w, col_widths[i] - cut)
+    if n_cols <= 3:
+        table_w = sum(col_widths)
+        if table_w > 900:
+            ratio = 900 / table_w
+            col_widths = [max(min_num_w if numeric_cols[i] else min_text_w, int(w * ratio)) for i, w in enumerate(col_widths)]
 
-    wrapped_headers = [wrap_by_width(str(col), header_font, max(80, col_widths[i] - 2 * pad_x)) for i, col in enumerate(df2.columns)]
-    wrapped_rows = []
+    header_lines = [wrap_text(str(c), header_font, col_widths[i] - 2 * pad_x) for i, c in enumerate(df2.columns)]
+    row_lines = []
     for _, row in df2.iterrows():
-        wrapped_rows.append([wrap_by_width(str(val), body_font, max(80, col_widths[i] - 2 * pad_x)) for i, val in enumerate(row.values)])
+        row_lines.append([
+            wrap_text(str(row.iloc[i]), body_font, col_widths[i] - 2 * pad_x)
+            for i in range(n_cols)
+        ])
 
-    header_line_h = text_h(header_font) + line_gap
-    body_line_h = text_h(body_font) + line_gap
-    header_h = max(header_size + 28, max(len(lines) for lines in wrapped_headers) * header_line_h + 2 * pad_y)
-    row_heights = [max(body_size + 26, max(len(lines) for lines in row) * body_line_h + 2 * pad_y) for row in wrapped_rows]
+    header_lh = line_h(header_font)
+    body_lh = line_h(body_font)
+    header_h = max(header_lh + 2 * pad_y, max(len(x) for x in header_lines) * header_lh + 2 * pad_y)
+    row_heights = [max(body_lh + 2 * pad_y, max(len(x) for x in row) * body_lh + 2 * pad_y) for row in row_lines]
 
     table_w = sum(col_widths)
-    margin_x = 34
-    top_margin = 22
-    bottom_margin = 34
-    title_h = text_h(title_font) + 32 if title else 0
-    note_h = text_h(note_font) + 24 if truncated_msg else 0
-
+    margin_x = 28
+    margin_y = 20
+    title_h = line_h(title_font) + 10 if title else 0
+    note_h = line_h(note_font) + 10 if truncated_msg else 0
     img_w = table_w + 2 * margin_x
-    img_h = top_margin + title_h + header_h + sum(row_heights) + note_h + bottom_margin
+    img_h = margin_y + title_h + header_h + sum(row_heights) + note_h + margin_y
 
     img = Image.new("RGB", (img_w, img_h), "white")
     draw = ImageDraw.Draw(img)
 
-    y = top_margin
+    y = margin_y
     if title:
-        tw = text_w(str(title), title_font)
-        draw.text(((img_w - tw) // 2, y), str(title), font=title_font, fill="black")
+        tw = text_w(title, title_font)
+        draw.text(((img_w - tw) // 2, y), title, font=title_font, fill="black")
         y += title_h
 
-    x0 = margin_x
-    x = x0
-    for i, lines in enumerate(wrapped_headers):
-        draw.rectangle([x, y, x + col_widths[i], y + header_h], fill="#f2f2f2", outline="black", width=2)
-        block_h = len(lines) * header_line_h
+    border_w = 1
+    x = margin_x
+    for i, lines in enumerate(header_lines):
+        draw.rectangle([x, y, x + col_widths[i], y + header_h], fill="#f2f2f2", outline="black", width=border_w)
+        block_h = len(lines) * header_lh
         ty = y + (header_h - block_h) // 2
         for line in lines:
             lw = text_w(line, header_font)
             draw.text((x + (col_widths[i] - lw) // 2, ty), line, font=header_font, fill="black")
-            ty += header_line_h
+            ty += header_lh
         x += col_widths[i]
 
     y += header_h
-    for r, wrapped_row in enumerate(wrapped_rows):
+    for r, row in enumerate(row_lines):
         row_h = row_heights[r]
-        x = x0
-        for i, lines in enumerate(wrapped_row):
-            draw.rectangle([x, y, x + col_widths[i], y + row_h], fill="white", outline="black", width=2)
-            block_h = len(lines) * body_line_h
+        x = margin_x
+        for i, lines in enumerate(row):
+            draw.rectangle([x, y, x + col_widths[i], y + row_h], fill="white", outline="black", width=border_w)
+            block_h = len(lines) * body_lh
             ty = y + (row_h - block_h) // 2
             for line in lines:
                 lw = text_w(line, body_font)
-                tx = x + (col_widths[i] - lw) // 2 if numeric_cols[i] else x + pad_x
+                if numeric_cols[i]:
+                    tx = x + (col_widths[i] - lw) // 2
+                else:
+                    tx = x + pad_x
                 draw.text((tx, ty), line, font=body_font, fill="black")
-                ty += body_line_h
+                ty += body_lh
             x += col_widths[i]
         y += row_h
 
     if truncated_msg:
-        y += 12
+        y += 8
         draw.text((margin_x, y), truncated_msg, font=note_font, fill="#444444")
 
     bio = io.BytesIO()
     img.save(bio, format="PNG")
     bio.seek(0)
     return bio.getvalue()
-
 def download_table_block(df: pd.DataFrame, base_name: str, title: str = ""):
     c1, c2 = st.columns([1, 1])
     with c1:
