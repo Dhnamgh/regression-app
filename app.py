@@ -1889,15 +1889,15 @@ elif section == "Quantitative Tests":
                     value_col = selectbox_default("Test variable", numeric_cols, first_existing(numeric_cols, ["value", "score", "measurement"], default_numeric_col(df)), key="np_auto_fr_value")
                     within_candidates = categorical_candidate_cols(df, exclude=[subject_col, value_col])
                     within_col = selectbox_default("Within-subject factor", within_candidates, default_within_col(df, exclude=[subject_col, value_col]), key="np_auto_fr_within")
-                    levels = df[within_col].dropna().astype(str).nunique()
-                    if levels < 3:
-                        st.warning("Friedman requires at least 3 related conditions. Your selected within-subject factor has fewer than 3 levels; use Wilcoxon signed-rank for 2 related conditions.")
-                    if st.button("Run Friedman", type="primary", use_container_width=True, disabled=(levels < 3)):
-                        d, wide = _long_wide_repeated(df, subject_col, within_col, value_col)
-                        if wide.shape[0] < 2:
-                            raise ValueError("Friedman test requires at least 2 complete subjects.")
-                        if wide.shape[1] < 3:
-                            raise ValueError("Friedman test requires at least 3 related conditions.")
+                    d, wide = _long_wide_repeated(df, subject_col, within_col, value_col)
+                    n_levels = int(d[within_col].dropna().nunique()) if within_col in d.columns else 0
+                    n_complete = int(wide.shape[0])
+                    if n_levels < 3:
+                        st.warning("Friedman requires at least 3 related conditions. With 2 related conditions, use Wilcoxon signed-rank instead.")
+                    if n_complete < 2:
+                        st.warning("Friedman requires at least 2 complete subjects. Use the Friedman template: each subject must have T1, T2 and T3 values.")
+                    can_run_friedman = (n_levels >= 3 and n_complete >= 2)
+                    if st.button("Run Friedman", type="primary", use_container_width=True, disabled=(not can_run_friedman)):
                         stat, pval = stats.friedmanchisquare(*[wide[c].values for c in wide.columns])
                         show_table(compact_numeric_df(wide.reset_index(), 4), "Complete Repeated-Measures Data")
                         show_table(nonparam_result_table("Friedman Test", float(stat), float(pval)), "Test Statistics")
