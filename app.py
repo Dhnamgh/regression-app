@@ -18,6 +18,7 @@ import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from statsmodels.stats.anova import anova_lm
 from statsmodels.stats.contingency_tables import StratifiedTable
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
 
 # =========================================================
@@ -119,7 +120,15 @@ section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
 
 /* Slightly compact DataFrame font */
 div[data-testid="stDataFrame"]{
-  font-size: 13px;
+  font-size: 16px;
+  font-weight: 600;
+}
+div[data-testid="stDataFrame"] *{
+  font-size: 15px !important;
+}
+[data-testid="stTable"] table{
+  font-size: 16px !important;
+  font-weight: 600 !important;
 }
 </style>
 """,
@@ -165,11 +174,11 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     ax.axis("off")
     if title:
-        ax.set_title(title, fontsize=12, pad=8)
+        ax.set_title(title, fontsize=16, fontweight="bold", pad=10)
     tbl = ax.table(cellText=df2.values, colLabels=df2.columns, cellLoc="center", loc="center")
     tbl.auto_set_font_size(False)
-    tbl.set_fontsize(9)
-    tbl.scale(1, 1.15)
+    tbl.set_fontsize(12)
+    tbl.scale(1, 1.35)
     png = fig_to_png_bytes(fig, dpi=dpi)
     plt.close(fig)
     return png
@@ -794,28 +803,44 @@ def roc_outputs(model, y: pd.Series, X: pd.DataFrame):
 
     fpr, tpr, thr = statsmodels_roc(y.values, p.values)
     auc_val = auc_from_roc(fpr, tpr)
+    specificity = 1 - fpr
+    youden = tpr + specificity - 1
+    finite_mask = np.isfinite(thr)
+    if finite_mask.any():
+        idx_candidates = np.where(finite_mask)[0]
+        best_idx = idx_candidates[np.nanargmax(youden[idx_candidates])]
+    else:
+        best_idx = int(np.nanargmax(youden))
 
     auc_tbl = pd.DataFrame([["Area Under the Curve", auc_val]], columns=["Measure", "Value"])
     auc_tbl["Value"] = pd.to_numeric(auc_tbl["Value"], errors="coerce").round(4)
     auc_tbl = auc_tbl.apply(lambda col: col.map(clean_cell))
 
+    cutoff_tbl = pd.DataFrame([[
+        thr[best_idx], tpr[best_idx], specificity[best_idx], youden[best_idx]
+    ]], columns=["Optimal cutoff", "Sensitivity", "Specificity", "Youden index"])
+    cutoff_tbl = compact_numeric_df(cutoff_tbl, decimals=4)
+
     roc_tbl = pd.DataFrame({
         "Threshold": thr,
         "Sensitivity (TPR)": tpr,
-        "1 - Specificity (FPR)": fpr
+        "Specificity": specificity,
+        "1 - Specificity (FPR)": fpr,
+        "Youden index": youden
     })
     roc_tbl = compact_numeric_df(roc_tbl, decimals=4)
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
     ax.plot(fpr, tpr, label=f"Logistic (AUC={auc_val:.3f})")
+    ax.scatter([fpr[best_idx]], [tpr[best_idx]], label=f"Optimal cutoff={thr[best_idx]:.3f}")
     ax.plot([0, 1], [0, 1], linestyle="--")
     ax.set_xlabel("False Positive Rate")
     ax.set_ylabel("True Positive Rate")
     ax.set_title("ROC Curve")
     ax.legend(loc="lower right")
 
-    return auc_tbl, roc_tbl, fig
+    return auc_tbl, roc_tbl, cutoff_tbl, fig
 
 
 # =========================================================
@@ -1156,6 +1181,190 @@ def anova_summary_table(model, typ=2) -> pd.DataFrame:
             a[col] = pd.to_numeric(a[col], errors="coerce").round(4)
     return a.apply(lambda col: col.map(clean_cell))
 
+
+def pvalue_float_from_text(x):
+    try:
+        if isinstance(x, str) and x.strip().startswith("<"):
+            return 0.0005
+        return float(x)
+    except Exception:
+        return np.nan
+
+def effect_size_table(rows):
+    return compact_numeric_df(pd.DataFrame(rows, columns=["Effect size", "Estimate", "Interpretation"]), 4)
+
+def cohen_d_one_sample(x, mu=0.0):
+    x = pd.to_numeric(pd.Series(x), errors="coerce").dropna().astype(float).values
+    if len(x) < 2:
+        return np.nan
+    sd = np.std(x, ddof=1)
+    return np.nan if sd == 0 else float((np.mean(x) - mu) / sd)
+
+def cohen_d_independent(x1, x2):
+    x1 = pd.to_numeric(pd.Series(x1), errors="coerce").dropna().astype(float).values
+    x2 = pd.to_numeric(pd.Series(x2), errors="coerce").dropna().astype(float).values
+    if len(x1) < 2 or len(x2) < 2:
+        return np.nan
+    pooled = math.sqrt(((len(x1)-1)*np.var(x1, ddof=1) + (len(x2)-1)*np.var(x2, ddof=1)) / (len(x1)+len(x2)-2))
+    return np.nan if pooled == 0 else float((np.mean(x1)-np.mean(x2))/pooled)
+
+def cohen_d_paired(diff):
+    diff = pd.to_numeric(pd.Series(diff), errors="coerce").dropna().astype(float).values
+    if len(diff) < 2:
+        return np.nan
+    sd = np.std(diff, ddof=1)
+    return np.nan if sd == 0 else float(np.mean(diff)/sd)
+
+def cohen_interpretation(d):
+    try:
+        a = abs(float(d))
+    except Exception:
+        return ""
+    if np.isnan(a):
+        return ""
+    if a < 0.2:
+        return "Very small"
+    if a < 0.5:
+        return "Small"
+    if a < 0.8:
+        return "Medium"
+    return "Large"
+
+def cramers_v_from_table(obs):
+    obs = np.asarray(obs, dtype=float)
+    if obs.ndim != 2 or obs.sum() <= 0:
+        return np.nan
+    chi2, _, _, _ = stats.chi2_contingency(obs, correction=False)
+    n = obs.sum()
+    k = min(obs.shape[0]-1, obs.shape[1]-1)
+    return np.nan if k <= 0 else float(math.sqrt(chi2/(n*k)))
+
+def chi_square_effect_table(obs):
+    v = cramers_v_from_table(obs)
+    return effect_size_table([["Cramer's V", v, "Association strength for contingency tables"]])
+
+def eta_squared_from_anova_table(a):
+    df = a.copy()
+    if "Sum Sq" not in df.columns or "Source" not in df.columns:
+        return pd.DataFrame()
+    ss = pd.to_numeric(df["Sum Sq"], errors="coerce")
+    total = ss.sum(skipna=True)
+    rows = []
+    for _, r in df.iterrows():
+        src = str(r.get("Source", ""))
+        if src.lower() in {"residual", "error"}:
+            continue
+        val = pd.to_numeric(pd.Series([r.get("Sum Sq")]), errors="coerce").iloc[0]
+        eta = val / total if total and not np.isnan(val) else np.nan
+        rows.append([src, eta])
+    return compact_numeric_df(pd.DataFrame(rows, columns=["Source", "Eta squared (η²)"]), 4)
+
+def tukey_posthoc_table(d, value_col, group_col, alpha=0.05):
+    dd = d[[value_col, group_col]].dropna().copy()
+    dd[value_col] = pd.to_numeric(dd[value_col], errors="coerce")
+    dd = dd.dropna()
+    if dd[group_col].nunique() < 2:
+        return pd.DataFrame()
+    res = pairwise_tukeyhsd(endog=dd[value_col].astype(float), groups=dd[group_col].astype(str), alpha=alpha)
+    tbl = pd.DataFrame(res.summary().data[1:], columns=res.summary().data[0])
+    return compact_numeric_df(tbl, 4)
+
+def dunn_posthoc_table(d, value_col, group_col, alpha=0.05):
+    dd = d[[value_col, group_col]].dropna().copy()
+    dd[value_col] = pd.to_numeric(dd[value_col], errors="coerce")
+    dd[group_col] = dd[group_col].astype(str)
+    dd = dd.dropna()
+    groups = sorted(dd[group_col].unique())
+    if len(groups) < 2:
+        return pd.DataFrame()
+    ranks = stats.rankdata(dd[value_col].values)
+    dd = dd.assign(_rank=ranks)
+    n = len(dd)
+    tie_counts = pd.Series(dd[value_col]).value_counts().values
+    tie_corr = 1 - np.sum(tie_counts**3 - tie_counts) / (n**3 - n) if n > 1 else 1
+    rows = []
+    m = len(groups) * (len(groups)-1) / 2
+    for i in range(len(groups)):
+        for j in range(i+1, len(groups)):
+            g1, g2 = groups[i], groups[j]
+            r1 = dd.loc[dd[group_col] == g1, "_rank"]
+            r2 = dd.loc[dd[group_col] == g2, "_rank"]
+            se = math.sqrt((n*(n+1)/12) * (1/len(r1) + 1/len(r2)) * tie_corr)
+            z = (r1.mean() - r2.mean()) / se if se > 0 else np.nan
+            p_raw = 2 * stats.norm.sf(abs(z)) if not np.isnan(z) else np.nan
+            p_adj = min(1.0, p_raw * m) if not np.isnan(p_raw) else np.nan
+            rows.append([g1, g2, z, format_p_value(p_raw), format_p_value(p_adj), "Yes" if p_adj < alpha else "No"])
+    return compact_numeric_df(pd.DataFrame(rows, columns=["Group 1", "Group 2", "Z", "Sig.", "Bonferroni Sig.", "Significant"]), 4)
+
+def pairwise_wilcoxon_related(wide, alpha=0.05):
+    cols = list(wide.columns)
+    rows = []
+    m = len(cols) * (len(cols)-1) / 2
+    for i in range(len(cols)):
+        for j in range(i+1, len(cols)):
+            a = wide[cols[i]].values
+            b = wide[cols[j]].values
+            stat, pval = stats.wilcoxon(a, b, zero_method="wilcox", alternative="two-sided")
+            p_adj = min(1.0, float(pval) * m)
+            rows.append([str(cols[i]), str(cols[j]), float(stat), format_p_value(float(pval)), format_p_value(p_adj), "Yes" if p_adj < alpha else "No"])
+    return compact_numeric_df(pd.DataFrame(rows, columns=["Condition 1", "Condition 2", "Statistic", "Sig.", "Bonferroni Sig.", "Significant"]), 4)
+
+def proportion_ci_methods(x, n, conf_level=0.95):
+    from statsmodels.stats.proportion import proportion_confint
+    alpha = 1 - conf_level
+    rows = []
+    methods = [("Wald", "normal"), ("Wilson", "wilson"), ("Exact (Clopper-Pearson)", "beta"), ("Agresti-Coull", "agresti_coull"), ("Jeffreys", "jeffreys")]
+    p_hat = x/n if n else np.nan
+    wald_ok = (n*p_hat >= 5 and n*(1-p_hat) >= 5) if n else False
+    for label, method in methods:
+        try:
+            lo, hi = proportion_confint(count=x, nobs=n, alpha=alpha, method=method)
+        except Exception:
+            lo, hi = np.nan, np.nan
+        rows.append([label, p_hat, lo, hi, "Primary" if label == "Wald" and wald_ok else ("Recommended" if label == "Wilson" and not wald_ok else "")])
+    out = pd.DataFrame(rows, columns=["Method", "Proportion", "Lower CI", "Upper CI", "Use"])
+    out[["Proportion", "Lower CI", "Upper CI"]] = out[["Proportion", "Lower CI", "Upper CI"]] * 100
+    return compact_numeric_df(out, 4), wald_ok
+
+def diagnostic_probability_tables(sens_pct, spec_pct, prev_pct, population=1000):
+    sens = sens_pct/100
+    spec = spec_pct/100
+    prev = prev_pct/100
+    disease = population * prev
+    no_disease = population - disease
+    tp = disease * sens
+    fn = disease * (1-sens)
+    tn = no_disease * spec
+    fp = no_disease * (1-spec)
+    ppv = tp/(tp+fp) if (tp+fp) else np.nan
+    npv = tn/(tn+fn) if (tn+fn) else np.nan
+    summary = compact_numeric_df(pd.DataFrame([
+        ["Positive Predictive Value (PPV)", ppv*100],
+        ["Negative Predictive Value (NPV)", npv*100],
+        ["False positive probability after positive test", (1-ppv)*100],
+        ["False negative probability after negative test", (1-npv)*100],
+    ], columns=["Measure", "Percent"]), 4)
+    table = compact_numeric_df(pd.DataFrame([
+        ["Test Positive", tp, fp, tp+fp],
+        ["Test Negative", fn, tn, fn+tn],
+        ["Total", disease, no_disease, population],
+    ], columns=["Result", "Disease Present", "Disease Absent", "Total"]), 4)
+    prior_odds = prev/(1-prev) if prev < 1 else np.inf
+    lr_pos = sens/(1-spec) if spec < 1 else np.inf
+    lr_neg = (1-sens)/spec if spec > 0 else np.inf
+    post_odds_pos = prior_odds * lr_pos
+    post_odds_neg = prior_odds * lr_neg
+    calc = compact_numeric_df(pd.DataFrame([
+        ["Prior odds", prior_odds],
+        ["Likelihood ratio positive (LR+)", lr_pos],
+        ["Posterior odds after positive test", post_odds_pos],
+        ["Posterior probability after positive test", post_odds_pos/(1+post_odds_pos) if np.isfinite(post_odds_pos) else np.nan],
+        ["Likelihood ratio negative (LR-)", lr_neg],
+        ["Posterior odds after negative test", post_odds_neg],
+        ["Posterior probability after negative test", post_odds_neg/(1+post_odds_neg) if np.isfinite(post_odds_neg) else np.nan],
+    ], columns=["Calculation", "Value"]), 4)
+    return summary, table, calc
+
 # =========================================================
 # Navigation state
 # =========================================================
@@ -1217,6 +1426,12 @@ with st.sidebar:
     with st.expander("Confidence Intervals", expanded=(st.session_state.section == "Confidence Intervals")):
         if st.button("Mean & Variance CI", key="ci_1", use_container_width=True):
             set_nav("Confidence Intervals", "Mean & Variance")
+        if st.button("Proportion CI", key="ci_prop", use_container_width=True):
+            set_nav("Confidence Intervals", "Proportion")
+
+    with st.expander("Diagnostic Probability", expanded=(st.session_state.section == "Diagnostic Probability")):
+        if st.button("Predictive Values", key="diag_prob", use_container_width=True):
+            set_nav("Diagnostic Probability", "Predictive Values")
 
 
 # =========================================================
@@ -1347,10 +1562,13 @@ elif section == "Logistic Regression":
                 show_table(res["table"], "Variables in the Equation")
                 download_table_block(res["table"], "logistic_variables_in_equation", "Variables in the Equation")
 
-                auc_tbl, roc_tbl, fig = roc_outputs(res["model"], res["y"], res["X"])
+                auc_tbl, roc_tbl, cutoff_tbl, fig = roc_outputs(res["model"], res["y"], res["X"])
 
                 show_table(auc_tbl, "ROC — Area Under the Curve")
                 download_table_block(auc_tbl, "logistic_auc", "AUC")
+
+                show_table(cutoff_tbl, "ROC — Optimal Cutoff by Youden Index")
+                download_table_block(cutoff_tbl, "logistic_roc_optimal_cutoff", "Optimal Cutoff")
 
                 show_table(roc_tbl.head(50), "ROC Coordinates (first 50 rows)")
                 download_table_block(roc_tbl, "logistic_roc_coordinates", "ROC Coordinates")
@@ -1567,6 +1785,10 @@ elif section == "Categorical Tests":
 
                 show_table(chi_tbl, "Chi-Square Tests")
                 download_table_block(chi_tbl, "chisq_tests", "Chi-Square Tests")
+
+                cv_tbl = chi_square_effect_table(obs)
+                show_table(cv_tbl, "Effect Size")
+                download_table_block(cv_tbl, "chisq_effect_size", "Effect Size")
 
                 if not expected_ok:
                     alt_tbl = chi_square_alternative_test_table(obs, expected)
@@ -1894,6 +2116,8 @@ elif section == "Quantitative Tests":
                             show_table(normality_by_group_table({value_col: x}), "Tests of Normality")
                             show_table(recommendation_table(assumption_recommendation(normality_overall_ok({value_col: x}), None, "one-sample t test", "one-sample Wilcoxon signed-rank test")), "Recommendation")
                             show_table(one_sample_ttest_table(x, mu, alpha), "One-Sample Test")
+                            d_val = cohen_d_one_sample(x, mu)
+                            show_table(effect_size_table([["Cohen's d", d_val, cohen_interpretation(d_val)]]), "Effect Size")
                             if np.any((x - mu) != 0):
                                 w_stat, w_p = stats.wilcoxon(x - mu, zero_method="wilcox", alternative="two-sided")
                                 show_table(nonparam_result_table("Wilcoxon Signed-Rank Test", float(w_stat), float(w_p)), "Nonparametric Alternative")
@@ -1920,6 +2144,14 @@ elif section == "Quantitative Tests":
                             show_table(normality_by_group_table(norm_groups), "Tests of Normality")
                             show_table(recommendation_table(assumption_recommendation(normality_overall_ok(norm_groups), None, "one-sample t test", "one-sample Wilcoxon signed-rank test")), "Recommendation")
                             show_table(compact_numeric_df(pd.concat(t_rows, ignore_index=True), 4), "One-Sample Test")
+                            es_rows = []
+                            for lev in run_levels:
+                                x_es = pd.to_numeric(df.loc[df[group_choice].astype(str) == lev, value_col], errors="coerce").dropna().astype(float).values
+                                if len(x_es) >= 2:
+                                    d_val = cohen_d_one_sample(x_es, mu)
+                                    es_rows.append([f"Cohen's d ({lev})", d_val, cohen_interpretation(d_val)])
+                            if es_rows:
+                                show_table(effect_size_table(es_rows), "Effect Size")
                             if w_rows:
                                 show_table(compact_numeric_df(pd.concat(w_rows, ignore_index=True), 4), "Nonparametric Alternative")
 
@@ -2034,6 +2266,7 @@ elif section == "Quantitative Tests":
                         stat, pval = stats.friedmanchisquare(*[wide[c].values for c in wide.columns])
                         show_table(compact_numeric_df(wide.reset_index(), 4), "Complete Repeated-Measures Data")
                         show_table(nonparam_result_table("Friedman Test", float(stat), float(pval)), "Test Statistics")
+                        show_table(pairwise_wilcoxon_related(wide, alpha=0.05), "Post-hoc Pairwise Wilcoxon-Bonferroni")
 
                 else:
                     value_col = selectbox_default("Test variable", numeric_cols, first_existing(numeric_cols, ["value", "score", "measurement"], default_numeric_col(df)), key="np_auto_one_value")
@@ -2076,9 +2309,17 @@ elif section == "Quantitative Tests":
                         show_table(compact_numeric_df(pd.DataFrame([["Levene's Test", lev_stat, format_p_value(lev_p), "Yes" if lev_p >= 0.05 else "No"]], columns=["Test", "Statistic", "Sig.", "Equal variances assumption"]), 4), "Test of Homogeneity of Variances")
                         show_table(recommendation_table(assumption_recommendation(normality_overall_ok(groups), bool(lev_p >= 0.05), "one-way ANOVA", "Kruskal-Wallis test")), "Recommendation")
                         model = smf.ols(f'Q("{value_col}") ~ C(Q("{factor_col}"))', data=d).fit()
-                        show_table(anova_summary_table(model, typ=2), "ANOVA")
+                        anova_tbl = anova_summary_table(model, typ=2)
+                        show_table(anova_tbl, "ANOVA")
+                        eta_tbl = eta_squared_from_anova_table(anova_tbl)
+                        if not eta_tbl.empty:
+                            show_table(eta_tbl, "Effect Size")
+                        if len(groups) >= 3:
+                            show_table(tukey_posthoc_table(d, value_col, factor_col, alpha=0.05), "Post-hoc Multiple Comparisons — Tukey HSD")
                         kw_stat, kw_p = stats.kruskal(*groups.values())
                         show_table(nonparam_result_table("Kruskal-Wallis Test", float(kw_stat), float(kw_p)), "Nonparametric Alternative")
+                        if len(groups) >= 3:
+                            show_table(dunn_posthoc_table(d, value_col, factor_col, alpha=0.05), "Nonparametric Post-hoc — Dunn-Bonferroni")
 
                 elif anova_type == "One-way repeated-measures ANOVA":
                     subject_col = selectbox_default("Subject ID", list(df.columns), default_subject_col(df), key="rm_auto_subject")
@@ -2095,6 +2336,8 @@ elif section == "Quantitative Tests":
                         out = rm.anova_table.reset_index().rename(columns={"index": "Source", "F Value": "F", "Num DF": "df1", "Den DF": "df2", "Pr > F": "Sig."})
                         out["Sig."] = out["Sig."].apply(format_p_value)
                         show_table(compact_numeric_df(out, 4), "Tests of Within-Subjects Effects")
+                        if wide.shape[1] >= 2:
+                            show_table(pairwise_wilcoxon_related(wide, alpha=0.05), "Pairwise Related-Samples Comparisons")
                         if wide.shape[1] >= 3:
                             fr_stat, fr_p = stats.friedmanchisquare(*[wide[c].values for c in wide.columns])
                             show_table(nonparam_result_table("Friedman Test", float(fr_stat), float(fr_p)), "Nonparametric Alternative")
@@ -2118,9 +2361,63 @@ elif section == "Quantitative Tests":
                             raise ValueError("Two-way ANOVA requires at least 2 levels in each factor.")
                         formula = f'Q("{value_col}") ~ C(Q("{factor_a}")) * C(Q("{factor_b}"))'
                         model = smf.ols(formula=formula, data=d).fit()
-                        show_table(anova_summary_table(model, typ=2), "Tests of Between-Subjects Effects")
+                        anova_tbl = anova_summary_table(model, typ=2)
+                        show_table(anova_tbl, "Tests of Between-Subjects Effects")
+                        eta_tbl = eta_squared_from_anova_table(anova_tbl)
+                        if not eta_tbl.empty:
+                            show_table(eta_tbl, "Effect Size")
             except Exception as e:
                 st.error(f"Failed: {e}")
+
+
+# -----------------------------
+# DIAGNOSTIC PROBABILITY
+# -----------------------------
+elif section == "Diagnostic Probability" and sub == "Predictive Values":
+    st.markdown("## Diagnostic Probability — Predictive Values")
+    st.write("Compute positive and negative predictive values from sensitivity, specificity, and prevalence.")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        sens = st.number_input("Sensitivity (%)", min_value=0.0, max_value=100.0, value=80.0, step=0.1)
+    with c2:
+        spec = st.number_input("Specificity (%)", min_value=0.0, max_value=100.0, value=78.0, step=0.1)
+    with c3:
+        prev = st.number_input("Prevalence (%)", min_value=0.0, max_value=100.0, value=25.0, step=0.1)
+    with c4:
+        population = st.number_input("Population size", min_value=1, value=1000, step=100)
+    if st.button("Compute predictive values", type="primary", use_container_width=True):
+        summary, table, calc = diagnostic_probability_tables(float(sens), float(spec), float(prev), int(population))
+        show_table(summary, "Predictive Values")
+        download_table_block(summary, "diagnostic_predictive_values", "Predictive Values")
+        show_table(table, f"Expected Results per {int(population)} People")
+        download_table_block(table, "diagnostic_expected_results", "Expected Results")
+        show_table(calc, "Calculations")
+        download_table_block(calc, "diagnostic_calculations", "Calculations")
+
+# -----------------------------
+# CONFIDENCE INTERVALS — PROPORTION
+# -----------------------------
+elif section == "Confidence Intervals" and sub == "Proportion":
+    st.markdown("## Confidence Intervals — Proportion")
+    st.write("Estimate a proportion and confidence intervals. Wald is used only when np and n(1-p) are both at least 5; otherwise Wilson and exact-style intervals are recommended.")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        x = st.number_input("Number with event / success", min_value=0, value=50, step=1)
+    with c2:
+        n = st.number_input("Total sample size", min_value=1, value=100, step=1)
+    with c3:
+        conf_level = st.slider("Confidence level", min_value=0.80, max_value=0.99, value=0.95, step=0.01, key="prop_ci_level")
+    if int(x) > int(n):
+        st.error("Number with event cannot be greater than total sample size.")
+    else:
+        if st.button("Compute proportion CI", type="primary", use_container_width=True):
+            tbl, wald_ok = proportion_ci_methods(int(x), int(n), float(conf_level))
+            if not wald_ok:
+                st.warning("Wald condition is not satisfied because np or n(1-p) is below 5. Prefer Wilson, exact (Clopper-Pearson), Agresti-Coull, or Jeffreys intervals.")
+            else:
+                st.success("Wald condition is satisfied. Wald CI can be reported, but Wilson is also commonly recommended.")
+            show_table(tbl, "Proportion Confidence Intervals (%)")
+            download_table_block(tbl, "proportion_confidence_intervals", "Proportion CI")
 
 # -----------------------------
 # CONFIDENCE INTERVALS
