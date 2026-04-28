@@ -1,7 +1,7 @@
 # app.py
 # =========================================================
 # Data Analysis in Health Sciences
-# Single-file Streamlit app
+# Single-file Streamlit app (stable: expanders + buttons)
 # =========================================================
 
 import io
@@ -120,45 +120,47 @@ section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
   font-size: 15px;
 }
 
-/* Slightly compact DataFrame font */
+/* Larger readable output tables */
 div[data-testid="stDataFrame"]{
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
 }
 div[data-testid="stDataFrame"] *{
-  font-size: 15px !important;
+  font-size: 19px !important;
+  font-weight: 650 !important;
 }
 [data-testid="stTable"] table{
-  font-size: 16px !important;
-  font-weight: 600 !important;
+  font-size: 20px !important;
+  font-weight: 700 !important;
 }
 
 .analysis-table-wrap{
   width: 100%;
   overflow-x: auto;
-  margin: 0.4rem 0 1rem 0;
+  margin: 0.5rem 0 1.2rem 0;
 }
 .analysis-table{
   width: 100%;
   border-collapse: collapse;
-  font-size: 16px;
-  color: #111827;
+  font-size: 20px;
+  color: #0f172a;
   background: #ffffff;
 }
 .analysis-table th{
   background: #f3f4f6;
-  color: #111827;
-  font-weight: 800;
-  border: 1px solid #d1d5db;
-  padding: 10px 12px;
+  color: #0f172a;
+  font-weight: 900;
+  border: 1.5px solid #cbd5e1;
+  padding: 13px 15px;
   text-align: left;
   white-space: normal;
+  line-height: 1.25;
 }
 .analysis-table td{
-  border: 1px solid #e5e7eb;
-  padding: 10px 12px;
-  color: #111827;
-  font-weight: 500;
+  border: 1.2px solid #dbe3ef;
+  padding: 13px 15px;
+  color: #0f172a;
+  font-weight: 700;
   line-height: 1.35;
   white-space: normal;
 }
@@ -220,21 +222,21 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         n_rows, n_cols = df2.shape
 
     if n_cols <= 3:
-        body_size, header_size, title_size = 32, 33, 46
-        target_w, max_total_w = 1350, 1550
-        min_col_w, max_col_w = 260, 720
+        body_size, header_size, title_size = 44, 45, 56
+        min_col_w, max_col_w, max_total_w = 220, 900, 1500
+        min_total_w = 760
     elif n_cols <= 5:
-        body_size, header_size, title_size = 30, 31, 44
-        target_w, max_total_w = 1650, 1850
-        min_col_w, max_col_w = 220, 560
+        body_size, header_size, title_size = 40, 41, 54
+        min_col_w, max_col_w, max_total_w = 190, 620, 1750
+        min_total_w = 980
     elif n_cols <= 8:
-        body_size, header_size, title_size = 27, 28, 42
-        target_w, max_total_w = 2100, 2350
-        min_col_w, max_col_w = 170, 430
+        body_size, header_size, title_size = 34, 35, 50
+        min_col_w, max_col_w, max_total_w = 150, 470, 2200
+        min_total_w = 1250
     else:
-        body_size, header_size, title_size = 24, 25, 40
-        target_w, max_total_w = 2500, 2850
-        min_col_w, max_col_w = 135, 360
+        body_size, header_size, title_size = 30, 31, 48
+        min_col_w, max_col_w, max_total_w = 130, 390, 2650
+        min_total_w = 1500
 
     body_font = load_font(font_path, body_size)
     header_font = load_font(bold_path, header_size)
@@ -254,11 +256,15 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         bbox = draw.textbbox((0, 0), "Ag", font=font)
         return bbox[3] - bbox[1]
 
+    def is_numeric_like(series: pd.Series) -> bool:
+        converted = pd.to_numeric(series.replace("", np.nan), errors="coerce")
+        return converted.notna().mean() >= 0.75 if len(series) else False
+
     def wrap_by_width(text: str, font, max_width: int) -> list:
         text = str(text)
         if text == "":
             return [""]
-        out = []
+        lines = []
         for para in text.split("\n"):
             words = para.split(" ")
             cur = ""
@@ -268,7 +274,7 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
                     cur = test
                 else:
                     if cur:
-                        out.append(cur)
+                        lines.append(cur)
                         cur = word
                     else:
                         part = ""
@@ -278,74 +284,75 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
                                 part = test_part
                             else:
                                 if part:
-                                    out.append(part)
+                                    lines.append(part)
                                 part = ch
                         cur = part
-            if cur or not out:
-                out.append(cur)
-        return out if out else [""]
-
-    def is_numeric_like(series: pd.Series) -> bool:
-        converted = pd.to_numeric(series.replace("", np.nan), errors="coerce")
-        return converted.notna().mean() >= 0.75 if len(series) else False
+            if cur:
+                lines.append(cur)
+            elif not lines:
+                lines.append("")
+        return lines if lines else [""]
 
     raw_widths = []
+    numeric_cols = []
     for col in df2.columns:
+        numeric_cols.append(is_numeric_like(df2[col]))
+        values = df2[col].astype(str).tolist()
         header_px = text_w(str(col), header_font)
-        values_px = [text_w(str(x), body_font) for x in df2[col].astype(str).tolist()]
-        max_body_px = max(values_px) if values_px else 0
-        natural = max(header_px, max_body_px) + 54
-        if is_numeric_like(df2[col]):
-            natural = min(natural, int(max_col_w * 0.80))
+        body_px = max([text_w(v, body_font) for v in values], default=0)
+        natural = max(header_px, body_px) + 56
+        if numeric_cols[-1]:
+            natural = min(natural, int(max_col_w * 0.75))
         else:
             natural = min(natural, max_col_w)
-        raw_widths.append(max(min_col_w, natural))
+        raw_widths.append(max(min_col_w, int(natural)))
 
     total_raw = sum(raw_widths)
-    if total_raw < target_w:
-        extra = target_w - total_raw
-        weight_sum = sum(raw_widths) or 1
-        col_widths = [int(w + extra * (w / weight_sum)) for w in raw_widths]
+    if total_raw < min_total_w:
+        extra = min_total_w - total_raw
+        weights = [2 if not numeric_cols[i] else 1 for i in range(n_cols)]
+        wsum = sum(weights)
+        col_widths = [raw_widths[i] + int(extra * weights[i] / wsum) for i in range(n_cols)]
     elif total_raw > max_total_w:
         scale = max_total_w / total_raw
         col_widths = [max(min_col_w, int(w * scale)) for w in raw_widths]
         while sum(col_widths) > max_total_w and any(w > min_col_w for w in col_widths):
-            for i in range(len(col_widths)):
+            for i in range(n_cols):
                 if sum(col_widths) <= max_total_w:
                     break
                 if col_widths[i] > min_col_w:
                     col_widths[i] -= 1
     else:
-        col_widths = [int(w) for w in raw_widths]
+        col_widths = raw_widths
 
-    table_w = sum(col_widths)
-    pad_x = 18
-    pad_y = 13
-    line_gap = 6
+    pad_x = 22
+    pad_y = 14
+    line_gap = 7
     header_line_h = text_h(header_font) + line_gap
     body_line_h = text_h(body_font) + line_gap
 
     wrapped_headers = [
-        wrap_by_width(str(col), header_font, max(50, col_widths[i] - 2 * pad_x))
+        wrap_by_width(str(col), header_font, max(80, col_widths[i] - 2 * pad_x))
         for i, col in enumerate(df2.columns)
     ]
     wrapped_rows = []
     for _, row in df2.iterrows():
         wrapped_rows.append([
-            wrap_by_width(str(val), body_font, max(50, col_widths[i] - 2 * pad_x))
+            wrap_by_width(str(val), body_font, max(80, col_widths[i] - 2 * pad_x))
             for i, val in enumerate(row.values)
         ])
 
-    header_h = max(62, max(len(lines) for lines in wrapped_headers) * header_line_h + 2 * pad_y)
+    header_h = max(header_size + 34, max(len(lines) for lines in wrapped_headers) * header_line_h + 2 * pad_y)
     row_heights = [
-        max(58, max(len(lines) for lines in row) * body_line_h + 2 * pad_y)
+        max(body_size + 34, max(len(lines) for lines in row) * body_line_h + 2 * pad_y)
         for row in wrapped_rows
     ]
 
-    margin_x = 44
-    top_margin = 22
-    bottom_margin = 40
-    title_h = text_h(title_font) + 34 if title else 0
+    table_w = sum(col_widths)
+    margin_x = 46
+    top_margin = 24
+    bottom_margin = 42
+    title_h = text_h(title_font) + 42 if title else 0
 
     img_w = table_w + 2 * margin_x
     img_h = top_margin + title_h + header_h + sum(row_heights) + bottom_margin
@@ -363,7 +370,7 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     x0 = margin_x
     x = x0
     for i, lines in enumerate(wrapped_headers):
-        draw.rectangle([x, y, x + col_widths[i], y + header_h], fill="#f2f2f2", outline="black", width=2)
+        draw.rectangle([x, y, x + col_widths[i], y + header_h], fill="#f2f2f2", outline="black", width=3)
         block_h = len(lines) * header_line_h
         ty = y + (header_h - block_h) // 2
         for line in lines:
@@ -377,7 +384,7 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         row_h = row_heights[r]
         x = x0
         for i, lines in enumerate(wrapped_row):
-            draw.rectangle([x, y, x + col_widths[i], y + row_h], fill="white", outline="black", width=2)
+            draw.rectangle([x, y, x + col_widths[i], y + row_h], fill="white", outline="black", width=3)
             block_h = len(lines) * body_line_h
             ty = y + (row_h - block_h) // 2
             for line in lines:
