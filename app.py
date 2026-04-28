@@ -1,6 +1,6 @@
 # app.py
 # =========================================================
-# Regression Applications in Health Sciences
+# Data Analysis in Health Sciences
 # Single-file Streamlit app (stable: expanders + buttons)
 # =========================================================
 
@@ -24,7 +24,7 @@ from statsmodels.stats.contingency_tables import StratifiedTable
 # Page config
 # =========================================================
 st.set_page_config(
-    page_title="Regression Applications in Health Sciences",
+    page_title="Data Analysis in Health Sciences",
     page_icon="📊",
     layout="wide"
 )
@@ -132,8 +132,8 @@ div[data-testid="stDataFrame"]{
 st.markdown(
     """
 <div class="header-banner">
-  <h1>Regression Applications in Health Sciences</h1>
-  <p>Regression modeling + hypothesis testing, with diagnostics and SPSS-like outputs.</p>
+  <h1>Data Analysis in Health Sciences</h1>
+  <p>Regression, categorical analysis, quantitative tests, diagnostics and SPSS-like outputs.</p>
 </div>
 """,
     unsafe_allow_html=True
@@ -982,15 +982,64 @@ def descriptives_for_groups(groups: Dict[str, np.ndarray]) -> pd.DataFrame:
         rows.append([name, len(x), np.mean(x) if len(x) else np.nan, np.std(x, ddof=1) if len(x)>1 else np.nan, np.median(x) if len(x) else np.nan, np.min(x) if len(x) else np.nan, np.max(x) if len(x) else np.nan])
     return compact_numeric_df(pd.DataFrame(rows, columns=["Group", "N", "Mean", "Std. Deviation", "Median", "Minimum", "Maximum"]), 4)
 
+def conclusion_text(pval: float, alpha: float = 0.05, effect_label: str = "difference") -> str:
+    try:
+        p = float(pval)
+    except Exception:
+        return "Unable to determine statistical significance."
+    if np.isnan(p):
+        return "Unable to determine statistical significance."
+    if p < alpha:
+        return f"Statistically significant {effect_label} (p < {alpha:.2f})."
+    return f"No statistically significant {effect_label} (p >= {alpha:.2f})."
+
+def assumption_recommendation(normal_ok: bool, equal_var_ok=None, parametric_name: str = "parametric test", nonparametric_name: str = "nonparametric alternative") -> str:
+    if not normal_ok:
+        return f"Normality assumption is not met. Prefer {nonparametric_name}."
+    if equal_var_ok is False:
+        return f"Normality is acceptable but equal variances are not met. Prefer Welch/robust version of {parametric_name}."
+    return f"Main assumptions are acceptable. {parametric_name} can be used."
+
+def normality_overall_ok(groups: Dict[str, np.ndarray]) -> bool:
+    ok = True
+    for arr in groups.values():
+        x = pd.to_numeric(pd.Series(arr), errors="coerce").dropna().astype(float).values
+        if 3 <= len(x) <= 5000:
+            _, pval = stats.shapiro(x)
+            if float(pval) < 0.05:
+                ok = False
+    return ok
+
+def recommendation_table(recommendation: str) -> pd.DataFrame:
+    return pd.DataFrame([[recommendation]], columns=["SPSS-like recommendation"])
+
 def nonparam_result_table(test_name: str, statistic: float, pval: float) -> pd.DataFrame:
-    out = pd.DataFrame([[test_name, statistic, format_p_value(pval), "Yes" if pval < 0.05 else "No"]], columns=["Test", "Statistic", "Sig.", "Significant (p<0.05)"])
+    out = pd.DataFrame([[test_name, statistic, format_p_value(pval), "Yes" if pval < 0.05 else "No", conclusion_text(pval)]], columns=["Test", "Statistic", "Sig.", "Significant (p<0.05)", "Conclusion"])
     return compact_numeric_df(out, 4)
 
 def ttest_result_table(test_name: str, statistic: float, dfree, pval: float, mean_diff: float = np.nan, ci=None) -> pd.DataFrame:
     if ci is None:
         ci = (np.nan, np.nan)
-    out = pd.DataFrame([[test_name, statistic, dfree, format_p_value(pval), mean_diff, ci[0], ci[1], "Yes" if pval < 0.05 else "No"]], columns=["Test", "t", "df", "Sig. (2-tailed)", "Mean Difference", "CI 2.5%", "CI 97.5%", "Significant (p<0.05)"])
+    out = pd.DataFrame([[test_name, statistic, dfree, format_p_value(pval), mean_diff, ci[0], ci[1], "Yes" if pval < 0.05 else "No", conclusion_text(pval)]], columns=["Test", "t", "df", "Sig. (2-tailed)", "Mean Difference", "CI 2.5%", "CI 97.5%", "Significant (p<0.05)", "Conclusion"])
     return compact_numeric_df(out, 4)
+
+def chi_square_expected_assumption_table(expected: np.ndarray) -> pd.DataFrame:
+    expected = np.asarray(expected, dtype=float)
+    total_cells = expected.size
+    cells_lt5 = int((expected < 5).sum())
+    min_expected = float(np.min(expected)) if total_cells else np.nan
+    pct_lt5 = cells_lt5 / total_cells * 100 if total_cells else np.nan
+    ok_strict = bool(cells_lt5 == 0)
+    ok_spss = bool(min_expected >= 1 and pct_lt5 <= 20)
+    return compact_numeric_df(pd.DataFrame([[total_cells, cells_lt5, pct_lt5, min_expected, "Yes" if ok_strict else "No", "Yes" if ok_spss else "No"]], columns=["Cells", "Expected < 5", "% Expected < 5", "Minimum Expected Count", "All expected >= 5", "SPSS rule acceptable"]), 4)
+
+def chi_square_guidance(obs: np.ndarray, expected: np.ndarray) -> str:
+    expected = np.asarray(expected, dtype=float)
+    if (expected >= 5).all():
+        return "Expected count condition is satisfied. Pearson Chi-square is appropriate."
+    if obs.shape == (2, 2):
+        return "Some expected counts are below 5. Prefer Fisher's Exact Test for a 2x2 table."
+    return "Some expected counts are below 5. Consider combining sparse categories or using an exact/Monte Carlo test instead of relying only on Pearson Chi-square."
 
 def one_sample_ttest_table(x: np.ndarray, mu: float, alpha: float = 0.05) -> pd.DataFrame:
     x = np.asarray(x, dtype=float)
@@ -1443,10 +1492,17 @@ elif section == "Categorical Tests":
 
                 chi2, p, dof, expected = stats.chi2_contingency(obs, correction=False)
 
+                expected_assumption = chi_square_expected_assumption_table(expected)
+                show_table(expected_assumption, "Expected Count Assumption")
+                guidance = chi_square_guidance(obs, expected)
+                show_table(recommendation_table(guidance), "SPSS-like Recommendation")
+                if not (np.asarray(expected, dtype=float) >= 5).all():
+                    st.warning(guidance)
+
                 chi_tbl = pd.DataFrame([[
                     "Pearson Chi-Square", chi2, dof, format_p_value(p),
-                    "Yes" if p < 0.05 else "No"
-                ]], columns=["Test", "Value", "df", "Asymp. Sig. (2-sided)", "Significant (p<0.05)"])
+                    "Yes" if p < 0.05 else "No", conclusion_text(p)
+                ]], columns=["Test", "Value", "df", "Asymp. Sig. (2-sided)", "Significant (p<0.05)", "Conclusion"])
                 chi_tbl["Value"] = pd.to_numeric(chi_tbl["Value"], errors="coerce").round(6)
                 chi_tbl = chi_tbl.apply(lambda col: col.map(clean_cell))
 
@@ -1598,6 +1654,10 @@ elif section == "Categorical Tests":
 
                     exp = weights / np.sum(weights) * np.sum(obs)
                     stat, p = stats.chisquare(f_obs=obs, f_exp=exp)
+                    gof_assumption = chi_square_expected_assumption_table(exp)
+                    show_table(gof_assumption, "Expected Count Assumption")
+                    if not (np.asarray(exp, dtype=float) >= 5).all():
+                        st.warning("Some expected counts are below 5. Consider combining sparse categories or using an exact/Monte Carlo goodness-of-fit approach.")
 
                     expected_tbl = pd.DataFrame({
                         "Category": categories,
@@ -1609,8 +1669,8 @@ elif section == "Categorical Tests":
 
                     tbl = pd.DataFrame([[
                         "Chi-square", stat, len(obs)-1, format_p_value(p),
-                        "Yes" if p < 0.05 else "No"
-                    ]], columns=["Test", "Value", "df", "Asymp. Sig. (2-sided)", "Significant (p<0.05)"])
+                        "Yes" if p < 0.05 else "No", conclusion_text(p)
+                    ]], columns=["Test", "Value", "df", "Asymp. Sig. (2-sided)", "Significant (p<0.05)", "Conclusion"])
                     tbl["Value"] = pd.to_numeric(tbl["Value"], errors="coerce").round(6)
                     tbl = tbl.apply(lambda col: col.map(clean_cell))
 
@@ -1768,6 +1828,7 @@ elif section == "Quantitative Tests":
                                 raise ValueError("At least 2 valid observations are required.")
                             show_table(descriptives_for_groups({value_col: x}), "Descriptive Statistics")
                             show_table(normality_by_group_table({value_col: x}), "Tests of Normality")
+                            show_table(recommendation_table(assumption_recommendation(normality_overall_ok({value_col: x}), None, "one-sample t test", "one-sample Wilcoxon signed-rank test")), "SPSS-like Recommendation")
                             show_table(one_sample_ttest_table(x, mu, alpha), "One-Sample Test")
                             if np.any((x - mu) != 0):
                                 w_stat, w_p = stats.wilcoxon(x - mu, zero_method="wilcox", alternative="two-sided")
@@ -1793,6 +1854,7 @@ elif section == "Quantitative Tests":
                                 raise ValueError("No selected group has at least 2 valid numeric observations.")
                             show_table(descriptives_for_groups(desc_groups), "Descriptive Statistics")
                             show_table(normality_by_group_table(norm_groups), "Tests of Normality")
+                            show_table(recommendation_table(assumption_recommendation(normality_overall_ok(norm_groups), None, "one-sample t test", "one-sample Wilcoxon signed-rank test")), "SPSS-like Recommendation")
                             show_table(compact_numeric_df(pd.concat(t_rows, ignore_index=True), 4), "One-Sample Test")
                             if w_rows:
                                 show_table(compact_numeric_df(pd.concat(w_rows, ignore_index=True), 4), "Nonparametric Alternative")
@@ -1809,6 +1871,12 @@ elif section == "Quantitative Tests":
                         show_table(descriptives_for_groups(groups), "Group Statistics")
                         show_table(normality_by_group_table(groups), "Tests of Normality")
                         show_table(lev_tbl, "Test of Homogeneity of Variance")
+                        lev_ok = True
+                        try:
+                            lev_ok = str(lev_tbl.loc[0, "Decision"]).startswith("Equal variances assumed")
+                        except Exception:
+                            lev_ok = None
+                        show_table(recommendation_table(assumption_recommendation(normality_overall_ok(groups), lev_ok, "independent-samples t test", "Mann-Whitney U test")), "SPSS-like Recommendation")
                         show_table(t_tbl, "Independent Samples Test")
                         levels2 = list(groups.keys())
                         u_stat, u_p = stats.mannwhitneyu(groups[levels2[0]], groups[levels2[1]], alternative="two-sided")
@@ -1825,6 +1893,7 @@ elif section == "Quantitative Tests":
                         groups, t_tbl = paired_ttest_table(d, before_col, after_col, alpha)
                         show_table(descriptives_for_groups({before_col: d[before_col].values, after_col: d[after_col].values}), "Paired Samples Statistics")
                         show_table(normality_by_group_table(groups), "Tests of Normality for Paired Difference")
+                        show_table(recommendation_table(assumption_recommendation(normality_overall_ok(groups), None, "paired-samples t test", "Wilcoxon signed-rank test")), "SPSS-like Recommendation")
                         show_table(t_tbl, "Paired Samples Test")
                         w_stat, w_p = stats.wilcoxon(d[before_col].astype(float).values, d[after_col].astype(float).values, zero_method="wilcox", alternative="two-sided")
                         show_table(nonparam_result_table("Wilcoxon Signed-Rank Test", float(w_stat), float(w_p)), "Nonparametric Alternative")
@@ -1941,6 +2010,7 @@ elif section == "Quantitative Tests":
                         show_table(normality_by_group_table(groups), "Tests of Normality")
                         lev_stat, lev_p = stats.levene(*groups.values(), center="mean")
                         show_table(compact_numeric_df(pd.DataFrame([["Levene's Test", lev_stat, format_p_value(lev_p), "Yes" if lev_p >= 0.05 else "No"]], columns=["Test", "Statistic", "Sig.", "Equal variances assumption"]), 4), "Test of Homogeneity of Variances")
+                        show_table(recommendation_table(assumption_recommendation(normality_overall_ok(groups), bool(lev_p >= 0.05), "one-way ANOVA", "Kruskal-Wallis test")), "SPSS-like Recommendation")
                         model = smf.ols(f'Q("{value_col}") ~ C(Q("{factor_col}"))', data=d).fit()
                         show_table(anova_summary_table(model, typ=2), "ANOVA")
                         kw_stat, kw_p = stats.kruskal(*groups.values())
