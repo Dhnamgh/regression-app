@@ -879,6 +879,67 @@ def bootstrap_ci(x: np.ndarray, func, n_boot=5000, alpha=0.05, seed=123) -> Tupl
 def numeric_series_from_df(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce").dropna()
 
+
+
+def selectbox_default(label, options, default=None, key=None):
+    options = list(options)
+    if not options:
+        raise ValueError(f"No available options for {label}.")
+    idx = options.index(default) if default in options else 0
+    return st.selectbox(label, options, index=idx, key=key)
+
+def numeric_candidate_cols(df: pd.DataFrame) -> List[str]:
+    return [c for c in df.columns if pd.to_numeric(df[c], errors="coerce").notna().sum() > 0]
+
+def categorical_candidate_cols(df: pd.DataFrame, exclude: Optional[List[str]] = None) -> List[str]:
+    exclude = exclude or []
+    cols = []
+    n = max(len(df), 1)
+    for c in df.columns:
+        if c in exclude:
+            continue
+        x = df[c].dropna()
+        if x.empty:
+            continue
+        is_num = pd.to_numeric(df[c], errors="coerce").notna().sum() == df[c].notna().sum()
+        nunique = x.astype(str).nunique()
+        if (not is_num) or nunique <= max(10, int(0.4 * n)):
+            cols.append(c)
+    return cols
+
+def first_existing(cols: List[str], preferred: List[str], fallback=None):
+    lower_map = {str(c).lower(): c for c in cols}
+    for name in preferred:
+        if name.lower() in lower_map:
+            return lower_map[name.lower()]
+    return fallback if fallback is not None else (cols[0] if cols else None)
+
+def default_numeric_col(df: pd.DataFrame):
+    nums = numeric_candidate_cols(df)
+    return first_existing(nums, ["value", "score", "measurement", "Y_outcome", "outcome", "after", "before"], nums[0] if nums else None)
+
+def default_group_col(df: pd.DataFrame, exclude: Optional[List[str]] = None):
+    cats = categorical_candidate_cols(df, exclude=exclude)
+    return first_existing(cats, ["group", "grouping", "factor", "factor_a", "treatment", "arm"], cats[0] if cats else None)
+
+def default_subject_col(df: pd.DataFrame):
+    cols = list(df.columns)
+    return first_existing(cols, ["subject", "subject_id", "id", "patient", "patient_id"], cols[0] if cols else None)
+
+def default_within_col(df: pd.DataFrame, exclude: Optional[List[str]] = None):
+    cats = categorical_candidate_cols(df, exclude=exclude)
+    valid = [c for c in cats if df[c].dropna().astype(str).nunique() >= 2]
+    return first_existing(valid, ["time", "factor_b", "condition", "visit", "period", "within"], valid[0] if valid else None)
+
+def level_selector(df: pd.DataFrame, group_col: str, prefix: str):
+    levels = sorted([str(x) for x in df[group_col].dropna().astype(str).unique()])
+    if len(levels) < 2:
+        raise ValueError("Grouping variable must have at least 2 groups.")
+    g1 = selectbox_default("Group 1", levels, levels[0], key=f"{prefix}_g1")
+    remaining = [g for g in levels if g != g1]
+    g2 = selectbox_default("Group 2", remaining, remaining[0], key=f"{prefix}_g2")
+    return g1, g2
+
 def paired_numeric_data(df: pd.DataFrame, col1: str, col2: str) -> pd.DataFrame:
     d = df[[col1, col2]].copy()
     d[col1] = pd.to_numeric(d[col1], errors="coerce")
@@ -1634,38 +1695,83 @@ elif section == "Quantitative Tests":
         if up is not None:
             df = load_uploaded_file(up)
             st.dataframe(df.head(50), use_container_width=True)
-            cols = list(df.columns)
+            numeric_cols = numeric_candidate_cols(df)
+            if not numeric_cols:
+                st.error("No numeric test variables found.")
+                st.stop()
             test_type = st.radio("Test type", ["One-sample t test", "Independent-samples t test", "Paired-samples t test"], horizontal=False)
             alpha = 1 - st.slider("Confidence level", 0.80, 0.99, 0.95, 0.01, key="tt_alpha")
             try:
                 if test_type == "One-sample t test":
-                    value_col = st.selectbox("Test variable", cols, key="tt_one_value")
+                    value_col = selectbox_default("Test variable", numeric_cols, default_numeric_col(df), key="tt_one_value")
+                    group_candidates = categorical_candidate_cols(df, exclude=[value_col])
+                    default_group = default_group_col(df, exclude=[value_col])
+                    group_choice = selectbox_default("Grouping variable (optional)", ["None"] + group_candidates, default_group if default_group else "None", key="tt_one_group")
+                    selected_level = None
+                    if group_choice != "None":
+                        levels = sorted([str(x) for x in df[group_choice].dropna().astype(str).unique()])
+                        selected_level = selectbox_default("Group to test", ["All groups separately"] + levels, "All groups separately", key="tt_one_level")
                     mu = st.number_input("Test value", value=0.0, key="tt_mu")
                     if st.button("Run one-sample t test", type="primary", use_container_width=True):
-                        x = numeric_series_from_df(df, value_col).astype(float).values
-                        if len(x) < 2:
-                            raise ValueError("At least 2 valid observations are required.")
-                        show_table(descriptives_for_groups({value_col: x}), "Descriptive Statistics")
-                        show_table(normality_by_group_table({value_col: x}), "Tests of Normality")
-                        show_table(one_sample_ttest_table(x, mu, alpha), "One-Sample Test")
-                        w_stat, w_p = stats.wilcoxon(x - mu, zero_method="wilcox", alternative="two-sided")
-                        show_table(nonparam_result_table("Wilcoxon Signed-Rank Test", float(w_stat), float(w_p)), "Nonparametric Alternative")
+                        if group_choice == "None":
+                            x = numeric_series_from_df(df, value_col).astype(float).values
+                            if len(x) < 2:
+                                raise ValueError("At least 2 valid observations are required.")
+                            show_table(descriptives_for_groups({value_col: x}), "Descriptive Statistics")
+                            show_table(normality_by_group_table({value_col: x}), "Tests of Normality")
+                            show_table(one_sample_ttest_table(x, mu, alpha), "One-Sample Test")
+                            if np.any((x - mu) != 0):
+                                w_stat, w_p = stats.wilcoxon(x - mu, zero_method="wilcox", alternative="two-sided")
+                                show_table(nonparam_result_table("Wilcoxon Signed-Rank Test", float(w_stat), float(w_p)), "Nonparametric Alternative")
+                        else:
+                            run_levels = levels if selected_level == "All groups separately" else [selected_level]
+                            desc_groups = {}
+                            norm_groups = {}
+                            t_rows = []
+                            w_rows = []
+                            for lev in run_levels:
+                                x = pd.to_numeric(df.loc[df[group_choice].astype(str) == lev, value_col], errors="coerce").dropna().astype(float).values
+                                if len(x) < 2:
+                                    continue
+                                desc_groups[lev] = x
+                                norm_groups[lev] = x
+                                t_tbl = one_sample_ttest_table(x, mu, alpha)
+                                t_tbl.insert(0, "Group", lev)
+                                t_rows.append(t_tbl)
+                                if np.any((x - mu) != 0):
+                                    w_stat, w_p = stats.wilcoxon(x - mu, zero_method="wilcox", alternative="two-sided")
+                                    w_tbl = nonparam_result_table("Wilcoxon Signed-Rank Test", float(w_stat), float(w_p))
+                                    w_tbl.insert(0, "Group", lev)
+                                    w_rows.append(w_tbl)
+                            if not t_rows:
+                                raise ValueError("No selected group has at least 2 valid numeric observations.")
+                            show_table(descriptives_for_groups(desc_groups), "Descriptive Statistics")
+                            show_table(normality_by_group_table(norm_groups), "Tests of Normality")
+                            show_table(compact_numeric_df(pd.concat(t_rows, ignore_index=True), 4), "One-Sample Test")
+                            if w_rows:
+                                show_table(compact_numeric_df(pd.concat(w_rows, ignore_index=True), 4), "Nonparametric Alternative")
                 elif test_type == "Independent-samples t test":
-                    value_col = st.selectbox("Test variable", cols, key="tt_ind_value")
-                    group_col = st.selectbox("Grouping variable", [c for c in cols if c != value_col], key="tt_ind_group")
+                    value_col = selectbox_default("Test variable", numeric_cols, default_numeric_col(df), key="tt_ind_value")
+                    group_candidates = categorical_candidate_cols(df, exclude=[value_col])
+                    group_col = selectbox_default("Grouping variable", group_candidates, default_group_col(df, exclude=[value_col]), key="tt_ind_group")
+                    g1, g2 = level_selector(df, group_col, "tt_ind")
                     if st.button("Run independent-samples t test", type="primary", use_container_width=True):
-                        d = long_numeric_group_data(df, value_col, group_col)
+                        d0 = df[df[group_col].astype(str).isin([g1, g2])].copy()
+                        d = long_numeric_group_data(d0, value_col, group_col)
                         groups, lev_tbl, t_tbl = independent_ttest_tables(d, value_col, group_col, alpha)
                         show_table(descriptives_for_groups(groups), "Group Statistics")
                         show_table(normality_by_group_table(groups), "Tests of Normality")
                         show_table(lev_tbl, "Test of Homogeneity of Variance")
                         show_table(t_tbl, "Independent Samples Test")
-                        levels = list(groups.keys())
-                        u_stat, u_p = stats.mannwhitneyu(groups[levels[0]], groups[levels[1]], alternative="two-sided")
+                        levels2 = list(groups.keys())
+                        u_stat, u_p = stats.mannwhitneyu(groups[levels2[0]], groups[levels2[1]], alternative="two-sided")
                         show_table(nonparam_result_table("Mann-Whitney U Test", float(u_stat), float(u_p)), "Nonparametric Alternative")
                 else:
-                    before_col = st.selectbox("Variable 1", cols, key="tt_pair_before")
-                    after_col = st.selectbox("Variable 2", [c for c in cols if c != before_col], key="tt_pair_after")
+                    before_default = first_existing(numeric_cols, ["before", "pre", "baseline", "time1", "t1"], numeric_cols[0])
+                    before_col = selectbox_default("Variable 1", numeric_cols, before_default, key="tt_pair_before")
+                    after_options = [c for c in numeric_cols if c != before_col]
+                    after_default = first_existing(after_options, ["after", "post", "followup", "time2", "t2"], after_options[0] if after_options else None)
+                    after_col = selectbox_default("Variable 2", after_options, after_default, key="tt_pair_after")
                     if st.button("Run paired-samples t test", type="primary", use_container_width=True):
                         d = paired_numeric_data(df, before_col, after_col)
                         groups, t_tbl = paired_ttest_table(d, before_col, after_col, alpha)
@@ -1684,32 +1790,42 @@ elif section == "Quantitative Tests":
         if up is not None:
             df = load_uploaded_file(up)
             st.dataframe(df.head(50), use_container_width=True)
-            cols = list(df.columns)
+            numeric_cols = numeric_candidate_cols(df)
+            if not numeric_cols:
+                st.error("No numeric test variables found.")
+                st.stop()
             test_type = st.radio("Test", ["Mann-Whitney U (2 independent groups)", "Wilcoxon signed-rank (paired)", "Kruskal-Wallis (k independent groups)", "Friedman (k related samples)", "One-sample Wilcoxon"], horizontal=False)
             try:
                 if test_type == "Mann-Whitney U (2 independent groups)":
-                    value_col = st.selectbox("Test variable", cols, key="np_mw_value")
-                    group_col = st.selectbox("Grouping variable", [c for c in cols if c != value_col], key="np_mw_group")
+                    value_col = selectbox_default("Test variable", numeric_cols, default_numeric_col(df), key="np_mw_value")
+                    group_candidates = categorical_candidate_cols(df, exclude=[value_col])
+                    group_col = selectbox_default("Grouping variable", group_candidates, default_group_col(df, exclude=[value_col]), key="np_mw_group")
+                    g1, g2 = level_selector(df, group_col, "np_mw")
                     if st.button("Run Mann-Whitney U", type="primary", use_container_width=True):
-                        d = long_numeric_group_data(df, value_col, group_col)
+                        d0 = df[df[group_col].astype(str).isin([g1, g2])].copy()
+                        d = long_numeric_group_data(d0, value_col, group_col)
                         groups = {str(k): v[value_col].astype(float).values for k, v in d.groupby(group_col)}
                         if len(groups) != 2:
-                            raise ValueError("Mann-Whitney U requires exactly 2 groups.")
-                        levels = list(groups.keys())
-                        stat, pval = stats.mannwhitneyu(groups[levels[0]], groups[levels[1]], alternative="two-sided")
+                            raise ValueError("Mann-Whitney U requires exactly 2 selected groups.")
+                        levels2 = list(groups.keys())
+                        stat, pval = stats.mannwhitneyu(groups[levels2[0]], groups[levels2[1]], alternative="two-sided")
                         show_table(descriptives_for_groups(groups), "Ranks Input Summary")
                         show_table(nonparam_result_table("Mann-Whitney U Test", float(stat), float(pval)), "Test Statistics")
                 elif test_type == "Wilcoxon signed-rank (paired)":
-                    col1 = st.selectbox("Variable 1", cols, key="np_w_col1")
-                    col2 = st.selectbox("Variable 2", [c for c in cols if c != col1], key="np_w_col2")
+                    before_default = first_existing(numeric_cols, ["before", "pre", "baseline", "time1", "t1"], numeric_cols[0])
+                    col1 = selectbox_default("Variable 1", numeric_cols, before_default, key="np_w_col1")
+                    col2_options = [c for c in numeric_cols if c != col1]
+                    after_default = first_existing(col2_options, ["after", "post", "followup", "time2", "t2"], col2_options[0] if col2_options else None)
+                    col2 = selectbox_default("Variable 2", col2_options, after_default, key="np_w_col2")
                     if st.button("Run Wilcoxon signed-rank", type="primary", use_container_width=True):
                         d = paired_numeric_data(df, col1, col2)
                         stat, pval = stats.wilcoxon(d[col1].astype(float).values, d[col2].astype(float).values, zero_method="wilcox", alternative="two-sided")
                         show_table(descriptives_for_groups({col1: d[col1].values, col2: d[col2].values}), "Paired Summary")
                         show_table(nonparam_result_table("Wilcoxon Signed-Rank Test", float(stat), float(pval)), "Test Statistics")
                 elif test_type == "Kruskal-Wallis (k independent groups)":
-                    value_col = st.selectbox("Test variable", cols, key="np_kw_value")
-                    group_col = st.selectbox("Grouping variable", [c for c in cols if c != value_col], key="np_kw_group")
+                    value_col = selectbox_default("Test variable", numeric_cols, default_numeric_col(df), key="np_kw_value")
+                    group_candidates = categorical_candidate_cols(df, exclude=[value_col])
+                    group_col = selectbox_default("Grouping variable", group_candidates, default_group_col(df, exclude=[value_col]), key="np_kw_group")
                     if st.button("Run Kruskal-Wallis", type="primary", use_container_width=True):
                         d = long_numeric_group_data(df, value_col, group_col)
                         groups = {str(k): v[value_col].astype(float).values for k, v in d.groupby(group_col)}
@@ -1719,9 +1835,10 @@ elif section == "Quantitative Tests":
                         show_table(descriptives_for_groups(groups), "Group Summary")
                         show_table(nonparam_result_table("Kruskal-Wallis Test", float(stat), float(pval)), "Test Statistics")
                 elif test_type == "Friedman (k related samples)":
-                    subject_col = st.selectbox("Subject ID", cols, key="np_fr_subject")
-                    within_col = st.selectbox("Within-subject factor", [c for c in cols if c != subject_col], key="np_fr_within")
-                    value_col = st.selectbox("Test variable", [c for c in cols if c not in [subject_col, within_col]], key="np_fr_value")
+                    subject_col = selectbox_default("Subject ID", list(df.columns), default_subject_col(df), key="np_fr_subject")
+                    value_col = selectbox_default("Test variable", numeric_cols, default_numeric_col(df), key="np_fr_value")
+                    within_candidates = categorical_candidate_cols(df, exclude=[subject_col, value_col])
+                    within_col = selectbox_default("Within-subject factor", within_candidates, default_within_col(df, exclude=[subject_col, value_col]), key="np_fr_within")
                     if st.button("Run Friedman", type="primary", use_container_width=True):
                         d = df[[subject_col, within_col, value_col]].copy()
                         d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
@@ -1733,7 +1850,7 @@ elif section == "Quantitative Tests":
                         show_table(compact_numeric_df(wide.reset_index(), 4), "Complete Repeated-Measures Data")
                         show_table(nonparam_result_table("Friedman Test", float(stat), float(pval)), "Test Statistics")
                 else:
-                    value_col = st.selectbox("Test variable", cols, key="np_one_value")
+                    value_col = selectbox_default("Test variable", numeric_cols, default_numeric_col(df), key="np_one_value")
                     median0 = st.number_input("Test median", value=0.0, key="np_median")
                     if st.button("Run one-sample Wilcoxon", type="primary", use_container_width=True):
                         x = numeric_series_from_df(df, value_col).astype(float).values
@@ -1750,12 +1867,16 @@ elif section == "Quantitative Tests":
         if up is not None:
             df = load_uploaded_file(up)
             st.dataframe(df.head(50), use_container_width=True)
-            cols = list(df.columns)
+            numeric_cols = numeric_candidate_cols(df)
+            if not numeric_cols:
+                st.error("No numeric dependent variable found.")
+                st.stop()
             anova_type = st.radio("ANOVA type", ["One-way ANOVA (independent)", "One-way repeated-measures ANOVA", "Two-way ANOVA"], horizontal=False)
             try:
                 if anova_type == "One-way ANOVA (independent)":
-                    value_col = st.selectbox("Dependent variable", cols, key="anova1_value")
-                    factor_col = st.selectbox("Factor", [c for c in cols if c != value_col], key="anova1_factor")
+                    value_col = selectbox_default("Dependent variable", numeric_cols, default_numeric_col(df), key="anova1_value")
+                    factor_candidates = categorical_candidate_cols(df, exclude=[value_col])
+                    factor_col = selectbox_default("Factor", factor_candidates, default_group_col(df, exclude=[value_col]), key="anova1_factor")
                     if st.button("Run one-way ANOVA", type="primary", use_container_width=True):
                         d = long_numeric_group_data(df, value_col, factor_col)
                         groups = {str(k): v[value_col].astype(float).values for k, v in d.groupby(factor_col)}
@@ -1770,9 +1891,10 @@ elif section == "Quantitative Tests":
                         kw_stat, kw_p = stats.kruskal(*groups.values())
                         show_table(nonparam_result_table("Kruskal-Wallis Test", float(kw_stat), float(kw_p)), "Nonparametric Alternative")
                 elif anova_type == "One-way repeated-measures ANOVA":
-                    subject_col = st.selectbox("Subject ID", cols, key="rm_subject")
-                    within_col = st.selectbox("Within-subject factor", [c for c in cols if c != subject_col], key="rm_within")
-                    value_col = st.selectbox("Dependent variable", [c for c in cols if c not in [subject_col, within_col]], key="rm_value")
+                    subject_col = selectbox_default("Subject ID", list(df.columns), default_subject_col(df), key="rm_subject")
+                    value_col = selectbox_default("Dependent variable", numeric_cols, default_numeric_col(df), key="rm_value")
+                    within_candidates = categorical_candidate_cols(df, exclude=[subject_col, value_col])
+                    within_col = selectbox_default("Within-subject factor", within_candidates, default_within_col(df, exclude=[subject_col, value_col]), key="rm_within")
                     if st.button("Run repeated-measures ANOVA", type="primary", use_container_width=True):
                         d = df[[subject_col, within_col, value_col]].copy()
                         d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
@@ -1788,9 +1910,11 @@ elif section == "Quantitative Tests":
                             fr_stat, fr_p = stats.friedmanchisquare(*[wide[c].values for c in wide.columns])
                             show_table(nonparam_result_table("Friedman Test", float(fr_stat), float(fr_p)), "Nonparametric Alternative")
                 else:
-                    value_col = st.selectbox("Dependent variable", cols, key="anova2_value")
-                    factor_a = st.selectbox("Factor A", [c for c in cols if c != value_col], key="anova2_a")
-                    factor_b = st.selectbox("Factor B", [c for c in cols if c not in [value_col, factor_a]], key="anova2_b")
+                    value_col = selectbox_default("Dependent variable", numeric_cols, default_numeric_col(df), key="anova2_value")
+                    factor_candidates = categorical_candidate_cols(df, exclude=[value_col])
+                    factor_a = selectbox_default("Factor A", factor_candidates, first_existing(factor_candidates, ["factor_a", "group"], factor_candidates[0] if factor_candidates else None), key="anova2_a")
+                    factor_b_options = [c for c in factor_candidates if c != factor_a]
+                    factor_b = selectbox_default("Factor B", factor_b_options, first_existing(factor_b_options, ["factor_b", "time"], factor_b_options[0] if factor_b_options else None), key="anova2_b")
                     if st.button("Run two-way ANOVA", type="primary", use_container_width=True):
                         d = df[[value_col, factor_a, factor_b]].copy()
                         d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
