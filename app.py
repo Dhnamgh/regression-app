@@ -166,22 +166,54 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
     fig.savefig(bio, format="png", dpi=dpi, bbox_inches="tight")
     bio.seek(0)
     return bio.getvalue()
-
+    
 def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
-    df2 = df.copy().fillna("")
-    fig_w = min(18, max(7, df2.shape[1] * 1.5))
-    fig_h = min(18, max(2.2, (df2.shape[0] + 1) * 0.45))
+    df2 = df.copy().fillna("").astype(str)
+
+    # Tính width theo độ dài text
+    col_widths = []
+    for col in df2.columns:
+        max_len = max(
+            df2[col].astype(str).map(len).max(),
+            len(col)
+        )
+        col_widths.append(min(max_len * 0.12, 0.4))
+
+    fig_w = sum(col_widths) * 10
+    fig_h = max(2.5, (df2.shape[0] + 1) * 0.6)
+
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     ax.axis("off")
+
     if title:
-        ax.set_title(title, fontsize=16, fontweight="bold", pad=10)
-    tbl = ax.table(cellText=df2.values, colLabels=df2.columns, cellLoc="center", loc="center")
+        ax.set_title(title, fontsize=16, fontweight="bold", pad=12)
+
+    tbl = ax.table(
+        cellText=df2.values,
+        colLabels=df2.columns,
+        cellLoc="center",
+        loc="center",
+        colWidths=col_widths
+    )
+
+    # Font chuẩn
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(12)
-    tbl.scale(1, 1.35)
-    png = fig_to_png_bytes(fig, dpi=dpi)
+
+    # Header đậm + wrap
+    for (row, col), cell in tbl.get_celld().items():
+        if row == 0:
+            cell.set_text_props(weight="bold")
+            cell.set_facecolor("#f0f0f0")
+        cell.get_text().set_wrap(True)
+
+    tbl.scale(1, 1.4)
+
+    bio = io.BytesIO()
+    plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight")
     plt.close(fig)
-    return png
+    bio.seek(0)
+    return bio.getvalue()
 
 def download_table_block(df: pd.DataFrame, base_name: str, title: str = ""):
     c1, c2 = st.columns([1, 1])
