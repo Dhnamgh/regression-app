@@ -1,16 +1,18 @@
 # app.py
 # =========================================================
 # Data Analysis in Health Sciences
-# Single-file Streamlit app (stable: expanders + buttons)
+# Single-file Streamlit ap
 # =========================================================
 
 import io
 import math
+import textwrap
 from typing import Optional, Tuple, Dict, List
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
 
 from scipy import stats
@@ -166,51 +168,199 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
     fig.savefig(bio, format="png", dpi=dpi, bbox_inches="tight")
     bio.seek(0)
     return bio.getvalue()
+
 def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     df2 = df.copy().fillna("").astype(str)
 
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    bold_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+    def load_font(path: str, size: int):
+        try:
+            return ImageFont.truetype(path, size=size)
+        except Exception:
+            return ImageFont.load_default()
+
     n_rows, n_cols = df2.shape
+    if n_cols == 0:
+        df2 = pd.DataFrame({"": [""]})
+        n_rows, n_cols = df2.shape
 
-    fig_w = max(9, min(14, n_cols * 2.2))
-    fig_h = max(2.8, min(10, (n_rows + 1) * 0.55 + 1.0))
+    if n_cols >= 9:
+        body_size = 22
+        header_size = 22
+        title_size = 34
+        max_total_w = 2600
+        min_col_w = 135
+        max_col_w = 360
+    elif n_cols >= 6:
+        body_size = 24
+        header_size = 24
+        title_size = 36
+        max_total_w = 2300
+        min_col_w = 150
+        max_col_w = 420
+    else:
+        body_size = 28
+        header_size = 28
+        title_size = 42
+        max_total_w = 1900
+        min_col_w = 180
+        max_col_w = 520
 
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    ax.axis("off")
+    body_font = load_font(font_path, body_size)
+    header_font = load_font(bold_path, header_size)
+    title_font = load_font(bold_path, title_size)
 
-    if title:
-        ax.set_title(title, fontsize=16, fontweight="bold", pad=12)
+    tmp_img = Image.new("RGB", (10, 10), "white")
+    draw = ImageDraw.Draw(tmp_img)
 
-    col_widths = [1.0 / n_cols] * n_cols
+    def text_w(text: str, font) -> int:
+        if text == "":
+            return 0
+        bbox = draw.textbbox((0, 0), str(text), font=font)
+        return bbox[2] - bbox[0]
 
-    tbl = ax.table(
-        cellText=df2.values,
-        colLabels=df2.columns,
-        cellLoc="center",
-        loc="center",
-        colWidths=col_widths
-    )
+    def text_h(font) -> int:
+        bbox = draw.textbbox((0, 0), "Ag", font=font)
+        return bbox[3] - bbox[1]
 
-    tbl.auto_set_font_size(False)
-    tbl.set_fontsize(11)
-    tbl.scale(1, 1.45)
+    def wrap_by_width(text: str, font, max_width: int) -> list:
+        text = str(text)
+        if text == "":
+            return [""]
+        output = []
+        for para in text.split("\n"):
+            words = para.split(" ")
+            lines = []
+            cur = ""
+            for word in words:
+                test = word if cur == "" else cur + " " + word
+                if text_w(test, font) <= max_width:
+                    cur = test
+                else:
+                    if cur:
+                        lines.append(cur)
+                        cur = word
+                    else:
+                        part = ""
+                        for ch in word:
+                            test_part = part + ch
+                            if text_w(test_part, font) <= max_width:
+                                part = test_part
+                            else:
+                                if part:
+                                    lines.append(part)
+                                part = ch
+                        cur = part
+            if cur or not lines:
+                lines.append(cur)
+            output.extend(lines)
+        return output if output else [""]
 
-    for (row, col), cell in tbl.get_celld().items():
-        cell.set_edgecolor("black")
-        cell.set_linewidth(0.8)
+    def is_numeric_like(series: pd.Series) -> bool:
+        converted = pd.to_numeric(series.replace("", np.nan), errors="coerce")
+        return converted.notna().mean() >= 0.75 if len(series) else False
 
-        if row == 0:
-            cell.set_text_props(weight="bold", fontsize=11)
-            cell.set_facecolor("#f2f2f2")
+    weights = []
+    for col in df2.columns:
+        col_texts = [str(col)] + df2[col].astype(str).tolist()
+        max_px = max(text_w(x, header_font if x == str(col) else body_font) for x in col_texts)
+        if is_numeric_like(df2[col]):
+            w = min(max_col_w * 0.75, max(min_col_w, max_px + 34))
         else:
-            cell.set_text_props(fontsize=11)
+            w = min(max_col_w, max(min_col_w, max_px + 40))
+        weights.append(w)
 
-        cell.get_text().set_wrap(True)
+    total_requested = sum(weights)
+    usable_w = min(max_total_w, max(900, int(total_requested)))
+    if total_requested > usable_w:
+        scale = usable_w / total_requested
+        col_widths = [max(min_col_w, int(w * scale)) for w in weights]
+        overflow = sum(col_widths) - usable_w
+        while overflow > 0 and any(w > min_col_w for w in col_widths):
+            for i in range(len(col_widths)):
+                if overflow <= 0:
+                    break
+                if col_widths[i] > min_col_w:
+                    col_widths[i] -= 1
+                    overflow -= 1
+    else:
+        col_widths = [int(w) for w in weights]
 
-    fig.tight_layout()
+    table_w = sum(col_widths)
+    pad_x = 16
+    pad_y = 10
+    line_gap = 4
+    header_line_h = text_h(header_font) + line_gap
+    body_line_h = text_h(body_font) + line_gap
+
+    wrapped_headers = [
+        wrap_by_width(str(col), header_font, max(40, col_widths[i] - 2 * pad_x))
+        for i, col in enumerate(df2.columns)
+    ]
+
+    wrapped_rows = []
+    for _, row in df2.iterrows():
+        wrapped_row = []
+        for i, val in enumerate(row.values):
+            wrapped_row.append(wrap_by_width(str(val), body_font, max(40, col_widths[i] - 2 * pad_x)))
+        wrapped_rows.append(wrapped_row)
+
+    header_h = max(48, max(len(lines) for lines in wrapped_headers) * header_line_h + 2 * pad_y)
+    row_heights = [
+        max(44, max(len(lines) for lines in row) * body_line_h + 2 * pad_y)
+        for row in wrapped_rows
+    ]
+
+    margin_x = 36
+    top_margin = 26
+    title_h = 0
+    if title:
+        title_h = text_h(title_font) + 42
+
+    img_w = table_w + 2 * margin_x
+    img_h = top_margin + title_h + header_h + sum(row_heights) + 36
+
+    img = Image.new("RGB", (img_w, img_h), "white")
+    draw = ImageDraw.Draw(img)
+
+    y = top_margin
+    if title:
+        title_text = str(title)
+        tw = text_w(title_text, title_font)
+        draw.text(((img_w - tw) // 2, y), title_text, font=title_font, fill="black")
+        y += title_h
+
+    x0 = margin_x
+    x = x0
+    for i, lines in enumerate(wrapped_headers):
+        draw.rectangle([x, y, x + col_widths[i], y + header_h], fill="#f2f2f2", outline="black", width=2)
+        block_h = len(lines) * header_line_h
+        ty = y + (header_h - block_h) // 2
+        for line in lines:
+            lw = text_w(line, header_font)
+            draw.text((x + (col_widths[i] - lw) // 2, ty), line, font=header_font, fill="black")
+            ty += header_line_h
+        x += col_widths[i]
+
+    y += header_h
+    for r, wrapped_row in enumerate(wrapped_rows):
+        row_h = row_heights[r]
+        x = x0
+        for i, lines in enumerate(wrapped_row):
+            draw.rectangle([x, y, x + col_widths[i], y + row_h], fill="white", outline="black", width=2)
+            block_h = len(lines) * body_line_h
+            ty = y + (row_h - block_h) // 2
+            for line in lines:
+                lw = text_w(line, body_font)
+                draw.text((x + (col_widths[i] - lw) // 2, ty), line, font=body_font, fill="black")
+                ty += body_line_h
+            x += col_widths[i]
+        y += row_h
 
     bio = io.BytesIO()
-    fig.savefig(bio, format="png", dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
+    img.save(bio, format="PNG")
     bio.seek(0)
     return bio.getvalue()
 
