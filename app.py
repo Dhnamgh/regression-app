@@ -235,11 +235,25 @@ def clean_cell(x):
         pass
     return x
 
-def compact_numeric_df(df: pd.DataFrame, decimals: int = 4) -> pd.DataFrame:
+def compact_numeric_df(df, decimals: int = 4):
+    """
+    Compact numeric formatting for both DataFrame and Series.
+    This avoids errors when the input is a Series and avoids issues with blank strings.
+    """
     out = df.copy()
+
+    if isinstance(out, pd.Series):
+        if pd.api.types.is_numeric_dtype(out):
+            out = out.round(decimals)
+        return out.map(clean_cell)
+
     for c in out.columns:
         if pd.api.types.is_numeric_dtype(out[c]):
             out[c] = out[c].round(decimals)
+
+    # pandas >= 2.1 supports DataFrame.map; older versions use applymap
+    if hasattr(out, "map"):
+        return out.map(clean_cell)
     return out.applymap(clean_cell)
 
 def clean_term_name(s: str) -> str:
@@ -550,53 +564,206 @@ def two_by_two_measures(obs2x2: np.ndarray, alpha=0.05) -> pd.DataFrame:
 # =========================================================
 # Logistic regression (statsmodels): SPSS-like "Variables in the Equation"
 # =========================================================
-def run_logistic_statsmodels(df: pd.DataFrame, target: str, features: List[str]) -> Dict[str, object]:
-    data = df[[target] + features].dropna().copy()
-    if data[target].nunique() != 2:
-        raise ValueError("Target must have exactly 2 unique values (e.g., 0/1).")
+def hosmer_lemeshow_table(y_true, y_prob, g=10):
+    """
+    SPSS-like Hosmer-Lemeshow test table.
+    Groups predicted probabilities into up to g groups and compares observed vs expected.
+    """
+    tmp = pd.DataFrame({"y": np.asarray(y_true, dtype=float), "p": np.asarray(y_prob, dtype=float)})
+    tmp = tmp.dropna()
 
-    y = data[target].astype(int)
-    X = data[features]
-    X_sm = sm.add_constant(X)
+    if tmp.empty or tmp["p"].nunique() < 2:
+        raise ValueError("Hosmer-Lemeshow test cannot be computed because predicted probabilities have insufficient variation.")
 
+    q = min(int(g), int(tmp["p"].nunique()), len(tmp))
+    tmp["group"] = pd.qcut(tmp["p"], q=q, duplicates="drop")
+
+    rows = []
+    chi2 = 0.0
+
+    for i, (_, d) in enumerate(tmp.groupby("group", observed=False), start=1):
+        n = int(len(d))
+        obs1 = float(d["y"].sum())
+        obs0 = float(n - obs1)
+        exp1 = float(d["p"].sum())
+        exp0 = float(n - exp1)
+
+        if exp1 > 0:
+            chi2 += (obs1 - exp1) ** 2 / exp1
+        if exp0 > 0:
+            chi2 += (obs0 - exp0) ** 2 / exp0
+
+        rows.append([i, obs0, exp0, obs1, exp1, n])
+
+    detail = pd.DataFrame(rows, columns=[
+        "Step", "Observed 0", "Expected 0", "Observed 1", "Expected 1", "Total"
+    ])
+
+    df_hl = max(len(detail) - 2, 1)
+    pval = float(stats.chi2.sf(chi2, df_hl))
+
+    summary = pd.DataFrame([[
+        "Hosmer and Lemeshow Test", chi2, df_hl, format_p_value(pval),
+        "Yes" if pval < 0.05 else "No"
+    ]], columns=["Test", "Chi-square", "df", "Sig.", "Significant (p<0.05)"])
+
+    return summary, detail
+
+
+def run_logistic_statsmodels(df: pd.DataFrame, target: str, features: List[str], cutoff: float = 0.5) -> Dict[str, object]:
+    """
+    Fit binary logistic regression and return SPSS-like output tables:
+    Case Processing Summary, Dependent Variable Encoding, Omnibus Tests,
+    Model Summary, Hosmer-Lemeshow, Classification Table, Variables in the Equation.
+    """
+    if not features:
+        raise ValueError("Please select at least one predictor.")
+
+    raw_n = int(len(df))
+    if raw_n == 0:
+        raise ValueError("Dataset is empty.")
+
+    data = df[[target] + features].copy()
+
+    # Convert blanks / spaces / non-numeric values to NaN, then drop them.
+    for col in data.columns:
+        data[col] = data[col].replace(r"^\s*$", np.nan, regex=True)
+        data[col] = pd.to_numeric(data[col], errors="coerce")
+
+    missing_any = data.isna().any(axis=1)
+    excluded_n = int(missing_any.sum())
+
+    data = data.dropna().copy()
+    included_n = int(len(data))
+
+    if included_n < 10:
+        raise ValueError("Not enough valid cases after removing missing/non-numeric values. At least 10 valid rows are recommended.")
+
+    unique_y = sorted(data[target].unique())
+    if len(unique_y) != 2:
+        raise ValueError("Target must have exactly 2 numeric values, preferably 0 and 1.")
+
+    # Convert target to internal 0/1 coding.
+    if set(unique_y) == {0, 1}:
+        y = data[target].astype(int)
+        encoding_rows = [["0", 0], ["1", 1]]
+    else:
+        mapping = {unique_y[0]: 0, unique_y[1]: 1}
+        y = data[target].map(mapping).astype(int)
+        encoding_rows = [[str(unique_y[0]), 0], [str(unique_y[1]), 1]]
+
+    X = data[features].astype(float)
+
+    # Case Processing Summary
+    case_summary = pd.DataFrame([
+        ["Selected Cases", "Included in Analysis", included_n, included_n / raw_n * 100 if raw_n else np.nan],
+        ["Selected Cases", "Missing Cases", excluded_n, excluded_n / raw_n * 100 if raw_n else np.nan],
+        ["Selected Cases", "Total", raw_n, 100.0],
+    ], columns=["", "", "N", "Percent"])
+
+    # Dependent Variable Encoding
+    encoding_tbl = pd.DataFrame(encoding_rows, columns=["Original Value", "Internal Value"])
+
+    # Null model and full model
+    X0 = sm.add_constant(pd.DataFrame(index=X.index), has_constant="add")
+    null_model = sm.Logit(y, X0).fit(disp=False)
+
+    X_sm = sm.add_constant(X, has_constant="add")
     model = sm.Logit(y, X_sm).fit(disp=False)
+
+    ll_null = float(null_model.llf)
+    ll_model = float(model.llf)
+    minus2ll = -2 * ll_model
+
+    chi2_model = -2 * (ll_null - ll_model)
+    df_model = int(len(features))
+    p_model = float(stats.chi2.sf(chi2_model, df_model))
+
+    # Omnibus Tests of Model Coefficients
+    omnibus_tbl = pd.DataFrame([
+        ["Step 1", "Step", chi2_model, df_model, format_p_value(p_model)],
+        ["Step 1", "Block", chi2_model, df_model, format_p_value(p_model)],
+        ["Step 1", "Model", chi2_model, df_model, format_p_value(p_model)],
+    ], columns=["Step", "", "Chi-square", "df", "Sig."])
+
+    # Model Summary
+    n = int(len(y))
+    cox_snell = 1 - np.exp((2 / n) * (ll_null - ll_model))
+    nagelkerke_den = 1 - np.exp((2 / n) * ll_null)
+    nagelkerke = cox_snell / nagelkerke_den if nagelkerke_den != 0 else np.nan
+
+    model_summary = pd.DataFrame([[
+        1,
+        minus2ll,
+        cox_snell,
+        nagelkerke
+    ]], columns=["Step", "-2 Log likelihood", "Cox & Snell R Square", "Nagelkerke R Square"])
+
+    # Variables in the Equation
     params = model.params
     conf = model.conf_int()
     pvals = model.pvalues
 
-    # SPSS-like table
-    tbl = pd.DataFrame({
-        "Term": params.index,
+    variables_tbl = pd.DataFrame({
+        "Variable": params.index,
         "B": params.values,
         "S.E.": model.bse.values,
         "Wald": (params.values / model.bse.values) ** 2,
         "df": 1,
         "Sig.": [format_p_value(p) for p in pvals.values],
         "Exp(B)": np.exp(params.values),
-        "95% CI for Exp(B) Lower": np.exp(conf[0].values),
-        "95% CI for Exp(B) Upper": np.exp(conf[1].values),
+        "95% C.I.for EXP(B) Lower": np.exp(conf[0].values),
+        "95% C.I.for EXP(B) Upper": np.exp(conf[1].values),
         "_praw": pvals.values
     })
 
-    # Hide Exp(B) CI for intercept
-    is_const = tbl["Term"].isin(["const", "Intercept"])
-    tbl.loc[is_const, ["Exp(B)", "95% CI for Exp(B) Lower", "95% CI for Exp(B) Upper"]] = ""
+    variables_tbl["Variable"] = variables_tbl["Variable"].replace({"const": "Constant", "Intercept": "Constant"})
+    is_const = variables_tbl["Variable"].eq("Constant")
+    variables_tbl.loc[is_const, ["Exp(B)", "95% C.I.for EXP(B) Lower", "95% C.I.for EXP(B) Upper"]] = np.nan
+    variables_tbl["Significant (p<0.05)"] = variables_tbl["_praw"].apply(lambda p: "Yes" if float(p) < 0.05 else "No")
+    variables_tbl = variables_tbl.drop(columns=["_praw"])
 
-    # Significant column last (Yes/No)
-    tbl["Significant (p<0.05)"] = tbl["_praw"].apply(lambda p: "Yes" if float(p) < 0.05 else "No")
-    tbl = tbl.drop(columns=["_praw"])
+    # Classification Table
+    probs = model.predict(X_sm)
+    pred = (probs >= cutoff).astype(int)
 
-    # Round numeric columns
-    for c in ["B", "S.E.", "Wald", "Exp(B)", "95% CI for Exp(B) Lower", "95% CI for Exp(B) Upper"]:
-        tbl[c] = pd.to_numeric(tbl[c], errors="coerce").round(4)
+    tn = int(((y == 0) & (pred == 0)).sum())
+    fp = int(((y == 0) & (pred == 1)).sum())
+    fn = int(((y == 1) & (pred == 0)).sum())
+    tp = int(((y == 1) & (pred == 1)).sum())
 
-    # Reorder columns (Sig before Significant)
-    tbl = tbl[[
-        "Term","B","S.E.","Wald","df","Sig.","Significant (p<0.05)","Exp(B)",
-        "95% CI for Exp(B) Lower","95% CI for Exp(B) Upper"
-    ]]
+    row0_total = tn + fp
+    row1_total = fn + tp
+    total = row0_total + row1_total
 
-    return {"model": model, "table": tbl.applymap(clean_cell), "y": y, "X": X}
+    classification_tbl = pd.DataFrame([
+        ["Step 1", "0", tn, fp, tn / row0_total * 100 if row0_total else np.nan],
+        ["Step 1", "1", fn, tp, tp / row1_total * 100 if row1_total else np.nan],
+        ["Step 1", "Overall Percentage", "", "", (tn + tp) / total * 100 if total else np.nan],
+    ], columns=["Step", "Observed", "Predicted 0", "Predicted 1", "Percentage Correct"])
+
+    classification_cutoff = pd.DataFrame([[
+        f"The cut value is {cutoff:.2f}"
+    ]], columns=["Classification cutoff"])
+
+    # Hosmer-Lemeshow
+    hl_tbl, hl_detail = hosmer_lemeshow_table(y, probs, g=10)
+
+    return {
+        "model": model,
+        "y": y,
+        "X": X,
+        "prob": probs,
+        "case_summary": compact_numeric_df(case_summary, 4),
+        "encoding": encoding_tbl,
+        "omnibus": compact_numeric_df(omnibus_tbl, 4),
+        "model_summary": compact_numeric_df(model_summary, 4),
+        "hosmer": compact_numeric_df(hl_tbl, 4),
+        "hosmer_detail": compact_numeric_df(hl_detail, 4),
+        "classification_cutoff": classification_cutoff,
+        "classification": compact_numeric_df(classification_tbl, 4),
+        "table": compact_numeric_df(variables_tbl, 4),
+    }
 
 
 # =========================================================
@@ -861,16 +1028,37 @@ elif section == "Logistic Regression":
 
         target = st.selectbox("Target column (binary 0/1)", options=cols)
         features = st.multiselect("Predictors (numeric)", options=[c for c in cols if c != target])
+        cutoff = st.slider("Classification cutoff", min_value=0.10, max_value=0.90, value=0.50, step=0.05)
 
         if st.button("Run Logistic Regression", type="primary", use_container_width=True):
             try:
-                res = run_logistic_statsmodels(df, target, features)
+                res = run_logistic_statsmodels(df, target, features, cutoff=cutoff)
 
-                # SPSS name
+                show_table(res["case_summary"], "Case Processing Summary")
+                download_table_block(res["case_summary"], "logistic_case_processing", "Case Processing Summary")
+
+                show_table(res["encoding"], "Dependent Variable Encoding")
+                download_table_block(res["encoding"], "logistic_dependent_variable_encoding", "Dependent Variable Encoding")
+
+                show_table(res["omnibus"], "Omnibus Tests of Model Coefficients")
+                download_table_block(res["omnibus"], "logistic_omnibus_tests", "Omnibus Tests")
+
+                show_table(res["model_summary"], "Model Summary")
+                download_table_block(res["model_summary"], "logistic_model_summary", "Model Summary")
+
+                show_table(res["hosmer"], "Hosmer and Lemeshow Test")
+                download_table_block(res["hosmer"], "logistic_hosmer_lemeshow", "Hosmer and Lemeshow Test")
+
+                show_table(res["hosmer_detail"], "Contingency Table for Hosmer and Lemeshow Test")
+                download_table_block(res["hosmer_detail"], "logistic_hosmer_detail", "Hosmer and Lemeshow Detail")
+
+                show_table(res["classification_cutoff"], "Classification Table Note")
+                show_table(res["classification"], "Classification Table")
+                download_table_block(res["classification"], "logistic_classification_table", "Classification Table")
+
                 show_table(res["table"], "Variables in the Equation")
                 download_table_block(res["table"], "logistic_variables_in_equation", "Variables in the Equation")
 
-                # ROC outputs
                 auc_tbl, roc_tbl, fig = roc_outputs(res["model"], res["y"], res["X"])
 
                 show_table(auc_tbl, "ROC — Area Under the Curve")
