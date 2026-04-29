@@ -205,48 +205,65 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
     bio.seek(0)
     return bio.getvalue()
 
-import matplotlib.pyplot as plt
-import pandas as pd
-import io
+def df_to_png_utils(df: pd.DataFrame, title: str = "", dpi: int = 200):
+    """
+    Hàm bổ trợ: Tự động chia nhỏ bảng nếu quá dài để giữ cỡ chữ to rõ.
+    Trả về danh sách các bytes hình ảnh.
+    """
+    import matplotlib.pyplot as plt
+    import io
 
-def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
-    # 1. Chuẩn bị dữ liệu
-    df2 = df.copy().fillna("-")
+    # Cấu hình số hàng tối đa trên mỗi ảnh để chữ không bị co
+    rows_per_page = 35 
+    total_rows = len(df)
+    pages = [df.iloc[i:i + rows_per_page] for i in range(0, total_rows, rows_per_page)]
     
-    # 2. Tạo Figure với kích thước tự động dựa trên số cột/hàng
-    # Càng nhiều hàng/cột thì ảnh càng to, tránh việc chữ bị co
-    fig, ax = plt.subplots(figsize=(len(df2.columns) * 2.5, len(df2) * 0.8 + 1))
-    ax.axis('off')
-    ax.axis('tight')
+    output_images = []
 
-    # 3. Vẽ bảng (Table) - Dùng style giống SPSS/Web
-    table = ax.table(
-        cellText=df2.values,
-        colLabels=df2.columns,
-        cellLoc='center',
-        loc='center'
-    )
+    for idx, page_df in enumerate(pages):
+        df_plot = page_df.copy().fillna("-")
+        n_rows, n_cols = df_plot.shape
+        
+        # Cố định chiều cao dựa trên số hàng để đảm bảo tỉ lệ chữ luôn đồng nhất
+        fig_width = max(10, n_cols * 2.5)
+        fig_height = n_rows * 0.5 + 2 # Công thức giữ chiều cao ổn định
+        
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        ax.axis('off')
+        ax.axis('tight')
 
-    # 4. Định dạng bảng: Tăng cỡ chữ cực lớn để không bị nhỏ
-    table.auto_set_font_size(False)
-    table.set_fontsize(14) # Cỡ chữ 14 trong matplotlib rất to và rõ
-    table.scale(1.2, 2.5)  # Scale (chiều ngang, chiều dọc) giúp ô thoáng như web
+        table = ax.table(
+            cellText=df_plot.values,
+            colLabels=df_plot.columns,
+            cellLoc='center',
+            loc='center'
+        )
 
-    # Tô màu header giống SPSS/Web
-    for (row, col), cell in table.get_celld().items():
-        if row == 0:
-            cell.set_text_props(weight='bold', color='black')
-            cell.set_facecolor('#f2f2f2') # Màu xám nhạt cho header
-        cell.set_edgecolor('#333333')
+        table.auto_set_font_size(False)
+        table.set_fontsize(14) 
+        table.scale(1, 1.8) # Độ giãn dòng vừa phải
 
-    if title:
-        plt.title(title, fontsize=18, pad=20, weight='bold')
+        # Định dạng Header
+        for (row, col), cell in table.get_celld().items():
+            cell.set_edgecolor('#333333')
+            if row == 0:
+                cell.set_text_props(weight='bold')
+                cell.set_facecolor('#f2f2f2')
 
-    # 5. Xuất hình
-    bio = io.BytesIO()
-    plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
-    return bio.getvalue()
+        # Thêm tiêu đề kèm số trang nếu bảng dài
+        page_title = title
+        if len(pages) > 1:
+            page_title += f" (Part {idx + 1})"
+        
+        if page_title:
+            plt.title(page_title, fontsize=18, pad=20, weight='bold')
+
+        bio = io.BytesIO()
+        plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.3)
+        plt.close(fig)
+        output_images.append(bio.getvalue())
+        
+    return output_images
 
 def download_table_block(df: pd.DataFrame, base_name: str, title: str = ""):
     c1, c2 = st.columns([1, 1])
