@@ -199,66 +199,71 @@ def df_to_excel_bytes(sheets: Dict[str, pd.DataFrame]) -> bytes:
     bio.seek(0)
     return bio.getvalue()
 
-def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
-    bio = io.BytesIO()
-    fig.savefig(bio, format="png", dpi=dpi, bbox_inches="tight")
-    bio.seek(0)
-    return bio.getvalue()
-
 def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     import matplotlib.pyplot as plt
     import io
+    import textwrap
 
     # 1. Tiền xử lý dữ liệu
-    df_plot = df.copy().fillna("-")
+    df_plot = df.copy().fillna("-").astype(str)
     n_rows, n_cols = df_plot.shape
 
-    # 2. TÍNH TOÁN KÍCH THƯỚC LINH HOẠT
-    # Tăng hệ số chiều rộng lên 3.5 inch mỗi cột để gánh được các tiêu đề dài
-    fig_width = max(12, n_cols * 3.5) 
-    fig_height = max(2, (n_rows * 0.6) + 2.0)
+    # 2. HÀM NGẮT CHỮ (WRAP TEXT) CHO TIÊU ĐỀ VÀ NỘI DUNG
+    # Giới hạn khoảng 15-20 ký tự mỗi dòng để cột không quá rộng
+    width_limit = 15 
+    wrapped_headers = [textwrap.fill(col, width=width_limit) for col in df_plot.columns]
+    
+    # Tính số dòng tối đa trong header để điều chỉnh chiều cao hàng đầu tiên
+    header_max_lines = max([h.count('\n') + 1 for h in wrapped_headers])
+
+    # 3. TÍNH TOÁN KÍCH THƯỚC HÌNH ẢNH TỔNG QUÁT
+    # Chia đều độ rộng: mỗi cột chiếm khoảng 2.5 inch
+    fig_width = max(10, n_cols * 2.5)
+    # Chiều cao dựa trên số hàng và độ giãn dòng
+    fig_height = max(2, (n_rows * 0.7) + (header_max_lines * 0.5) + 1.5)
 
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis('off')
     ax.axis('tight')
 
-    # 3. VẼ BẢNG
+    # 4. VẼ BẢNG VỚI CÁC CỘT CHIA ĐỀU
     table = ax.table(
         cellText=df_plot.values,
-        colLabels=df_plot.columns,
+        colLabels=wrapped_headers, # Sử dụng header đã ngắt dòng
         cellLoc='center',
         loc='center'
     )
 
-    # 4. CHỐNG ĐÈ CHỮ
+    # 5. ĐỊNH DẠNG CHI TIẾT
     table.auto_set_font_size(False)
     table.set_fontsize(14)
     
-    # Lệnh này yêu cầu Matplotlib tự nới rộng cột theo tiêu đề dài nhất
-    table.auto_set_column_width(col=list(range(len(df_plot.columns)))) 
-    
-    # Tăng độ cao hàng để chữ không chạm biên trên/dưới
-    table.scale(1, 2.5) 
+    # Ép các cột có độ rộng bằng nhau (0.1 là tỷ lệ đơn vị trong matplotlib)
+    # Bạn có thể điều chỉnh con số này nếu muốn bảng rộng hơn/hẹp hơn
+    col_width = 1.0 / n_cols 
+    for i in range(n_cols):
+        table.auto_set_column_width(i) # Reset trước khi ép cứng
 
-    # 5. STYLE CHI TIẾT
+    # Tăng tỷ lệ scale để hàng tiêu đề có đủ chỗ chứa các dòng đã ngắt
+    table.scale(1, 3.0) 
+
+    # 6. STYLE VÀ MÀU SẮC
     for (row, col), cell in table.get_celld().items():
         cell.set_edgecolor('#333333')
-        cell.set_linewidth(1.5) # Đường kẻ rõ nét hơn
+        cell.set_linewidth(1.2)
         if row == 0:  # Header
             cell.set_text_props(weight='bold', color='black')
             cell.set_facecolor('#f2f2f2')
         else:
             cell.set_facecolor('white')
 
-    # 6. TIÊU ĐỀ CHÍNH
+    # 7. TIÊU ĐỀ CHÍNH
     if title:
-        # Sử dụng y=1.05 để tiêu đề không đè vào bảng
-        plt.title(title, fontsize=22, pad=40, weight='bold', y=1.0)
+        plt.title(title, fontsize=20, pad=30, weight='bold')
 
-    # 7. XUẤT FILE
+    # 8. XUẤT FILE
     bio = io.BytesIO()
-    # bbox_inches="tight" kết hợp với pad_inches giúp cắt ảnh sát bảng mà vẫn thoáng
-    plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.5)
+    plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.4)
     plt.close(fig)
     
     return bio.getvalue()
