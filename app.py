@@ -206,6 +206,9 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
     return bio.getvalue()
 
 def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
+    """Export a DataFrame as a readable PNG table.
+    PNG is for presentation/quick sharing; Excel remains the full export for long tables.
+    """
     df2 = df.copy().fillna("").astype(str)
     if df2.shape[1] == 0:
         df2 = pd.DataFrame({"": [""]})
@@ -213,7 +216,6 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     total_rows, n_cols = df2.shape
     max_rows_png = 28
     truncated_msg = ""
-
     if total_rows > max_rows_png:
         truncated_msg = f"PNG shows first {max_rows_png} of {total_rows} rows. Download Excel for the full table."
         df2 = df2.head(max_rows_png).copy()
@@ -242,17 +244,20 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         except Exception:
             return ImageFont.load_default()
 
+    # --- ĐIỀU CHỈNH TỔNG QUÁT: Tăng cỡ chữ để không bị co nhỏ ---
     if n_cols <= 3:
-        body_size, header_size, title_size = 20, 22, 28
+        body_size, header_size, title_size = 36, 38, 48
     elif n_cols <= 6:
-        body_size, header_size, title_size = 18, 20, 26
+        body_size, header_size, title_size = 32, 34, 44
+    elif n_cols <= 10:
+        body_size, header_size, title_size = 28, 30, 40
     else:
-        body_size, header_size, title_size = 14, 16, 22
+        body_size, header_size, title_size = 24, 26, 36
 
     body_font = load_font(font_path, body_size)
     header_font = load_font(bold_path, header_size)
     title_font = load_font(bold_path, title_size)
-    note_font = load_font(font_path, 13)
+    note_font = load_font(font_path, max(18, body_size - 8))
 
     probe = Image.new("RGB", (10, 10), "white")
     draw = ImageDraw.Draw(probe)
@@ -266,30 +271,24 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
 
     def line_h(font) -> int:
         b = text_bbox("Ag", font)
-        return (b[3] - b[1]) + 8
+        return (b[3] - b[1]) + 10
 
     def wrap_text(text: str, font, max_width: int) -> list:
         text = str(text)
-        if not text:
-            return [""]
-
+        if not text: return [""]
         lines = []
         for para in text.split("\n"):
             words = para.split()
             if not words:
                 lines.append("")
                 continue
-
             cur = ""
             for word in words:
-                cand = word if cur == "" else cur + " " + word
-
+                cand = word if not cur else f"{cur} {word}"
                 if text_w(cand, font) <= max_width:
                     cur = cand
                 else:
-                    if cur:
-                        lines.append(cur)
-
+                    if cur: lines.append(cur)
                     if text_w(word, font) <= max_width:
                         cur = word
                     else:
@@ -299,73 +298,49 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
                             if text_w(cand_part, font) <= max_width:
                                 part = cand_part
                             else:
-                                if part:
-                                    lines.append(part)
+                                if part: lines.append(part)
                                 part = ch
                         cur = part
+            if cur: lines.append(cur)
+        return lines or [""]
 
-            if cur:
-                lines.append(cur)
+    # --- TĂNG KHOẢNG TRỐNG VÀ GIỚI HẠN CHIỀU RỘNG ---
+    pad_x = 45  # Lề ngang rộng giúp bảng thoáng
+    pad_y = 25  # Lề dọc rộng tạo độ cao cho hàng giống web
+    min_col_w = 220
+    max_col_w = 1200 # Cho phép bảng mở rộng để không ép chữ
 
-        return lines if lines else [""]
+    def is_numeric_like(series: pd.Series) -> bool:
+        converted = pd.to_numeric(series.replace("", np.nan), errors="coerce")
+        return converted.notna().mean() >= 0.75 if len(series) else False
 
-    pad_x = 30
-    pad_y = 20
-
-    min_col_w = 150
-    max_col_w = 800
-
+    numeric_cols = []
     col_widths = []
     for col in df2.columns:
-        vals = df2[col].tolist()
-        max_val_w = max([text_w(v, body_font) for v in vals], default=0)
+        is_num = is_numeric_like(df2[col])
+        numeric_cols.append(is_num)
+        vals = df2[col].astype(str).tolist()
+        max_val_w = max([text_w(v, body_font) for v in vals[:max_rows_png]], default=0)
         header_w = text_w(str(col), header_font)
-
+        
         ideal_w = max(max_val_w, header_w) + (2 * pad_x)
         width = max(min_col_w, min(ideal_w, max_col_w))
         col_widths.append(int(width))
 
-    header_lines = [
-        wrap_text(str(col), header_font, col_widths[i] - 2 * pad_x)
-        for i, col in enumerate(df2.columns)
-    ]
-
+    header_lines = [wrap_text(str(c), header_font, col_widths[i] - 2 * pad_x) for i, c in enumerate(df2.columns)]
     row_lines = []
     for _, row in df2.iterrows():
-        row_lines.append([
-            wrap_text(str(row.iloc[i]), body_font, col_widths[i] - 2 * pad_x)
-            for i in range(n_cols)
-        ])
+        row_lines.append([wrap_text(str(row.iloc[i]), body_font, col_widths[i] - 2 * pad_x) for i in range(n_cols)])
 
     header_lh = line_h(header_font)
     body_lh = line_h(body_font)
-
-    header_h = max(
-        header_lh + 2 * pad_y,
-        max(len(lines) for lines in header_lines) * header_lh + 2 * pad_y
-    )
-
-    row_heights = []
-    for row in row_lines:
-        h = max(
-            body_lh + 2 * pad_y,
-            max(len(lines) for lines in row) * body_lh + 2 * pad_y
-        )
-        row_heights.append(h)
+    header_h = max(header_lh + 2 * pad_y, max(len(x) for x in header_lines) * header_lh + 2 * pad_y)
+    row_heights = [max(body_lh + 2 * pad_y, max(len(x) for x in row) * body_lh + 2 * pad_y) for row in row_lines]
 
     table_w = sum(col_widths)
-
-    margin_x = 30
-    margin_y = 30
-
-    title_h = 0
-    if title:
-        title_h = line_h(title_font) + 20
-
-    note_h = 0
-    if truncated_msg:
-        note_h = line_h(note_font) + 20
-
+    margin_x, margin_y = 40, 40
+    title_h = line_h(title_font) + 25 if title else 0
+    note_h = line_h(note_font) + 20 if truncated_msg else 0
     img_w = table_w + 2 * margin_x
     img_h = margin_y + title_h + header_h + sum(row_heights) + note_h + margin_y
 
@@ -373,68 +348,42 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     draw = ImageDraw.Draw(img)
 
     y = margin_y
-
     if title:
         tw = text_w(title, title_font)
         draw.text(((img_w - tw) // 2, y), title, font=title_font, fill="black")
         y += title_h
 
-    border_w = 1
-
+    border_w = 2 # Đường viền dày hơn một chút cho sắc nét
     x = margin_x
     for i, lines in enumerate(header_lines):
-        draw.rectangle(
-            [x, y, x + col_widths[i], y + header_h],
-            fill="#f2f2f2",
-            outline="black",
-            width=border_w
-        )
-
+        draw.rectangle([x, y, x + col_widths[i], y + header_h], fill="#f2f2f2", outline="black", width=border_w)
         block_h = len(lines) * header_lh
         ty = y + (header_h - block_h) // 2
-
         for line in lines:
             lw = text_w(line, header_font)
-            draw.text(
-                (x + (col_widths[i] - lw) // 2, ty),
-                line,
-                font=header_font,
-                fill="black"
-            )
+            draw.text((x + (col_widths[i] - lw) // 2, ty), line, font=header_font, fill="black")
             ty += header_lh
-
         x += col_widths[i]
 
     y += header_h
-
     for r, row in enumerate(row_lines):
         row_h = row_heights[r]
         x = margin_x
-
         for i, lines in enumerate(row):
-            draw.rectangle(
-                [x, y, x + col_widths[i], y + row_h],
-                fill="white",
-                outline="black",
-                width=border_w
-            )
-
+            draw.rectangle([x, y, x + col_widths[i], y + row_h], fill="white", outline="black", width=border_w)
             block_h = len(lines) * body_lh
             ty = y + (row_h - block_h) // 2
-
             for line in lines:
                 lw = text_w(line, body_font)
-                tx = x + (col_widths[i] - lw) // 2
+                tx = x + (col_widths[i] - lw) // 2 if numeric_cols[i] else x + pad_x
                 draw.text((tx, ty), line, font=body_font, fill="black")
                 ty += body_lh
-
             x += col_widths[i]
-
         y += row_h
 
     if truncated_msg:
-        y += 10
-        draw.text((margin_x, y), truncated_msg, font=note_font, fill="#222222")
+        y += 15
+        draw.text((margin_x, y), truncated_msg, font=note_font, fill="#444444")
 
     bio = io.BytesIO()
     img.save(bio, format="PNG")
