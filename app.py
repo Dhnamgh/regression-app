@@ -242,9 +242,8 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         except Exception:
             return ImageFont.load_default()
 
-    # Giảm cỡ chữ xuống mức tiêu chuẩn (Web-style) để tránh bị co chữ
     if n_cols <= 3:
-        body_size, header_size, title_size = 22, 24, 30
+        body_size, header_size, title_size = 20, 22, 28
     elif n_cols <= 6:
         body_size, header_size, title_size = 18, 20, 26
     else:
@@ -253,25 +252,75 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     body_font = load_font(font_path, body_size)
     header_font = load_font(bold_path, header_size)
     title_font = load_font(bold_path, title_size)
-    note_font = load_font(font_path, max(12, body_size - 4))
+    note_font = load_font(font_path, 13)
 
-    # Tăng khoảng cách đệm và nới rộng giới hạn cột
-    pad_x = 35
+    probe = Image.new("RGB", (10, 10), "white")
+    draw = ImageDraw.Draw(probe)
+
+    def text_bbox(text: str, font):
+        return draw.textbbox((0, 0), str(text), font=font)
+
+    def text_w(text: str, font) -> int:
+        b = text_bbox(text, font)
+        return b[2] - b[0]
+
+    def line_h(font) -> int:
+        b = text_bbox("Ag", font)
+        return (b[3] - b[1]) + 8
+
+    def wrap_text(text: str, font, max_width: int) -> list:
+        text = str(text)
+        if not text:
+            return [""]
+
+        lines = []
+        for para in text.split("\n"):
+            words = para.split()
+            if not words:
+                lines.append("")
+                continue
+
+            cur = ""
+            for word in words:
+                cand = word if cur == "" else cur + " " + word
+
+                if text_w(cand, font) <= max_width:
+                    cur = cand
+                else:
+                    if cur:
+                        lines.append(cur)
+
+                    if text_w(word, font) <= max_width:
+                        cur = word
+                    else:
+                        part = ""
+                        for ch in word:
+                            cand_part = part + ch
+                            if text_w(cand_part, font) <= max_width:
+                                part = cand_part
+                            else:
+                                if part:
+                                    lines.append(part)
+                                part = ch
+                        cur = part
+
+            if cur:
+                lines.append(cur)
+
+        return lines if lines else [""]
+
+    pad_x = 30
     pad_y = 20
-    min_col_w = 180
-    max_col_w = 1000  # Cho phép cột mở rộng tối đa để không bị ép xuống dòng
 
-    numeric_cols = []
+    min_col_w = 150
+    max_col_w = 800
+
     col_widths = []
     for col in df2.columns:
-        is_num = is_numeric_like(df2[col])
-        numeric_cols.append(is_num)
-        vals = df2[col].astype(str).tolist()
-        
-        max_val_w = max([text_w(v, body_font) for v in vals[:max_rows_png]], default=0)
+        vals = df2[col].tolist()
+        max_val_w = max([text_w(v, body_font) for v in vals], default=0)
         header_w = text_w(str(col), header_font)
-        
-        # Tính toán độ rộng tự động dựa trên nội dung thực tế
+
         ideal_w = max(max_val_w, header_w) + (2 * pad_x)
         width = max(min_col_w, min(ideal_w, max_col_w))
         col_widths.append(int(width))
