@@ -215,34 +215,35 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     n_rows, n_cols = df_plot.shape
 
     # 2. CẤU HÌNH NGẮT DÒNG (WRAPPING)
-    # Giới hạn ký tự để ép xuống dòng nếu ô quá dài
     width_limit = 15 
     
-    # Hàm để tính số dòng thực tế sau khi wrap
     def get_line_count(text, width):
         if not text or text == "-": return 1
         lines = textwrap.wrap(text, width=width)
         return len(lines) if len(lines) > 0 else 1
 
-    # 3. TÍNH TOÁN CHIỀU CAO CHO TỪNG HÀNG (BAO GỒM CẢ HEADER VÀ DATA)
-    row_line_counts = []
-    
+    # 3. TÍNH TOÁN SỐ DÒNG THỰC TẾ TRONG TỪNG HÀNG
     # Tính cho Header
     header_max_lines = max([get_line_count(col, width_limit) for col in df_plot.columns])
     
     # Tính cho từng hàng dữ liệu
+    row_line_counts = []
     for _, row in df_plot.iterrows():
         max_lines_in_row = max([get_line_count(val, width_limit) for val in row])
         row_line_counts.append(max_lines_in_row)
 
-    # 4. THIẾT LẬP KÍCH THƯỚC ẢNH
-    line_unit_height = 0.35  # Chiều cao mỗi dòng chữ
-    padding = 0.5            # Khoảng đệm an toàn cho mỗi ô
+    # 4. THIẾT LẬP KÍCH THƯỚC HÌNH ẢNH (CHỐNG CO CHỮ)
+    line_unit_height = 0.35  # Chiều cao mỗi dòng chữ (inch)
+    padding = 0.5            # Khoảng đệm an toàn mỗi ô
     
-    h_height = (header_line_count * line_unit_height) + padding
+    # h_height: Chiều cao vùng header
+    h_height = (header_max_lines * line_unit_height) + padding
+    # b_height: Tổng chiều cao các hàng dữ liệu
     b_height = sum([(lc * line_unit_height) + padding for lc in row_line_counts])
     
+    # Chiều rộng ảnh tỉ lệ với số cột
     fig_width = max(12, n_cols * 2.5)
+    # Chiều cao ảnh = Header + Data + Lề cho Tiêu đề chính
     fig_height = h_height + b_height + 2.5 
 
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
@@ -262,20 +263,19 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         loc='center'
     )
 
-    # 7. ĐỊNH DẠNG CHI TIẾT Ô (FIX LỖI ĐÈ KHUNG)
+    # 7. CẤU HÌNH CHI TIẾT Ô (FIX LỖI NameError & ĐÈ KHUNG)
     table.auto_set_font_size(False)
     table.set_fontsize(14)
     
-    # Áp dụng chiều cao đã tính toán cho từng hàng
     for i in range(n_cols):
-        # Header
+        # Thiết lập chiều cao Header (sử dụng biến đã fix: header_max_lines)
         header_cell = table[0, i]
         header_cell.set_height(h_height / fig_height)
         
-        # Data rows
+        # Thiết lập chiều cao từng hàng dữ liệu
         for j in range(n_rows):
             cell = table[j+1, i]
-            # Tính toán chiều cao ô dựa trên số dòng của hàng đó
+            # Tỷ lệ chiều cao ô so với tổng chiều cao ảnh
             cell_h = (row_line_counts[j] * line_unit_height + padding) / fig_height
             cell.set_height(cell_h)
 
