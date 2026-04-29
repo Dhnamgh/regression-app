@@ -199,6 +199,12 @@ def df_to_excel_bytes(sheets: Dict[str, pd.DataFrame]) -> bytes:
     bio.seek(0)
     return bio.getvalue()
 
+def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
+    bio = io.BytesIO()
+    fig.savefig(bio, format="png", dpi=dpi, bbox_inches="tight")
+    bio.seek(0)
+    return bio.getvalue()
+
 def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     import matplotlib.pyplot as plt
     import io
