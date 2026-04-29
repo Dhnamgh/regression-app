@@ -206,10 +206,6 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
     return bio.getvalue()
 
 def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
-    """
-    Xuất DataFrame ra PNG với kích thước tự động co giãn theo số hàng.
-    Đảm bảo bảng dài không bị co chữ, bảng ngắn không bị thừa khoảng trống.
-    """
     import matplotlib.pyplot as plt
     import io
 
@@ -217,13 +213,11 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     df_plot = df.copy().fillna("-")
     n_rows, n_cols = df_plot.shape
 
-    # 2. TÍNH TOÁN KÍCH THƯỚC ẢNH LINH HOẠT
-    # Chiều rộng: n_cols * 2.5 inch (tối thiểu 10)
-    # Chiều cao: n_rows * 0.5 inch + phần bù cho tiêu đề (tối thiểu 2)
-    fig_width = max(10, n_cols * 2.5)
-    fig_height = max(2, (n_rows * 0.5) + 1.5)
+    # 2. TÍNH TOÁN KÍCH THƯỚC LINH HOẠT
+    # Tăng hệ số chiều rộng lên 3.5 inch mỗi cột để gánh được các tiêu đề dài
+    fig_width = max(12, n_cols * 3.5) 
+    fig_height = max(2, (n_rows * 0.6) + 2.0)
 
-    # Khởi tạo figure với kích thước đã tính
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis('off')
     ax.axis('tight')
@@ -236,28 +230,35 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         loc='center'
     )
 
-    # 4. ĐỊNH DẠNG ĐỂ CHỮ LUÔN TO RÕ
+    # 4. CHỐNG ĐÈ CHỮ
     table.auto_set_font_size(False)
-    table.set_fontsize(14)  # Cố định cỡ chữ 14 (rất rõ khi xuất file)
-    table.scale(1, 2.0)     # Độ giãn dòng 2.0 giúp bảng thoáng như SPSS
+    table.set_fontsize(14)
+    
+    # Lệnh này yêu cầu Matplotlib tự nới rộng cột theo tiêu đề dài nhất
+    table.auto_set_column_width(col=list(range(len(df_plot.columns)))) 
+    
+    # Tăng độ cao hàng để chữ không chạm biên trên/dưới
+    table.scale(1, 2.5) 
 
-    # 5. STYLE HEADER VÀ ĐƯỜNG KẺ
+    # 5. STYLE CHI TIẾT
     for (row, col), cell in table.get_celld().items():
-        cell.set_edgecolor('#333333') # Đường kẻ màu xám đậm sắc nét
+        cell.set_edgecolor('#333333')
+        cell.set_linewidth(1.5) # Đường kẻ rõ nét hơn
         if row == 0:  # Header
             cell.set_text_props(weight='bold', color='black')
-            cell.set_facecolor('#f2f2f2') # Màu nền header
+            cell.set_facecolor('#f2f2f2')
         else:
             cell.set_facecolor('white')
 
-    # 6. TIÊU ĐỀ
+    # 6. TIÊU ĐỀ CHÍNH
     if title:
-        plt.title(title, fontsize=20, pad=20, weight='bold')
+        # Sử dụng y=1.05 để tiêu đề không đè vào bảng
+        plt.title(title, fontsize=22, pad=40, weight='bold', y=1.0)
 
-    # 7. XUẤT RA BYTES
+    # 7. XUẤT FILE
     bio = io.BytesIO()
-    # bbox_inches="tight" cực kỳ quan trọng để cắt bỏ lề trắng thừa
-    plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.3)
+    # bbox_inches="tight" kết hợp với pad_inches giúp cắt ảnh sát bảng mà vẫn thoáng
+    plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.5)
     plt.close(fig)
     
     return bio.getvalue()
