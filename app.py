@@ -246,15 +246,13 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         body_size, header_size, title_size = 20, 22, 28
     elif n_cols <= 6:
         body_size, header_size, title_size = 18, 20, 26
-    elif n_cols <= 9:
-        body_size, header_size, title_size = 16, 18, 24
     else:
         body_size, header_size, title_size = 14, 16, 22
 
     body_font = load_font(font_path, body_size)
     header_font = load_font(bold_path, header_size)
     title_font = load_font(bold_path, title_size)
-    note_font = load_font(font_path, max(12, body_size - 2))
+    note_font = load_font(font_path, 13)
 
     probe = Image.new("RGB", (10, 10), "white")
     draw = ImageDraw.Draw(probe)
@@ -284,7 +282,8 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
 
             cur = ""
             for word in words:
-                cand = word if not cur else f"{cur} {word}"
+                cand = word if cur == "" else cur + " " + word
+
                 if text_w(cand, font) <= max_width:
                     cur = cand
                 else:
@@ -308,26 +307,27 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
             if cur:
                 lines.append(cur)
 
-        return lines or [""]
+        return lines if lines else [""]
 
     pad_x = 30
-    pad_y = 18
+    pad_y = 20
+
     min_col_w = 150
     max_col_w = 800
 
     col_widths = []
     for col in df2.columns:
-        vals = df2[col].astype(str).tolist()
+        vals = df2[col].tolist()
         max_val_w = max([text_w(v, body_font) for v in vals], default=0)
         header_w = text_w(str(col), header_font)
 
-        ideal_w = max(max_val_w, header_w) + 2 * pad_x
+        ideal_w = max(max_val_w, header_w) + (2 * pad_x)
         width = max(min_col_w, min(ideal_w, max_col_w))
         col_widths.append(int(width))
 
     header_lines = [
-        wrap_text(str(c), header_font, col_widths[i] - 2 * pad_x)
-        for i, c in enumerate(df2.columns)
+        wrap_text(str(col), header_font, col_widths[i] - 2 * pad_x)
+        for i, col in enumerate(df2.columns)
     ]
 
     row_lines = []
@@ -342,23 +342,29 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
 
     header_h = max(
         header_lh + 2 * pad_y,
-        max(len(x) for x in header_lines) * header_lh + 2 * pad_y
+        max(len(lines) for lines in header_lines) * header_lh + 2 * pad_y
     )
 
-    row_heights = [
-        max(
+    row_heights = []
+    for row in row_lines:
+        h = max(
             body_lh + 2 * pad_y,
-            max(len(x) for x in row) * body_lh + 2 * pad_y
+            max(len(lines) for lines in row) * body_lh + 2 * pad_y
         )
-        for row in row_lines
-    ]
+        row_heights.append(h)
 
     table_w = sum(col_widths)
-    margin_x = 30
-    margin_y = 28
 
-    title_h = line_h(title_font) + 18 if title else 0
-    note_h = line_h(note_font) + 14 if truncated_msg else 0
+    margin_x = 30
+    margin_y = 30
+
+    title_h = 0
+    if title:
+        title_h = line_h(title_font) + 20
+
+    note_h = 0
+    if truncated_msg:
+        note_h = line_h(note_font) + 20
 
     img_w = table_w + 2 * margin_x
     img_h = margin_y + title_h + header_h + sum(row_heights) + note_h + margin_y
@@ -369,12 +375,9 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     y = margin_y
 
     if title:
-        title_lines = wrap_text(title, title_font, img_w - 2 * margin_x)
-        for line in title_lines:
-            tw = text_w(line, title_font)
-            draw.text(((img_w - tw) // 2, y), line, font=title_font, fill="black")
-            y += line_h(title_font)
-        y += 10
+        tw = text_w(title, title_font)
+        draw.text(((img_w - tw) // 2, y), title, font=title_font, fill="black")
+        y += title_h
 
     border_w = 1
 
@@ -430,7 +433,7 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         y += row_h
 
     if truncated_msg:
-        y += 12
+        y += 10
         draw.text((margin_x, y), truncated_msg, font=note_font, fill="#222222")
 
     bio = io.BytesIO()
