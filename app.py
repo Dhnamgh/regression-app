@@ -214,61 +214,72 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     df_plot = df.copy().fillna("-").astype(str)
     n_rows, n_cols = df_plot.shape
 
-    # 2. NGẮT DÒNG CHO TIÊU ĐỀ VÀ DỮ LIỆU (Tối ưu độ rộng cột)
+    # 2. CẤU HÌNH NGẮT DÒNG (WRAPPING)
+    # Giới hạn ký tự để ép xuống dòng nếu ô quá dài
     width_limit = 15 
-    wrapped_headers = [textwrap.fill(col, width=width_limit) for col in df_plot.columns]
     
-    # Tính số dòng chữ thực tế trong mỗi hàng dữ liệu để cấp đủ không gian
-    row_line_counts = []
-    for _, row in df_plot.iterrows():
-        # Kiểm tra xem trong hàng đó, cột nào có nhiều dòng nhất (nếu dữ liệu cũng wrap)
-        max_lines_in_row = max([str(val).count('\n') + 1 for val in row])
-        row_line_counts.append(max_lines_in_row)
-    
-    header_line_count = max([h.count('\n') + 1 for h in wrapped_headers])
+    # Hàm để tính số dòng thực tế sau khi wrap
+    def get_line_count(text, width):
+        if not text or text == "-": return 1
+        lines = textwrap.wrap(text, width=width)
+        return len(lines) if len(lines) > 0 else 1
 
-    # 3. CHIẾN LƯỢC TÍNH CHIỀU CAO LINH HOẠT (Chống đè khung)
-    line_unit_height = 0.35  # Chiều cao cho mỗi dòng chữ
-    padding = 0.4            # Khoảng đệm cho mỗi hàng
+    # 3. TÍNH TOÁN CHIỀU CAO CHO TỪNG HÀNG (BAO GỒM CẢ HEADER VÀ DATA)
+    row_line_counts = []
     
-    # Chiều cao header = (số dòng trong header * đơn vị) + đệm
+    # Tính cho Header
+    header_max_lines = max([get_line_count(col, width_limit) for col in df_plot.columns])
+    
+    # Tính cho từng hàng dữ liệu
+    for _, row in df_plot.iterrows():
+        max_lines_in_row = max([get_line_count(val, width_limit) for val in row])
+        row_line_counts.append(max_lines_in_row)
+
+    # 4. THIẾT LẬP KÍCH THƯỚC ẢNH
+    line_unit_height = 0.35  # Chiều cao mỗi dòng chữ
+    padding = 0.5            # Khoảng đệm an toàn cho mỗi ô
+    
     h_height = (header_line_count * line_unit_height) + padding
-    # Chiều cao thân bảng = Tổng (số dòng mỗi hàng * đơn vị + đệm)
     b_height = sum([(lc * line_unit_height) + padding for lc in row_line_counts])
     
     fig_width = max(12, n_cols * 2.5)
-    fig_height = h_height + b_height + 2.0 # Cộng thêm lề cho tiêu đề chính
+    fig_height = h_height + b_height + 2.5 
 
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis('off')
-    ax.axis('tight')
 
-    # 4. VẼ BẢNG
+    # 5. CHUẨN BỊ NỘI DUNG ĐÃ WRAP
+    wrapped_headers = [textwrap.fill(col, width=width_limit) for col in df_plot.columns]
+    wrapped_data = []
+    for _, row in df_plot.iterrows():
+        wrapped_data.append([textwrap.fill(val, width=width_limit) for val in row])
+
+    # 6. VẼ BẢNG
     table = ax.table(
-        cellText=df_plot.values,
+        cellText=wrapped_data,
         colLabels=wrapped_headers,
         cellLoc='center',
         loc='center'
     )
 
-    # 5. ĐỊNH DẠNG FONT VÀ SCALE
+    # 7. ĐỊNH DẠNG CHI TIẾT Ô (FIX LỖI ĐÈ KHUNG)
     table.auto_set_font_size(False)
     table.set_fontsize(14)
     
-    # Điều chỉnh chiều cao từng ô theo số dòng chữ của nó
-    for i, col_name in enumerate(df_plot.columns):
-        # Chỉnh Header
+    # Áp dụng chiều cao đã tính toán cho từng hàng
+    for i in range(n_cols):
+        # Header
         header_cell = table[0, i]
         header_cell.set_height(h_height / fig_height)
         
-        # Chỉnh các hàng dữ liệu
+        # Data rows
         for j in range(n_rows):
             cell = table[j+1, i]
-            # Chiều cao ô tỉ lệ thuận với số dòng chữ trong hàng đó
+            # Tính toán chiều cao ô dựa trên số dòng của hàng đó
             cell_h = (row_line_counts[j] * line_unit_height + padding) / fig_height
             cell.set_height(cell_h)
 
-    # 6. STYLE CHI TIẾT
+    # 8. STYLE
     for (row, col), cell in table.get_celld().items():
         cell.set_edgecolor('#333333')
         cell.set_linewidth(1.2)
@@ -278,13 +289,12 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         else:
             cell.set_facecolor('white')
 
-    # 7. TIÊU ĐỀ CHÍNH
     if title:
-        plt.title(title, fontsize=22, pad=50, weight='bold')
+        plt.title(title, fontsize=22, pad=60, weight='bold')
 
-    # 8. XUẤT FILE
+    # 9. XUẤT FILE
     bio = io.BytesIO()
-    plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.5)
+    plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.6)
     plt.close(fig)
     
     return bio.getvalue()
