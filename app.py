@@ -205,65 +205,62 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
     bio.seek(0)
     return bio.getvalue()
 
-def df_to_png_utils(df: pd.DataFrame, title: str = "", dpi: int = 200):
+def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
     """
-    Hàm bổ trợ: Tự động chia nhỏ bảng nếu quá dài để giữ cỡ chữ to rõ.
-    Trả về danh sách các bytes hình ảnh.
+    Xuất DataFrame ra PNG với kích thước tự động co giãn theo số hàng.
+    Đảm bảo bảng dài không bị co chữ, bảng ngắn không bị thừa khoảng trống.
     """
     import matplotlib.pyplot as plt
     import io
 
-    # Cấu hình số hàng tối đa trên mỗi ảnh để chữ không bị co
-    rows_per_page = 35 
-    total_rows = len(df)
-    pages = [df.iloc[i:i + rows_per_page] for i in range(0, total_rows, rows_per_page)]
+    # 1. Tiền xử lý dữ liệu
+    df_plot = df.copy().fillna("-")
+    n_rows, n_cols = df_plot.shape
+
+    # 2. TÍNH TOÁN KÍCH THƯỚC ẢNH LINH HOẠT
+    # Chiều rộng: n_cols * 2.5 inch (tối thiểu 10)
+    # Chiều cao: n_rows * 0.5 inch + phần bù cho tiêu đề (tối thiểu 2)
+    fig_width = max(10, n_cols * 2.5)
+    fig_height = max(2, (n_rows * 0.5) + 1.5)
+
+    # Khởi tạo figure với kích thước đã tính
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    ax.axis('off')
+    ax.axis('tight')
+
+    # 3. VẼ BẢNG
+    table = ax.table(
+        cellText=df_plot.values,
+        colLabels=df_plot.columns,
+        cellLoc='center',
+        loc='center'
+    )
+
+    # 4. ĐỊNH DẠNG ĐỂ CHỮ LUÔN TO RÕ
+    table.auto_set_font_size(False)
+    table.set_fontsize(14)  # Cố định cỡ chữ 14 (rất rõ khi xuất file)
+    table.scale(1, 2.0)     # Độ giãn dòng 2.0 giúp bảng thoáng như SPSS
+
+    # 5. STYLE HEADER VÀ ĐƯỜNG KẺ
+    for (row, col), cell in table.get_celld().items():
+        cell.set_edgecolor('#333333') # Đường kẻ màu xám đậm sắc nét
+        if row == 0:  # Header
+            cell.set_text_props(weight='bold', color='black')
+            cell.set_facecolor('#f2f2f2') # Màu nền header
+        else:
+            cell.set_facecolor('white')
+
+    # 6. TIÊU ĐỀ
+    if title:
+        plt.title(title, fontsize=20, pad=20, weight='bold')
+
+    # 7. XUẤT RA BYTES
+    bio = io.BytesIO()
+    # bbox_inches="tight" cực kỳ quan trọng để cắt bỏ lề trắng thừa
+    plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.3)
+    plt.close(fig)
     
-    output_images = []
-
-    for idx, page_df in enumerate(pages):
-        df_plot = page_df.copy().fillna("-")
-        n_rows, n_cols = df_plot.shape
-        
-        # Cố định chiều cao dựa trên số hàng để đảm bảo tỉ lệ chữ luôn đồng nhất
-        fig_width = max(10, n_cols * 2.5)
-        fig_height = n_rows * 0.5 + 2 # Công thức giữ chiều cao ổn định
-        
-        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-        ax.axis('off')
-        ax.axis('tight')
-
-        table = ax.table(
-            cellText=df_plot.values,
-            colLabels=df_plot.columns,
-            cellLoc='center',
-            loc='center'
-        )
-
-        table.auto_set_font_size(False)
-        table.set_fontsize(14) 
-        table.scale(1, 1.8) # Độ giãn dòng vừa phải
-
-        # Định dạng Header
-        for (row, col), cell in table.get_celld().items():
-            cell.set_edgecolor('#333333')
-            if row == 0:
-                cell.set_text_props(weight='bold')
-                cell.set_facecolor('#f2f2f2')
-
-        # Thêm tiêu đề kèm số trang nếu bảng dài
-        page_title = title
-        if len(pages) > 1:
-            page_title += f" (Part {idx + 1})"
-        
-        if page_title:
-            plt.title(page_title, fontsize=18, pad=20, weight='bold')
-
-        bio = io.BytesIO()
-        plt.savefig(bio, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.3)
-        plt.close(fig)
-        output_images.append(bio.getvalue())
-        
-    return output_images
+    return bio.getvalue()
 
 def download_table_block(df: pd.DataFrame, base_name: str, title: str = ""):
     c1, c2 = st.columns([1, 1])
