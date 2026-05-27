@@ -10,6 +10,22 @@ import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
 
+hide_streamlit_style = """
+<style>
+
+#MainMenu {visibility:hidden;}
+footer {visibility:hidden;}
+header {visibility:hidden;}
+.stDeployButton {display:none;}
+[data-testid="stToolbar"] {display:none;}
+[data-testid="stDecoration"] {display:none;}
+[data-testid="stStatusWidget"] {display:none;}
+
+</style>
+"""
+
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 
 # ===== LOGIN =====
 def check_password():
