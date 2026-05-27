@@ -1,9 +1,3 @@
-# app.py
-# =========================================================
-# Data Analysis in Health Sciences
-# Single-file Streamlit app (stable: expanders + buttons)
-# =========================================================
-
 import io
 import math
 import os
@@ -16,6 +10,39 @@ import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
 
+
+# ===== LOGIN =====
+def check_password():
+
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    if st.session_state.authenticated:
+        return True
+
+    st.title("🔒 Đăng nhập")
+
+    password = st.text_input(
+        "Nhập mật khẩu",
+        type="password"
+    )
+
+    if st.button("Đăng nhập"):
+
+        if password == st.secrets["APP_PASSWORD"]:
+            st.session_state.authenticated = True
+            st.rerun()
+
+        else:
+            st.error("Sai mật khẩu")
+
+    return False
+
+
+if not check_password():
+    st.stop()
+
+
 from scipy import stats
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
@@ -24,9 +51,10 @@ from statsmodels.stats.contingency_tables import StratifiedTable
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
 
-# =========================================================
+# =====================================================
 # Page config
-# =========================================================
+# =====================================================
+
 st.set_page_config(
     page_title="Data Analysis in Health Sciences",
     page_icon="📊",
