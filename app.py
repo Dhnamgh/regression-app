@@ -87,6 +87,17 @@ st.set_page_config(
 st.markdown(
     """
 <style>
+#MainMenu {display:none !important;}
+header {display:none !important;}
+footer {display:none !important;}
+[data-testid="stToolbar"] {display:none !important;}
+[data-testid="stDecoration"] {display:none !important;}
+[data-testid="stStatusWidget"] {display:none !important;}
+[data-testid="stFooter"] {display:none !important;}
+.viewerBadge_container__1QSob {display:none !important;}
+.viewerBadge_link__1S137 {display:none !important;}
+.viewerBadge_container__r5tak {display:none !important;}
+a[href*="streamlit.io"] {display:none !important;}
 /* Sidebar background */
 section[data-testid="stSidebar"]{
   background: linear-gradient(180deg, #0B3A66 0%, #0A2D4E 100%);
