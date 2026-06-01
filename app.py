@@ -322,12 +322,12 @@ def df_to_png_bytes(df: pd.DataFrame, title: str = "", dpi: int = 200) -> bytes:
         loc='center'
     )
 
-    # 7. CẤU HÌNH CHI TIẾT Ô (FIX LỖI NameError & ĐÈ KHUNG)
+    # 7. CẤU HÌNH CHI TIẾT Ô 
     table.auto_set_font_size(False)
     table.set_fontsize(14)
     
     for i in range(n_cols):
-        # Thiết lập chiều cao Header (sử dụng biến đã fix: header_max_lines)
+        # Thiết lập chiều cao Header 
         header_cell = table[0, i]
         header_cell.set_height(h_height / fig_height)
         
@@ -1085,13 +1085,8 @@ def bootstrap_ci(x: np.ndarray, func, n_boot=5000, alpha=0.05, seed=123) -> Tupl
     hi = float(np.quantile(stats_, 1 - alpha/2))
     return lo, hi
 
-
-
-
 def numeric_series_from_df(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce").dropna()
-
-
 
 def selectbox_default(label, options, default=None, key=None):
     options = list(options)
