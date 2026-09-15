@@ -2658,12 +2658,13 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
         if x is None or len(x) < 2:
             st.info("Provide at least 2 numeric values.")
         else:
-             # --- Bổ sung Thống kê mô tả đầy đủ ---
+             # --- Bổ sung Thống kê mô tả & Kiểm định chuẩn ---
+            from scipy import stats
+    
             s_x = pd.Series(x)
             mode_vals = s_x.mode().tolist()
             mode_str = ", ".join(map(str, [round(m, 4) for m in mode_vals])) if mode_vals else "N/A"
     
-            # Tính toán các chỉ số mới
             min_val = float(s_x.min())
             max_val = float(s_x.max())
             r_val = max_val - min_val
@@ -2675,12 +2676,20 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
             lower_bound = q1 - 1.5 * iqr
             upper_bound = q3 + 1.5 * iqr
     
-            # Tìm các giá trị ngoại lai (outliers)
             outliers = s_x[(s_x < lower_bound) | (s_x > upper_bound)].tolist()
             if outliers:
                 outliers_str = f"Có ({len(outliers)}): " + ", ".join(map(str, [round(o, 4) for o in outliers]))
             else:
                 outliers_str = "Không"
+    
+            # Kiểm định phân phối chuẩn (Shapiro-Wilk)
+            if len(s_x) >= 3:
+                stat_norm, p_norm = stats.shapiro(s_x)
+                is_normal = "Có" if p_norm >= 0.05 else "Không"
+                p_norm_str = f"{p_norm:.4f}"
+            else:
+                is_normal = "N/A"
+                p_norm_str = "N/A (n < 3)"
     
             desc_df = pd.DataFrame([{
                 "n": len(s_x),
@@ -2695,12 +2704,14 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
                 "Q1": round(q1, 4),
                 "Q3": round(q3, 4),
                 "IQR": round(iqr, 4),
-                "[Q1-1.5IQR, Q3+1.5IQR]": f"[{round(lower_bound, 4)}, {round(upper_bound, 4)}]",
-                "Outliers": outliers_str
+                "[Q1-1.5IQR; Q3+1.5IQR]": f"[{round(lower_bound, 4)}; {round(upper_bound, 4)}]",
+                "Outliers": outliers_str,
+                "Phân phối chuẩn": is_normal,
+                "p-value (Normality)": p_norm_str
             }])
             show_table(desc_df, "Descriptive Statistics")
             download_table_block(desc_df, "descriptive_stats", "Descriptive Statistics")
-            # -------------------------------------
+            # ------------------------------------------------
             try:
                 use_boot = force_boot or (decision == "Non-normal")
 
