@@ -2629,7 +2629,7 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
             else:
                 x = pd.to_numeric(df["X"], errors="coerce").dropna().values
     else:
-        txt = st.text_area("Paste numeric values (comma/space/newline separated)", height=120)
+        txt = st.text_area("Paste numeric values (separated by , ; space or newline)", height=120)
         if txt.strip():
             parts = [p for p in txt.replace(",", " ").replace(";", " ").split() if p.strip()]
             vals = pd.to_numeric(pd.Series(parts), errors="coerce").dropna()
