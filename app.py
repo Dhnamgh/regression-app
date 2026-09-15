@@ -2658,11 +2658,30 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
         if x is None or len(x) < 2:
             st.info("Provide at least 2 numeric values.")
         else:
-             # --- Bổ sung Thống kê mô tả ---
+             # --- Bổ sung Thống kê mô tả đầy đủ ---
             s_x = pd.Series(x)
             mode_vals = s_x.mode().tolist()
             mode_str = ", ".join(map(str, [round(m, 4) for m in mode_vals])) if mode_vals else "N/A"
-
+    
+            # Tính toán các chỉ số mới
+            min_val = float(s_x.min())
+            max_val = float(s_x.max())
+            r_val = max_val - min_val
+    
+            q1 = float(s_x.quantile(0.25))
+            q3 = float(s_x.quantile(0.75))
+            iqr = q3 - q1
+    
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+    
+            # Tìm các giá trị ngoại lai (outliers)
+            outliers = s_x[(s_x < lower_bound) | (s_x > upper_bound)].tolist()
+            if outliers:
+                outliers_str = f"Có ({len(outliers)}): " + ", ".join(map(str, [round(o, 4) for o in outliers]))
+            else:
+                outliers_str = "Không"
+    
             desc_df = pd.DataFrame([{
                 "n": len(s_x),
                 "Mean": round(s_x.mean(), 4),
@@ -2670,12 +2689,18 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
                 "Median (Q2)": round(s_x.median(), 4),
                 "s": round(s_x.std(ddof=1), 4) if len(s_x) > 1 else 0,
                 "s²": round(s_x.var(ddof=1), 4) if len(s_x) > 1 else 0,
-                "Q1": round(s_x.quantile(0.25), 4),
-                "Q3": round(s_x.quantile(0.75), 4)
+                "Min": round(min_val, 4),
+                "Max": round(max_val, 4),
+                "R (Max-Min)": round(r_val, 4),
+                "Q1": round(q1, 4),
+                "Q3": round(q3, 4),
+                "IQR": round(iqr, 4),
+                "KGH IQR [Q1-1.5IQR, Q3+1.5IQR]": f"[{round(lower_bound, 4)}, {round(upper_bound, 4)}]",
+                "Outliers": outliers_str
             }])
             show_table(desc_df, "Descriptive Statistics")
             download_table_block(desc_df, "descriptive_stats", "Descriptive Statistics")
-            # -------------------------------
+            # -------------------------------------
             try:
                 use_boot = force_boot or (decision == "Non-normal")
 
