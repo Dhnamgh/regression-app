@@ -2658,6 +2658,24 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
         if x is None or len(x) < 2:
             st.info("Provide at least 2 numeric values.")
         else:
+             # --- Bổ sung Thống kê mô tả ---
+            s_x = pd.Series(x)
+            mode_vals = s_x.mode().tolist()
+            mode_str = ", ".join(map(str, [round(m, 4) for m in mode_vals])) if mode_vals else "N/A"
+
+            desc_df = pd.DataFrame([{
+                "n": len(s_x),
+                "Mean": round(s_x.mean(), 4),
+                "Mode": mode_str,
+                "Median (Q2)": round(s_x.median(), 4),
+                "s": round(s_x.std(ddof=1), 4) if len(s_x) > 1 else 0,
+                "s²": round(s_x.var(ddof=1), 4) if len(s_x) > 1 else 0,
+                "Q1": round(s_x.quantile(0.25), 4),
+                "Q3": round(s_x.quantile(0.75), 4)
+            }])
+            show_table(desc_df, "Descriptive Statistics")
+            download_table_block(desc_df, "descriptive_stats", "Descriptive Statistics")
+            # -------------------------------
             try:
                 use_boot = force_boot or (decision == "Non-normal")
 
