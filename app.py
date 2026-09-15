@@ -2695,7 +2695,7 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
                 "Q1": round(q1, 4),
                 "Q3": round(q3, 4),
                 "IQR": round(iqr, 4),
-                "KGH IQR [Q1-1.5IQR, Q3+1.5IQR]": f"[{round(lower_bound, 4)}, {round(upper_bound, 4)}]",
+                "[Q1-1.5IQR, Q3+1.5IQR]": f"[{round(lower_bound, 4)}, {round(upper_bound, 4)}]",
                 "Outliers": outliers_str
             }])
             show_table(desc_df, "Descriptive Statistics")
