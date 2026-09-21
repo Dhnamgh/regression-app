@@ -1,0 +1,59 @@
+name: Wake Up App
+
+on:
+  schedule:
+    # 22:45 UTC = 05:45 sáng VN (chuẩn bị ca sáng)
+    - cron: '45 22 * * 0-5'
+    # 05:30 UTC = 12:30 trưa VN (chuẩn bị ca chiều)
+    - cron: '30 5 * * 0-5'
+    # 09:45 UTC = 16:45 chiều VN (chuẩn bị ca tối)
+    - cron: '45 9 * * 0-5'
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install requests urllib3
+
+      - name: Ping and Wake Apps
+        run: |
+          python - << 'EOF'
+          import requests
+
+          apps = [
+              "ump-smartattend",
+              "ump-attendance",
+              "font-converter",
+              "regression-myapp"
+          ]
+
+          headers = {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+          }
+
+          for app in apps:
+              url = f"https://{app}.streamlit.app/"
+              print(f"--- Đang gửi tín hiệu tới: {url} ---")
+              try:
+                  # 1. Gửi request đến trang chính
+                  res = requests.get(url, headers=headers, timeout=30)
+                  print(f"Trang chính: {res.status_code}")
+
+                  # 2. Gửi tín hiệu đánh thức qua endpoint nội bộ nếu đang ngủ
+                  wake_url = f"https://share.streamlit.io/api/v1/apps/{app}/wake"
+                  wake_res = requests.post(wake_url, headers=headers, timeout=15)
+                  print(f"Tín hiệu Wake-up: {wake_res.status_code}")
+              except Exception as e:
+                  print(f"Lỗi: {e}")
+
+          print("Đã hoàn tất gửi tín hiệu đánh thức cho toàn bộ ứng dụng!")
+          EOF
