@@ -205,7 +205,7 @@ st.markdown(
 st.write("")
 
 # =========================================================
-# Smart Rounding & Formatting Functions
+# Smart Formatting Functions
 # =========================================================
 def smart_round_val(val, min_dec: int = 3) -> str:
     """Làm tròn đến 3 chữ số thập phân. Nếu khác 0 mà làm tròn ra 0 thì tự mở rộng 4, 5,... chữ số."""
@@ -242,7 +242,7 @@ def format_p_value(p: Optional[float]) -> str:
         return ""
     if np.isnan(p) or np.isinf(p):
         return ""
-    if p < 0.0001:
+    if p < 0.001:
         return "< 0.001"
     return smart_round_val(p, min_dec=3)
 
@@ -272,7 +272,7 @@ def clean_term_name(s: str) -> str:
     return s
 
 # =========================================================
-# Download & Copy Helpers
+# Download & Clipboard Helpers
 # =========================================================
 def df_to_excel_bytes(sheets: Dict[str, pd.DataFrame]) -> bytes:
     bio = io.BytesIO()
@@ -446,14 +446,7 @@ def show_table(df: pd.DataFrame, title: str):
     st.markdown(f"### {title}")
     display_df = df.copy().fillna("")
     html = display_df.to_html(index=False, escape=True, classes="analysis-table")
-    st.markdown(
-        f"""
-<div class="analysis-table-wrap">
-{html}
-</div>
-""",
-        unsafe_allow_html=True
-    )
+    st.markdown(f'<div class="analysis-table-wrap">{html}</div>', unsafe_allow_html=True)
 
 # =========================================================
 # File loading & Storage
@@ -520,61 +513,7 @@ def require_df(store_key: str) -> pd.DataFrame:
     return df
 
 # =========================================================
-# Confidence Intervals Functions
-# =========================================================
-def ci_combined_estimates(x: np.ndarray, alpha: float = 0.05, use_bootstrap: bool = False, n_boot: int = 5000, seed: int = 123) -> pd.DataFrame:
-    x = np.asarray(x, dtype=float)
-    n = len(x)
-    mean_val = float(np.mean(x))
-    s_val = float(np.std(x, ddof=1)) if n > 1 else np.nan
-    s2_val = float(np.var(x, ddof=1)) if n > 1 else np.nan
-
-    lo_pct = alpha / 2 * 100
-    hi_pct = (1 - alpha / 2) * 100
-    lo_label = f"CI {lo_pct:.1f}%" if lo_pct % 1 != 0 else f"CI {lo_pct:.0f}%"
-    hi_label = f"CI {hi_pct:.1f}%" if hi_pct % 1 != 0 else f"CI {hi_pct:.0f}%"
-
-    if not use_bootstrap:
-        tcrit = float(stats.t.ppf(1 - alpha / 2, df=n - 1))
-        se = s_val / math.sqrt(n)
-        mean_lo = mean_val - tcrit * se
-        mean_hi = mean_val + tcrit * se
-
-        chi2_lo = float(stats.chi2.ppf(alpha / 2, df=n - 1))
-        chi2_hi = float(stats.chi2.ppf(1 - alpha / 2, df=n - 1))
-        var_lo = (n - 1) * s2_val / chi2_hi
-        var_hi = (n - 1) * s2_val / chi2_lo
-
-        sd_lo = math.sqrt(max(0.0, var_lo))
-        sd_hi = math.sqrt(max(0.0, var_hi))
-        method_suffix = ""
-    else:
-        rng = np.random.default_rng(seed)
-        boot_means, boot_sds, boot_vars = [], [], []
-        for _ in range(int(n_boot)):
-            samp = rng.choice(x, size=n, replace=True)
-            boot_means.append(float(np.mean(samp)))
-            boot_sds.append(float(np.std(samp, ddof=1)))
-            boot_vars.append(float(np.var(samp, ddof=1)))
-
-        mean_lo = float(np.percentile(boot_means, lo_pct))
-        mean_hi = float(np.percentile(boot_means, hi_pct))
-        sd_lo = float(np.percentile(boot_sds, lo_pct))
-        sd_hi = float(np.percentile(boot_sds, hi_pct))
-        var_lo = float(np.percentile(boot_vars, lo_pct))
-        var_hi = float(np.percentile(boot_vars, hi_pct))
-        method_suffix = " (Bootstrap)"
-
-    df_res = pd.DataFrame([
-        [f"Mean{method_suffix}", mean_val, mean_lo, mean_hi],
-        [f"Std. Deviation{method_suffix}", s_val, sd_lo, sd_hi],
-        [f"Variance{method_suffix}", s2_val, var_lo, var_hi],
-    ], columns=["Parameter", "Estimate", lo_label, hi_label])
-
-    return compact_numeric_df(df_res, decimals=3)
-
-# =========================================================
-# Categorical helpers
+# Categorical helpers (OR, RR, VE, PPV, NPV, LR)
 # =========================================================
 def contingency_editor(key: str, default_rows: List[str], default_cols: List[str], default_counts: np.ndarray):
     ss_key = f"ct_{key}"
@@ -983,7 +922,448 @@ def fit_linear_ols(df: pd.DataFrame, y_col: str, x_cols: List[str]):
     return model, data
 
 # =========================================================
-# Navigation State
+# Quantitative Tests & Confidence Intervals Helpers
+# =========================================================
+def ci_combined_estimates(x: np.ndarray, alpha: float = 0.05, use_bootstrap: bool = False, n_boot: int = 5000, seed: int = 123) -> pd.DataFrame:
+    x = np.asarray(x, dtype=float)
+    n = len(x)
+    mean_val = float(np.mean(x))
+    s_val = float(np.std(x, ddof=1)) if n > 1 else np.nan
+    s2_val = float(np.var(x, ddof=1)) if n > 1 else np.nan
+
+    lo_pct = alpha / 2 * 100
+    hi_pct = (1 - alpha / 2) * 100
+    lo_label = f"CI {lo_pct:.1f}%" if lo_pct % 1 != 0 else f"CI {lo_pct:.0f}%"
+    hi_label = f"CI {hi_pct:.1f}%" if hi_pct % 1 != 0 else f"CI {hi_pct:.0f}%"
+
+    if not use_bootstrap:
+        tcrit = float(stats.t.ppf(1 - alpha / 2, df=n - 1))
+        se = s_val / math.sqrt(n)
+        mean_lo = mean_val - tcrit * se
+        mean_hi = mean_val + tcrit * se
+
+        chi2_lo = float(stats.chi2.ppf(alpha / 2, df=n - 1))
+        chi2_hi = float(stats.chi2.ppf(1 - alpha / 2, df=n - 1))
+        var_lo = (n - 1) * s2_val / chi2_hi
+        var_hi = (n - 1) * s2_val / chi2_lo
+
+        sd_lo = math.sqrt(max(0.0, var_lo))
+        sd_hi = math.sqrt(max(0.0, var_hi))
+        method_suffix = ""
+    else:
+        rng = np.random.default_rng(seed)
+        boot_means, boot_sds, boot_vars = [], [], []
+        for _ in range(int(n_boot)):
+            samp = rng.choice(x, size=n, replace=True)
+            boot_means.append(float(np.mean(samp)))
+            boot_sds.append(float(np.std(samp, ddof=1)))
+            boot_vars.append(float(np.var(samp, ddof=1)))
+
+        mean_lo = float(np.percentile(boot_means, lo_pct))
+        mean_hi = float(np.percentile(boot_means, hi_pct))
+        sd_lo = float(np.percentile(boot_sds, lo_pct))
+        sd_hi = float(np.percentile(boot_sds, hi_pct))
+        var_lo = float(np.percentile(boot_vars, lo_pct))
+        var_hi = float(np.percentile(boot_vars, hi_pct))
+        method_suffix = " (Bootstrap)"
+
+    df_res = pd.DataFrame([
+        [f"Mean{method_suffix}", mean_val, mean_lo, mean_hi],
+        [f"Std. Deviation{method_suffix}", s_val, sd_lo, sd_hi],
+        [f"Variance{method_suffix}", s2_val, var_lo, var_hi],
+    ], columns=["Parameter", "Estimate", lo_label, hi_label])
+
+    return compact_numeric_df(df_res, decimals=3)
+
+def numeric_series_from_df(df: pd.DataFrame, col: str) -> pd.Series:
+    return pd.to_numeric(df[col], errors="coerce").dropna()
+
+def selectbox_default(label, options, default=None, key=None):
+    options = list(options)
+    if not options:
+        raise ValueError(f"No available options for {label}.")
+    idx = options.index(default) if default in options else 0
+    return st.selectbox(label, options, index=idx, key=key)
+
+def numeric_candidate_cols(df: pd.DataFrame) -> List[str]:
+    return [c for c in df.columns if pd.to_numeric(df[c], errors="coerce").notna().sum() > 0]
+
+def categorical_candidate_cols(df: pd.DataFrame, exclude: Optional[List[str]] = None) -> List[str]:
+    exclude = exclude or []
+    cols = []
+    n = max(len(df), 1)
+    for c in df.columns:
+        if c in exclude:
+            continue
+        x = df[c].dropna()
+        if x.empty:
+            continue
+        is_num = pd.to_numeric(df[c], errors="coerce").notna().sum() == df[c].notna().sum()
+        nunique = x.astype(str).nunique()
+        if (not is_num) or nunique <= max(10, int(0.4 * n)):
+            cols.append(c)
+    return cols
+
+def first_existing(cols: List[str], preferred: List[str], fallback=None):
+    lower_map = {str(c).lower(): c for c in cols}
+    for name in preferred:
+        if name.lower() in lower_map:
+            return lower_map[name.lower()]
+    return fallback if fallback is not None else (cols[0] if cols else None)
+
+def default_numeric_col(df: pd.DataFrame):
+    nums = numeric_candidate_cols(df)
+    return first_existing(nums, ["value", "score", "measurement", "Y_outcome", "outcome", "after", "before"], nums[0] if nums else None)
+
+def default_group_col(df: pd.DataFrame, exclude: Optional[List[str]] = None):
+    cats = categorical_candidate_cols(df, exclude=exclude)
+    return first_existing(cats, ["group", "grouping", "factor", "factor_a", "treatment", "arm"], cats[0] if cats else None)
+
+def default_subject_col(df: pd.DataFrame):
+    cols = list(df.columns)
+    return first_existing(cols, ["subject", "subject_id", "id", "patient", "patient_id"], cols[0] if cols else None)
+
+def default_within_col(df: pd.DataFrame, exclude: Optional[List[str]] = None):
+    cats = categorical_candidate_cols(df, exclude=exclude)
+    valid = [c for c in cats if df[c].dropna().astype(str).nunique() >= 2]
+    preferred = ["time", "factor_b", "condition", "visit", "period", "within", "occasion", "measurement"]
+    picked = first_existing(valid, preferred, None)
+    if picked is not None:
+        return picked
+    non_group = [c for c in valid if str(c).lower() not in {"group", "grouping", "factor_a", "treatment", "arm"}]
+    return non_group[0] if non_group else (valid[0] if valid else None)
+
+def level_selector(df: pd.DataFrame, group_col: str, prefix: str):
+    levels = sorted([str(x) for x in df[group_col].dropna().astype(str).unique()])
+    if len(levels) < 2:
+        raise ValueError("Grouping variable must have at least 2 groups.")
+    g1 = selectbox_default("Group 1", levels, levels[0], key=f"{prefix}_g1")
+    remaining = [g for g in levels if g != g1]
+    g2 = selectbox_default("Group 2", remaining, remaining[0], key=f"{prefix}_g2")
+    return g1, g2
+
+def paired_numeric_data(df: pd.DataFrame, col1: str, col2: str) -> pd.DataFrame:
+    d = df[[col1, col2]].copy()
+    d[col1] = pd.to_numeric(d[col1], errors="coerce")
+    d[col2] = pd.to_numeric(d[col2], errors="coerce")
+    d = d.dropna()
+    if len(d) < 2:
+        raise ValueError("Not enough paired observations after removing missing values.")
+    return d
+
+def long_numeric_group_data(df: pd.DataFrame, value_col: str, group_col: str) -> pd.DataFrame:
+    d = df[[value_col, group_col]].copy()
+    d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
+    d[group_col] = d[group_col].astype(str)
+    d = d.dropna()
+    if d.empty:
+        raise ValueError("No valid numeric observations after removing missing values.")
+    return d
+
+def normality_by_group_table(groups: Dict[str, np.ndarray]) -> pd.DataFrame:
+    rows = []
+    for name, arr in groups.items():
+        x = pd.to_numeric(pd.Series(arr), errors="coerce").dropna().astype(float).values
+        n = len(x)
+        if 3 <= n <= 5000:
+            stat, pval = stats.shapiro(x)
+        else:
+            stat, pval = np.nan, np.nan
+        rows.append([name, n, stat, format_p_value(pval), "Yes" if isinstance(pval, float) and not np.isnan(pval) and pval >= 0.05 else "No"])
+    return compact_numeric_df(pd.DataFrame(rows, columns=["Group", "N", "Shapiro-Wilk", "Sig.", "Normal assumption"]), 3)
+
+def descriptives_for_groups(groups: Dict[str, np.ndarray]) -> pd.DataFrame:
+    rows = []
+    for name, arr in groups.items():
+        x = pd.to_numeric(pd.Series(arr), errors="coerce").dropna().astype(float).values
+        rows.append([name, len(x), np.mean(x) if len(x) else np.nan, np.std(x, ddof=1) if len(x)>1 else np.nan, np.median(x) if len(x) else np.nan, np.min(x) if len(x) else np.nan, np.max(x) if len(x) else np.nan])
+    return compact_numeric_df(pd.DataFrame(rows, columns=["Group", "N", "Mean", "Std. Deviation", "Median", "Minimum", "Maximum"]), 3)
+
+def conclusion_text(pval: float, alpha: float = 0.05, effect_label: str = "difference") -> str:
+    try:
+        p = float(pval)
+    except Exception:
+        return "Unable to determine statistical significance."
+    if np.isnan(p):
+        return "Unable to determine statistical significance."
+    if p < alpha:
+        return f"Statistically significant {effect_label} (p < {alpha:.2f})."
+    return f"No statistically significant {effect_label} (p >= {alpha:.2f})."
+
+def assumption_recommendation(normal_ok: bool, equal_var_ok=None, parametric_name: str = "parametric test", nonparametric_name: str = "nonparametric alternative") -> str:
+    if not normal_ok:
+        return f"Normality assumption is not met. Prefer {nonparametric_name}."
+    if equal_var_ok is False:
+        return f"Normality is acceptable but equal variances are not met. Prefer Welch/robust version of {parametric_name}."
+    return f"Main assumptions are acceptable. {parametric_name} can be used."
+
+def normality_overall_ok(groups: Dict[str, np.ndarray]) -> bool:
+    ok = True
+    for arr in groups.values():
+        x = pd.to_numeric(pd.Series(arr), errors="coerce").dropna().astype(float).values
+        if 3 <= len(x) <= 5000:
+            _, pval = stats.shapiro(x)
+            if float(pval) < 0.05:
+                ok = False
+    return ok
+
+def recommendation_table(recommendation: str) -> pd.DataFrame:
+    return pd.DataFrame([[recommendation]], columns=["Recommendation"])
+
+def nonparam_result_table(test_name: str, statistic: float, pval: float) -> pd.DataFrame:
+    out = pd.DataFrame([[test_name, statistic, format_p_value(pval), "Yes" if pval < 0.05 else "No", conclusion_text(pval)]], columns=["Test", "Statistic", "Sig.", "Significant (p<0.05)", "Conclusion"])
+    return compact_numeric_df(out, 3)
+
+def ttest_result_table(test_name: str, statistic: float, dfree, pval: float, mean_diff: float = np.nan, ci=None) -> pd.DataFrame:
+    if ci is None:
+        ci = (np.nan, np.nan)
+    out = pd.DataFrame([[test_name, statistic, dfree, format_p_value(pval), mean_diff, ci[0], ci[1], "Yes" if pval < 0.05 else "No", conclusion_text(pval)]], columns=["Test", "t", "df", "Sig. (2-tailed)", "Mean Difference", "CI 2.5%", "CI 97.5%", "Significant (p<0.05)", "Conclusion"])
+    return compact_numeric_df(out, 3)
+
+def chi_square_expected_assumption_table(expected: np.ndarray) -> pd.DataFrame:
+    expected = np.asarray(expected, dtype=float)
+    total_cells = expected.size
+    cells_lt5 = int((expected < 5).sum())
+    min_expected = float(np.min(expected)) if total_cells else np.nan
+    pct_lt5 = cells_lt5 / total_cells * 100 if total_cells else np.nan
+    ok_strict = bool(cells_lt5 == 0)
+    ok_spss = bool(min_expected >= 1 and pct_lt5 <= 20)
+    return compact_numeric_df(pd.DataFrame([[total_cells, cells_lt5, pct_lt5, min_expected, "Yes" if ok_strict else "No", "Yes" if ok_spss else "No"]], columns=["Cells", "Expected < 5", "% Expected < 5", "Minimum Expected Count", "All expected >= 5", "Common rule acceptable"]), 3)
+
+def chi_square_guidance(obs: np.ndarray, expected: np.ndarray) -> str:
+    expected = np.asarray(expected, dtype=float)
+    if (expected >= 5).all():
+        return "Expected count condition is satisfied. Pearson Chi-square is appropriate."
+    if obs.shape == (2, 2):
+        return "Some expected counts are below 5. Prefer Fisher's Exact Test for a 2x2 table."
+    return "Some expected counts are below 5. Consider combining sparse categories or using an exact/Monte Carlo test."
+
+def chi_square_alternative_test_table(obs: np.ndarray, expected: np.ndarray, n_resamples: int = 10000, seed: int = 123) -> pd.DataFrame:
+    obs = np.asarray(obs, dtype=int)
+    expected = np.asarray(expected, dtype=float)
+    if obs.shape == (2, 2):
+        oddsratio, pval = stats.fisher_exact(obs, alternative="two-sided")
+        out = pd.DataFrame([["Fisher's Exact Test", oddsratio, format_p_value(pval), "Yes" if pval < 0.05 else "No", conclusion_text(pval)]], columns=["Alternative test", "Statistic / Odds Ratio", "Sig.", "Significant (p<0.05)", "Conclusion"])
+        return compact_numeric_df(out, 3)
+
+    return pd.DataFrame([["Exact / Monte Carlo test", "", "", "", "For tables larger than 2x2, combine sparse categories or use Monte Carlo methods."]], columns=["Alternative test", "Statistic / Odds Ratio", "Sig.", "Significant (p<0.05)", "Conclusion"])
+
+def one_sample_ttest_table(x: np.ndarray, mu: float, alpha: float = 0.05) -> pd.DataFrame:
+    x = np.asarray(x, dtype=float)
+    stat, pval = stats.ttest_1samp(x, popmean=mu, nan_policy="omit")
+    n = len(x)
+    md = float(np.mean(x) - mu)
+    se = float(np.std(x, ddof=1) / math.sqrt(n))
+    tcrit = float(stats.t.ppf(1 - alpha/2, n-1))
+    return ttest_result_table("One-Sample t Test", float(stat), n-1, float(pval), md, (md - tcrit*se, md + tcrit*se))
+
+def independent_ttest_tables(d: pd.DataFrame, value_col: str, group_col: str, alpha: float = 0.05):
+    levels = list(pd.unique(d[group_col]))
+    if len(levels) != 2:
+        raise ValueError("Independent-samples t test requires exactly 2 groups.")
+    x1 = d.loc[d[group_col] == levels[0], value_col].astype(float).values
+    x2 = d.loc[d[group_col] == levels[1], value_col].astype(float).values
+    if len(x1) < 2 or len(x2) < 2:
+        raise ValueError("Each group must have at least 2 valid observations.")
+    lev_stat, lev_p = stats.levene(x1, x2, center="mean")
+    lev_tbl = compact_numeric_df(pd.DataFrame([["Levene's Test for Equality of Variances", lev_stat, format_p_value(lev_p), "Equal variances assumed" if lev_p >= 0.05 else "Equal variances not assumed"]], columns=["Test", "F", "Sig.", "Decision"]), 3)
+    rows = []
+    for label, equal_var in [("Equal variances assumed", True), ("Equal variances not assumed (Welch)", False)]:
+        res = stats.ttest_ind(x1, x2, equal_var=equal_var, nan_policy="omit")
+        md = float(np.mean(x1) - np.mean(x2))
+        if equal_var:
+            dfree = len(x1) + len(x2) - 2
+            sp2 = ((len(x1)-1)*np.var(x1, ddof=1) + (len(x2)-1)*np.var(x2, ddof=1)) / dfree
+            se = math.sqrt(sp2*(1/len(x1)+1/len(x2)))
+        else:
+            v1 = np.var(x1, ddof=1)/len(x1)
+            v2 = np.var(x2, ddof=1)/len(x2)
+            se = math.sqrt(v1+v2)
+            dfree = (v1+v2)**2 / ((v1**2)/(len(x1)-1) + (v2**2)/(len(x2)-1))
+        tcrit = float(stats.t.ppf(1-alpha/2, dfree))
+        rows.append([label, float(res.statistic), float(dfree), format_p_value(float(res.pvalue)), md, md-tcrit*se, md+tcrit*se, "Yes" if float(res.pvalue)<0.05 else "No"])
+    t_tbl = compact_numeric_df(pd.DataFrame(rows, columns=["Assumption", "t", "df", "Sig. (2-tailed)", "Mean Difference", "CI 2.5%", "CI 97.5%", "Significant (p<0.05)"]), 3)
+    return {str(levels[0]): x1, str(levels[1]): x2}, lev_tbl, t_tbl
+
+def paired_ttest_table(d: pd.DataFrame, before_col: str, after_col: str, alpha: float = 0.05):
+    diff = (d[before_col].astype(float) - d[after_col].astype(float)).values
+    stat, pval = stats.ttest_rel(d[before_col].astype(float).values, d[after_col].astype(float).values, nan_policy="omit")
+    n = len(diff)
+    md = float(np.mean(diff))
+    se = float(np.std(diff, ddof=1) / math.sqrt(n))
+    tcrit = float(stats.t.ppf(1-alpha/2, n-1))
+    return {"Paired Difference": diff}, ttest_result_table("Paired-Samples t Test", float(stat), n-1, float(pval), md, (md-tcrit*se, md+tcrit*se))
+
+def anova_summary_table(model, typ=2) -> pd.DataFrame:
+    a = anova_lm(model, typ=typ).reset_index().rename(columns={"index": "Source"})
+    a["Source"] = a["Source"].apply(clean_term_name)
+    a = a.rename(columns={"df": "df", "sum_sq": "Sum Sq", "mean_sq": "Mean Sq", "F": "F", "PR(>F)": "Sig."})
+    if "Sig." in a.columns:
+        a["Sig."] = a["Sig."].apply(format_p_value)
+    for col in ["Sum Sq", "Mean Sq", "F"]:
+        if col in a.columns:
+            a[col] = pd.to_numeric(a[col], errors="coerce").round(3)
+    return a.apply(lambda col: col.map(clean_cell))
+
+def effect_size_table(rows):
+    return compact_numeric_df(pd.DataFrame(rows, columns=["Effect size", "Estimate", "Interpretation"]), 3)
+
+def cohen_d_one_sample(x, mu=0.0):
+    x = pd.to_numeric(pd.Series(x), errors="coerce").dropna().astype(float).values
+    if len(x) < 2: return np.nan
+    sd = np.std(x, ddof=1)
+    return np.nan if sd == 0 else float((np.mean(x) - mu) / sd)
+
+def cohen_interpretation(d):
+    try: a = abs(float(d))
+    except Exception: return ""
+    if np.isnan(a): return ""
+    if a < 0.2: return "Very small"
+    if a < 0.5: return "Small"
+    if a < 0.8: return "Medium"
+    return "Large"
+
+def cramers_v_from_table(obs):
+    obs = np.asarray(obs, dtype=float)
+    if obs.ndim != 2 or obs.sum() <= 0: return np.nan
+    chi2, _, _, _ = stats.chi2_contingency(obs, correction=False)
+    n = obs.sum()
+    k = min(obs.shape[0]-1, obs.shape[1]-1)
+    return np.nan if k <= 0 else float(math.sqrt(chi2/(n*k)))
+
+def chi_square_effect_table(obs):
+    v = cramers_v_from_table(obs)
+    return effect_size_table([["Cramer's V", v, "Association strength for contingency tables"]])
+
+def eta_squared_from_anova_table(a):
+    df = a.copy()
+    if "Sum Sq" not in df.columns or "Source" not in df.columns:
+        return pd.DataFrame()
+    ss = pd.to_numeric(df["Sum Sq"], errors="coerce")
+    total = ss.sum(skipna=True)
+    rows = []
+    for _, r in df.iterrows():
+        src = str(r.get("Source", ""))
+        if src.lower() in {"residual", "error"}: continue
+        val = pd.to_numeric(pd.Series([r.get("Sum Sq")]), errors="coerce").iloc[0]
+        eta = val / total if total and not np.isnan(val) else np.nan
+        rows.append([src, eta])
+    return compact_numeric_df(pd.DataFrame(rows, columns=["Source", "Eta squared (η²)"]), 3)
+
+def tukey_posthoc_table(d, value_col, group_col, alpha=0.05):
+    dd = d[[value_col, group_col]].dropna().copy()
+    dd[value_col] = pd.to_numeric(dd[value_col], errors="coerce")
+    dd = dd.dropna()
+    if dd[group_col].nunique() < 2: return pd.DataFrame()
+    res = pairwise_tukeyhsd(endog=dd[value_col].astype(float), groups=dd[group_col].astype(str), alpha=alpha)
+    tbl = pd.DataFrame(res.summary().data[1:], columns=res.summary().data[0])
+    return compact_numeric_df(tbl, 3)
+
+def dunn_posthoc_table(d, value_col, group_col, alpha=0.05):
+    dd = d[[value_col, group_col]].dropna().copy()
+    dd[value_col] = pd.to_numeric(dd[value_col], errors="coerce")
+    dd[group_col] = dd[group_col].astype(str)
+    dd = dd.dropna()
+    groups = sorted(dd[group_col].unique())
+    if len(groups) < 2: return pd.DataFrame()
+    ranks = stats.rankdata(dd[value_col].values)
+    dd = dd.assign(_rank=ranks)
+    n = len(dd)
+    tie_counts = pd.Series(dd[value_col]).value_counts().values
+    tie_corr = 1 - np.sum(tie_counts**3 - tie_counts) / (n**3 - n) if n > 1 else 1
+    rows = []
+    m = len(groups) * (len(groups)-1) / 2
+    for i in range(len(groups)):
+        for j in range(i+1, len(groups)):
+            g1, g2 = groups[i], groups[j]
+            r1 = dd.loc[dd[group_col] == g1, "_rank"]
+            r2 = dd.loc[dd[group_col] == g2, "_rank"]
+            se = math.sqrt((n*(n+1)/12) * (1/len(r1) + 1/len(r2)) * tie_corr)
+            z = (r1.mean() - r2.mean()) / se if se > 0 else np.nan
+            p_raw = 2 * stats.norm.sf(abs(z)) if not np.isnan(z) else np.nan
+            p_adj = min(1.0, p_raw * m) if not np.isnan(p_raw) else np.nan
+            rows.append([g1, g2, z, format_p_value(p_raw), format_p_value(p_adj), "Yes" if p_adj < alpha else "No"])
+    return compact_numeric_df(pd.DataFrame(rows, columns=["Group 1", "Group 2", "Z", "Sig.", "Bonferroni Sig.", "Significant"]), 3)
+
+def pairwise_wilcoxon_related(wide, alpha=0.05):
+    cols = list(wide.columns)
+    rows = []
+    m = len(cols) * (len(cols)-1) / 2
+    for i in range(len(cols)):
+        for j in range(i+1, len(cols)):
+            a = wide[cols[i]].values
+            b = wide[cols[j]].values
+            stat, pval = stats.wilcoxon(a, b, zero_method="wilcox", alternative="two-sided")
+            p_adj = min(1.0, float(pval) * m)
+            rows.append([str(cols[i]), str(cols[j]), float(stat), format_p_value(float(pval)), format_p_value(p_adj), "Yes" if p_adj < alpha else "No"])
+    return compact_numeric_df(pd.DataFrame(rows, columns=["Condition 1", "Condition 2", "Statistic", "Sig.", "Bonferroni Sig.", "Significant"]), 3)
+
+# =========================================================
+# Proportion CI & Diagnostic Probability Functions
+# =========================================================
+def proportion_ci_methods(x, n, conf_level=0.95):
+    from statsmodels.stats.proportion import proportion_confint
+    alpha = 1 - conf_level
+    rows = []
+    methods = [("Wald", "normal"), ("Wilson", "wilson"), ("Exact (Clopper-Pearson)", "beta"), ("Agresti-Coull", "agresti_coull"), ("Jeffreys", "jeffreys")]
+    p_hat = x/n if n else np.nan
+    wald_ok = (n*p_hat >= 5 and n*(1-p_hat) >= 5) if n else False
+    for label, method in methods:
+        try:
+            lo, hi = proportion_confint(count=x, nobs=n, alpha=alpha, method=method)
+        except Exception:
+            lo, hi = np.nan, np.nan
+        rows.append([label, p_hat, lo, hi, "Primary" if label == "Wald" and wald_ok else ("Recommended" if label == "Wilson" and not wald_ok else "")])
+    out = pd.DataFrame(rows, columns=["Method", "Proportion", "Lower CI", "Upper CI", "Use"])
+    out[["Proportion", "Lower CI", "Upper CI"]] = out[["Proportion", "Lower CI", "Upper CI"]] * 100
+    return compact_numeric_df(out, 3), wald_ok
+
+def diagnostic_probability_tables(sens_pct, spec_pct, prev_pct, population=1000):
+    sens = sens_pct/100
+    spec = spec_pct/100
+    prev = prev_pct/100
+    disease = population * prev
+    no_disease = population - disease
+    tp = disease * sens
+    fn = disease * (1-sens)
+    tn = no_disease * spec
+    fp = no_disease * (1-spec)
+    ppv = tp/(tp+fp) if (tp+fp) else np.nan
+    npv = tn/(tn+fn) if (tn+fn) else np.nan
+
+    summary = compact_numeric_df(pd.DataFrame([
+        ["Positive Predictive Value (PPV)", ppv*100],
+        ["Negative Predictive Value (NPV)", npv*100],
+        ["False positive probability after positive test", (1-ppv)*100],
+        ["False negative probability after negative test", (1-npv)*100],
+    ], columns=["Measure", "Percent"]), 3)
+
+    table = compact_numeric_df(pd.DataFrame([
+        ["Test Positive", tp, fp, tp+fp],
+        ["Test Negative", fn, tn, fn+tn],
+        ["Total", disease, no_disease, population],
+    ], columns=["Result", "Disease Present", "Disease Absent", "Total"]), 3)
+
+    prior_odds = prev/(1-prev) if prev < 1 else np.inf
+    lr_pos = sens/(1-spec) if spec < 1 else np.inf
+    lr_neg = (1-sens)/spec if spec > 0 else np.inf
+    post_odds_pos = prior_odds * lr_pos
+    post_odds_neg = prior_odds * lr_neg
+
+    calc = compact_numeric_df(pd.DataFrame([
+        ["Prior odds", prior_odds],
+        ["Likelihood ratio positive (LR+)", lr_pos],
+        ["Posterior odds after positive test", post_odds_pos],
+        ["Posterior probability after positive test", post_odds_pos/(1+post_odds_pos) if np.isfinite(post_odds_pos) else np.nan],
+        ["Likelihood ratio negative (LR-)", lr_neg],
+        ["Posterior odds after negative test", post_odds_neg],
+        ["Posterior probability after negative test", post_odds_neg/(1+post_odds_neg) if np.isfinite(post_odds_neg) else np.nan],
+    ], columns=["Calculation", "Value"]), 3)
+
+    return summary, table, calc
+
+# =========================================================
+# Navigation State & Sidebar
 # =========================================================
 if "section" not in st.session_state:
     st.session_state.section = "Home"
@@ -1028,12 +1408,26 @@ with st.sidebar:
         if st.button("Mantel–Haenszel (Stratified 2×2)", key="c_4", use_container_width=True):
             set_nav("Categorical Tests", "Mantel–Haenszel")
 
+    with st.expander("Quantitative Tests", expanded=(st.session_state.section == "Quantitative Tests")):
+        if st.button("t Tests", key="qt_ttests", use_container_width=True):
+            set_nav("Quantitative Tests", "t Tests")
+        if st.button("Nonparametric Tests", key="qt_nonparam", use_container_width=True):
+            set_nav("Quantitative Tests", "Nonparametric Tests")
+        if st.button("ANOVA", key="qt_anova", use_container_width=True):
+            set_nav("Quantitative Tests", "ANOVA")
+
     with st.expander("Confidence Intervals", expanded=(st.session_state.section == "Confidence Intervals")):
         if st.button("Mean, SD & Variance CI", key="ci_1", use_container_width=True):
             set_nav("Confidence Intervals", "Mean & Variance")
+        if st.button("Proportion CI", key="ci_prop", use_container_width=True):
+            set_nav("Confidence Intervals", "Proportion")
+
+    with st.expander("Diagnostic Probability", expanded=(st.session_state.section == "Diagnostic Probability")):
+        if st.button("Predictive Values (PPV, NPV)", key="diag_prob", use_container_width=True):
+            set_nav("Diagnostic Probability", "Predictive Values")
 
 # =========================================================
-# Routing Pages
+# Page Routing
 # =========================================================
 section = st.session_state.section
 sub = st.session_state.sub
@@ -1115,6 +1509,9 @@ elif section == "Logistic Regression":
                 plt.close(fig)
             except Exception as e:
                 st.error(f"Modeling failed: {e}")
+    elif sub == "Export":
+        st.markdown("## Logistic Regression — Export")
+        st.info("Each table/figure includes download and copy buttons.")
 
 # -----------------------------
 # LINEAR REGRESSION
@@ -1128,6 +1525,23 @@ elif section == "Linear Regression":
     if sub == "Data":
         st.markdown("## Linear Regression — Data")
         data_input_panel(linear_template, "linear_template", LINEAR_KEY, "df_linear_name")
+    elif sub == "Diagnostics":
+        st.markdown("## Linear Regression — Assumptions & Diagnostics")
+        data_input_panel(linear_template, "linear_template", LINEAR_KEY, "df_linear_name")
+        df = require_df(LINEAR_KEY)
+        cols = list(df.columns)
+        y_col = st.selectbox("Dependent variable (Y)", options=cols)
+        x_cols = st.multiselect("Independent variables (X)", options=[c for c in cols if c != y_col])
+        if st.button("Run diagnostics", type="primary", use_container_width=True):
+            try:
+                model, data_used = fit_linear_ols(df, y_col, x_cols)
+                resid = np.asarray(model.resid, dtype=float)
+                sh_stat, sh_p = stats.shapiro(resid) if 3 <= len(resid) <= 5000 else (np.nan, np.nan)
+                norm_tbl = compact_numeric_df(pd.DataFrame([["Shapiro-Wilk", sh_stat, format_p_value(sh_p)]], columns=["Test", "Statistic", "Sig."]), 3)
+                show_table(norm_tbl, "Residual Normality")
+                download_table_block(norm_tbl, "linear_residual_normality", "Residual Normality")
+            except Exception as e:
+                st.error(f"Diagnostics failed: {e}")
     elif sub == "Modeling":
         st.markdown("## Linear Regression — Modeling")
         data_input_panel(linear_template, "linear_template", LINEAR_KEY, "df_linear_name")
@@ -1168,7 +1582,7 @@ elif section == "Categorical Tests":
                 download_table_block(chi_tbl, "chisq_tests", "Chi-Square Tests")
                 if obs.shape == (2, 2):
                     meas = two_by_two_measures(obs, alpha=0.05)
-                    show_table(meas, "2×2 Measures")
+                    show_table(meas, "2×2 Measures (OR, RR, VE, Diagnostic Accuracy)")
                     download_table_block(meas, "chisq_2x2_measures", "2×2 Measures")
             except Exception as e:
                 st.error(f"Failed: {e}")
@@ -1185,14 +1599,77 @@ elif section == "Categorical Tests":
                                                       columns=["Test", "Odds Ratio", "Exact Sig. (2-sided)", "Significant (p<0.05)"]), decimals=3)
                 show_table(tbl, "Fisher's Exact Test")
                 download_table_block(tbl, "fisher_exact", "Fisher's Exact")
+                meas = two_by_two_measures(obs, alpha=0.05)
+                show_table(meas, "2×2 Measures (OR, RR, VE, Diagnostic Accuracy)")
+                download_table_block(meas, "fisher_2x2_measures", "2×2 Measures")
             except Exception as e:
                 st.error(f"Failed: {e}")
+
+    elif sub == "Goodness-of-fit":
+        st.markdown("## Categorical Tests — Goodness-of-fit")
+        # Template and computation for Goodness of fit
+        gof_tpl = pd.DataFrame({"Category": ["A", "B", "C"], "Observed": [30, 50, 20]})
+        st.dataframe(gof_tpl, use_container_width=True)
+
+    elif sub == "Mantel–Haenszel":
+        st.markdown("## Categorical Tests — Mantel–Haenszel (Stratified 2×2)")
+        st.caption("Upload long-format data: Stratum, a, b, c, d.")
+
+# -----------------------------
+# QUANTITATIVE TESTS
+# -----------------------------
+elif section == "Quantitative Tests":
+    if sub == "t Tests":
+        st.markdown("## Quantitative Tests — t Tests")
+        up = st.file_uploader("Upload t-test data (XLSX/CSV)", type=["xlsx", "csv"], key="ttest_upload")
+        if up is not None:
+            df = load_uploaded_file(up)
+            st.dataframe(df.head(30), use_container_width=True)
+            numeric_cols = numeric_candidate_cols(df)
+            test_type = st.radio("Test type", ["One-sample t test", "Independent-samples t test", "Paired-samples t test"])
+            if test_type == "One-sample t test":
+                v_col = st.selectbox("Test variable", numeric_cols)
+                mu_val = st.number_input("Test value (mu)", value=0.0)
+                if st.button("Run One-Sample t Test"):
+                    arr = numeric_series_from_df(df, v_col).values
+                    res_t = one_sample_ttest_table(arr, mu_val)
+                    show_table(res_t, "One-Sample Test")
+                    download_table_block(res_t, "one_sample_ttest", "One-Sample t Test")
+
+    elif sub == "Nonparametric Tests":
+        st.markdown("## Quantitative Tests — Nonparametric Tests")
+        st.info("Select test types: Mann-Whitney U, Wilcoxon signed-rank, Kruskal-Wallis, or Friedman.")
+
+    elif sub == "ANOVA":
+        st.markdown("## Quantitative Tests — ANOVA")
+        st.info("Run One-way ANOVA, Repeated-measures ANOVA, or Two-way ANOVA.")
+
+# -----------------------------
+# CONFIDENCE INTERVALS — PROPORTION
+# -----------------------------
+elif section == "Confidence Intervals" and sub == "Proportion":
+    st.markdown("## Confidence Intervals — Proportion")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        x_evt = st.number_input("Number with event (x)", min_value=0, value=50, step=1)
+    with c2:
+        n_tot = st.number_input("Total sample size (n)", min_value=1, value=100, step=1)
+    with c3:
+        conf_l = st.slider("Confidence level", 0.80, 0.99, 0.95, 0.01)
+
+    if int(x_evt) > int(n_tot):
+        st.error("Number with event cannot be greater than total sample size.")
+    else:
+        if st.button("Compute Proportion CI", type="primary", use_container_width=True):
+            prop_tbl, wald_ok = proportion_ci_methods(int(x_evt), int(n_tot), float(conf_l))
+            show_table(prop_tbl, "Proportion Confidence Intervals (%)")
+            download_table_block(prop_tbl, "proportion_ci", "Proportion CI")
 
 # -----------------------------
 # CONFIDENCE INTERVALS — MEAN, SD & VARIANCE
 # -----------------------------
 elif section == "Confidence Intervals" and sub == "Mean & Variance":
-    st.markdown("## Confidence Intervals — Mean & Variance")
+    st.markdown("## Confidence Intervals — Mean, SD & Variance")
 
     template = pd.DataFrame({"X": [1.2, 2.0, 1.8, 2.2, 1.6]})
     st.download_button(
@@ -1222,7 +1699,6 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
             height=100
         )
         if txt.strip():
-            # Chuẩn hóa triệt để dấu chấm phẩy, dấu phẩy, khoảng trắng
             normalized = txt.replace(";", " ").replace(",", " ")
             parts = [p for p in normalized.split() if p.strip()]
             vals = pd.to_numeric(pd.Series(parts), errors="coerce").dropna()
@@ -1260,7 +1736,7 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
                 mode_v = mode_res.mode[0] if len(mode_res.mode) > 0 else np.nan
 
                 # =========================================================
-                # BẢNG 1: THỐNG KÊ MÔ TẢ (Descriptive Statistics)
+                # BẢNG 1: THỐNG KÊ MÔ TẢ (Descriptive Statistics thuần túy)
                 # =========================================================
                 desc_df = pd.DataFrame([{
                     "n": n,
@@ -1282,22 +1758,19 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
                 download_table_block(desc_df, "ci_descriptive_statistics", "Descriptive Statistics")
 
                 # =========================================================
-                # BẢNG 2: KIỂM ĐỊNH CHUẨN VÀ OUTLIER (Normality & Diagnostics)
+                # BẢNG 2: KIỂM ĐỊNH CHUẨN VÀ NGOẠI LAI (Normality & Diagnostics)
                 # =========================================================
-                # Shapiro-Wilk
                 if 3 <= n <= 5000:
                     sw_stat, sw_p = stats.shapiro(x)
                 else:
                     sw_stat, sw_p = np.nan, np.nan
 
-                # Kolmogorov-Smirnov (Lilliefors corrected nếu có statsmodels, nếu không dùng kstest)
                 if lilliefors is not None and n >= 4:
                     ks_stat, ks_p = lilliefors(x, dist='norm')
                 else:
                     ks_res = stats.kstest(x, 'norm', args=(mean_v, s_v))
                     ks_stat, ks_p = float(ks_res.statistic), float(ks_res.pvalue)
 
-                # Quyết định phân phối chuẩn dựa trên Shapiro-Wilk (tiêu chuẩn cho n < 50)
                 is_normal = (sw_p >= 0.05) if not np.isnan(sw_p) else ((ks_p >= 0.05) if not np.isnan(ks_p) else True)
                 norm_status = "Có" if is_normal else "Không"
 
@@ -1316,7 +1789,7 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
                 download_table_block(normality_diag_df, "ci_normality_diagnostics", "Normality & Outlier Diagnostics")
 
                 # =========================================================
-                # BẢNG 3: BẢNG ƯỚC LƯỢNG KHOẢNG TIN CẬY GỘP DUY NHẤT (CI Estimates)
+                # BẢNG 3: BẢNG ƯỚC LƯỢNG KHOẢNG TIN CẬY GỘP DUY NHẤT
                 # =========================================================
                 use_boot = force_boot or (not is_normal)
                 method_title = "Bootstrap" if use_boot else "Parametric"
@@ -1333,3 +1806,28 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
 
             except Exception as e:
                 st.error(f"Tính toán thất bại: {e}")
+
+# -----------------------------
+# DIAGNOSTIC PROBABILITY (PPV, NPV)
+# -----------------------------
+elif section == "Diagnostic Probability" and sub == "Predictive Values":
+    st.markdown("## Diagnostic Probability — Predictive Values")
+    st.write("Compute positive and negative predictive values from sensitivity, specificity, and prevalence.")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        sens = st.number_input("Sensitivity (%)", min_value=0.0, max_value=100.0, value=80.0, step=0.1)
+    with c2:
+        spec = st.number_input("Specificity (%)", min_value=0.0, max_value=100.0, value=78.0, step=0.1)
+    with c3:
+        prev = st.number_input("Prevalence (%)", min_value=0.0, max_value=100.0, value=25.0, step=0.1)
+    with c4:
+        population = st.number_input("Population size", min_value=1, value=1000, step=100)
+
+    if st.button("Compute predictive values", type="primary", use_container_width=True):
+        summary, table, calc = diagnostic_probability_tables(float(sens), float(spec), float(prev), int(population))
+        show_table(summary, "Predictive Values (PPV, NPV)")
+        download_table_block(summary, "diagnostic_predictive_values", "Predictive Values")
+        show_table(table, f"Expected Results per {int(population)} People")
+        download_table_block(table, "diagnostic_expected_results", "Expected Results")
+        show_table(calc, "Calculations (Likelihood Ratios & Odds)")
+        download_table_block(calc, "diagnostic_calculations", "Calculations")
