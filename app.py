@@ -43,9 +43,13 @@ from statsmodels.stats.contingency_tables import StratifiedTable
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
 try:
-    from statsmodels.stats.diagnostic import lilliefors
+    from statsmodels.stats.diagnostic import lilliefors, het_breuschpagan
 except ImportError:
     lilliefors = None
+    het_breuschpagan = None
+
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+from statsmodels.stats.proportion import proportion_confint
 
 # =====================================================
 # Page config
@@ -57,7 +61,7 @@ st.set_page_config(
 )
 
 # =========================================================
-# CSS
+# CSS Giao diện
 # =========================================================
 st.markdown(
     """
@@ -139,19 +143,6 @@ section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
   font-size: 15px;
 }
 
-div[data-testid="stDataFrame"]{
-  font-size: 21px;
-  font-weight: 400;
-}
-div[data-testid="stDataFrame"] *{
-  font-size: 20px !important;
-  font-weight: 400 !important;
-}
-[data-testid="stTable"] table{
-  font-size: 21px !important;
-  font-weight: 400 !important;
-}
-
 .analysis-table-wrap{
   width: 100%;
   overflow-x: auto;
@@ -190,9 +181,7 @@ div[data-testid="stDataFrame"] *{
     unsafe_allow_html=True
 )
 
-# =========================================================
 # Header
-# =========================================================
 st.markdown(
     """
 <div class="header-banner">
@@ -205,10 +194,10 @@ st.markdown(
 st.write("")
 
 # =========================================================
-# Smart Formatting Functions
+# Quy tắc làm tròn số thông minh (Tối thiểu 3 chữ số thập phân)
 # =========================================================
 def smart_round_val(val, min_dec: int = 3) -> str:
-    """Làm tròn đến 3 chữ số thập phân. Nếu khác 0 mà làm tròn ra 0 thì tự mở rộng 4, 5,... chữ số."""
+    """Làm tròn 3 chữ số thập phân. Nếu khác 0 mà làm tròn ra 0 thì tự mở rộng sang 4, 5, 6... chữ số."""
     if val is None or pd.isna(val) or val == "":
         return ""
     if isinstance(val, (int, np.integer)):
@@ -272,7 +261,7 @@ def clean_term_name(s: str) -> str:
     return s
 
 # =========================================================
-# Download & Clipboard Helpers
+# Xuất dữ liệu & Nút chép Excel
 # =========================================================
 def df_to_excel_bytes(sheets: Dict[str, pd.DataFrame]) -> bytes:
     bio = io.BytesIO()
@@ -513,7 +502,7 @@ def require_df(store_key: str) -> pd.DataFrame:
     return df
 
 # =========================================================
-# Categorical helpers (OR, RR, VE, PPV, NPV, LR)
+# Bảng liên định r x c & Đo lường chẩn đoán 2x2
 # =========================================================
 def contingency_editor(key: str, default_rows: List[str], default_cols: List[str], default_counts: np.ndarray):
     ss_key = f"ct_{key}"
@@ -699,7 +688,7 @@ def two_by_two_measures(obs2x2: np.ndarray, alpha=0.05) -> pd.DataFrame:
     return compact_numeric_df(df, decimals=3)
 
 # =========================================================
-# Logistic regression helpers
+# Thuật toán Hồi quy Logistic
 # =========================================================
 def hosmer_lemeshow_table(y_true, y_prob, g=10):
     tmp = pd.DataFrame({"y": np.asarray(y_true, dtype=float), "p": np.asarray(y_prob, dtype=float)}).dropna()
@@ -767,7 +756,6 @@ def run_logistic_statsmodels(df: pd.DataFrame, target: str, features: List[str],
         ["Selected Cases", "Missing Cases", excluded_n, excluded_n / raw_n * 100],
         ["Selected Cases", "Total", raw_n, 100.0],
     ], columns=["Case Type", "Status", "N", "Percent"])
-    case_summary["Percent"] = case_summary["Percent"].round(1)
 
     encoding_tbl = pd.DataFrame(encoding_rows, columns=["Original Value", "Internal Value"])
 
@@ -922,7 +910,7 @@ def fit_linear_ols(df: pd.DataFrame, y_col: str, x_cols: List[str]):
     return model, data
 
 # =========================================================
-# Quantitative Tests & Confidence Intervals Helpers
+# Thuật toán Kiểm định Định lượng (t-tests, ANOVA, Nonparametric)
 # =========================================================
 def ci_combined_estimates(x: np.ndarray, alpha: float = 0.05, use_bootstrap: bool = False, n_boot: int = 5000, seed: int = 123) -> pd.DataFrame:
     x = np.asarray(x, dtype=float)
@@ -993,11 +981,9 @@ def categorical_candidate_cols(df: pd.DataFrame, exclude: Optional[List[str]] = 
     cols = []
     n = max(len(df), 1)
     for c in df.columns:
-        if c in exclude:
-            continue
+        if c in exclude: continue
         x = df[c].dropna()
-        if x.empty:
-            continue
+        if x.empty: continue
         is_num = pd.to_numeric(df[c], errors="coerce").notna().sum() == df[c].notna().sum()
         nunique = x.astype(str).nunique()
         if (not is_num) or nunique <= max(10, int(0.4 * n)):
@@ -1299,10 +1285,9 @@ def pairwise_wilcoxon_related(wide, alpha=0.05):
     return compact_numeric_df(pd.DataFrame(rows, columns=["Condition 1", "Condition 2", "Statistic", "Sig.", "Bonferroni Sig.", "Significant"]), 3)
 
 # =========================================================
-# Proportion CI & Diagnostic Probability Functions
+# Khoảng tin cậy Tỷ lệ & Xác suất Chẩn đoán (PPV, NPV)
 # =========================================================
 def proportion_ci_methods(x, n, conf_level=0.95):
-    from statsmodels.stats.proportion import proportion_confint
     alpha = 1 - conf_level
     rows = []
     methods = [("Wald", "normal"), ("Wilson", "wilson"), ("Exact (Clopper-Pearson)", "beta"), ("Agresti-Coull", "agresti_coull"), ("Jeffreys", "jeffreys")]
@@ -1363,7 +1348,7 @@ def diagnostic_probability_tables(sens_pct, spec_pct, prev_pct, population=1000)
     return summary, table, calc
 
 # =========================================================
-# Navigation State & Sidebar
+# Sidebar & Điều hướng
 # =========================================================
 if "section" not in st.session_state:
     st.session_state.section = "Home"
@@ -1427,7 +1412,7 @@ with st.sidebar:
             set_nav("Diagnostic Probability", "Predictive Values")
 
 # =========================================================
-# Page Routing
+# Chi tiết các trang
 # =========================================================
 section = st.session_state.section
 sub = st.session_state.sub
@@ -1540,6 +1525,22 @@ elif section == "Linear Regression":
                 norm_tbl = compact_numeric_df(pd.DataFrame([["Shapiro-Wilk", sh_stat, format_p_value(sh_p)]], columns=["Test", "Statistic", "Sig."]), 3)
                 show_table(norm_tbl, "Residual Normality")
                 download_table_block(norm_tbl, "linear_residual_normality", "Residual Normality")
+
+                if het_breuschpagan is not None:
+                    bp_lm, bp_p, bp_f, bp_fp = het_breuschpagan(model.resid, model.model.exog)
+                    bp_tbl = compact_numeric_df(pd.DataFrame([["Breusch-Pagan", bp_lm, format_p_value(bp_p)]], columns=["Test", "LM", "Sig."]), 3)
+                    show_table(bp_tbl, "Homoscedasticity")
+                    download_table_block(bp_tbl, "linear_homoscedasticity", "Homoscedasticity")
+
+                X_exog = model.model.exog
+                names = model.model.exog_names
+                vif_rows = []
+                for i in range(len(names)):
+                    if names[i] == "Intercept": continue
+                    vif_rows.append([clean_term_name(names[i]), variance_inflation_factor(X_exog, i)])
+                vif_df = compact_numeric_df(pd.DataFrame(vif_rows, columns=["Predictor", "VIF"]), 3)
+                show_table(vif_df, "Collinearity Statistics (VIF)")
+                download_table_block(vif_df, "linear_vif", "VIF")
             except Exception as e:
                 st.error(f"Diagnostics failed: {e}")
     elif sub == "Modeling":
@@ -1552,6 +1553,10 @@ elif section == "Linear Regression":
         if st.button("Run linear regression", type="primary", use_container_width=True):
             try:
                 model, data_used = fit_linear_ols(df, y_col, x_cols)
+                a = anova_summary_table(model, typ=1)
+                show_table(a, "ANOVA")
+                download_table_block(a, "linear_anova", "ANOVA")
+
                 b = model.summary2().tables[1].reset_index().rename(columns={"index": "Term"})
                 b["Term"] = b["Term"].apply(clean_term_name)
                 b = b.rename(columns={"Coef.": "B", "Std.Err.": "S.E.", "t": "t", "P>|t|": "Sig.", "[0.025": "CI 2.5%", "0.975]": "CI 97.5%"})
@@ -1571,15 +1576,32 @@ elif section == "Categorical Tests":
         st.markdown("## Categorical Tests — Contingency Table (r×c)")
         counts_df, observed_df = rc_contingency_ui(key="chisq", default_r=2, default_c=2)
         show_table(counts_df, "Observed Frequencies (with Totals)")
+        download_table_block(counts_df, "observed_frequencies_rc", "Observed Frequencies")
+
         if st.button("Run Chi-square", type="primary", use_container_width=True):
             try:
                 obs = get_observed_matrix(observed_df)
                 chi2, p, dof, expected = stats.chi2_contingency(obs, correction=False)
-                chi_tbl = pd.DataFrame([["Pearson Chi-Square", chi2, dof, format_p_value(p), "Yes" if p < 0.05 else "No"]],
-                                       columns=["Test", "Value", "df", "Asymp. Sig. (2-sided)", "Significant (p<0.05)"])
+
+                chi_tbl = pd.DataFrame([["Pearson Chi-Square", chi2, dof, format_p_value(p), "Yes" if p < 0.05 else "No", conclusion_text(p)]],
+                                       columns=["Test", "Value", "df", "Asymp. Sig. (2-sided)", "Significant (p<0.05)", "Conclusion"])
                 chi_tbl = compact_numeric_df(chi_tbl, decimals=3)
                 show_table(chi_tbl, "Chi-Square Tests")
                 download_table_block(chi_tbl, "chisq_tests", "Chi-Square Tests")
+
+                # Expected Frequencies Table
+                group_labels = st.session_state.get("ct_chisq", pd.DataFrame()).get("Group", pd.Series([""]*obs.shape[0])).tolist()
+                exp_df = pd.DataFrame(expected, columns=observed_df.columns)
+                exp_df.insert(0, "Group", group_labels[:exp_df.shape[0]])
+                exp_df["Total"] = exp_df[observed_df.columns].sum(axis=1)
+                total_row = {"Group": "Total"}
+                for c in observed_df.columns: total_row[c] = float(exp_df[c].sum())
+                total_row["Total"] = float(exp_df["Total"].sum())
+                exp_df = pd.concat([exp_df, pd.DataFrame([total_row])], ignore_index=True)
+                exp_df = compact_numeric_df(exp_df, decimals=3)
+                show_table(exp_df, "Expected Frequencies")
+                download_table_block(exp_df, "chisq_expected", "Expected Frequencies")
+
                 if obs.shape == (2, 2):
                     meas = two_by_two_measures(obs, alpha=0.05)
                     show_table(meas, "2×2 Measures (OR, RR, VE, Diagnostic Accuracy)")
@@ -1590,7 +1612,9 @@ elif section == "Categorical Tests":
     elif sub == "Fisher 2×2":
         st.markdown("## Categorical Tests — Fisher's Exact Test (2×2)")
         counts_df, observed_df = contingency_editor("fisher", ["Group 1", "Group 2"], ["Outcome +", "Outcome -"], np.array([[10, 30], [20, 15]]))
-        show_table(counts_df, "Observed Frequencies")
+        show_table(counts_df, "Observed Frequencies (with Totals)")
+        download_table_block(counts_df, "observed_frequencies_fisher", "Observed Frequencies")
+
         if st.button("Run Fisher's Exact", type="primary", use_container_width=True):
             try:
                 obs = require_2x2(observed_df)
@@ -1606,21 +1630,84 @@ elif section == "Categorical Tests":
                 st.error(f"Failed: {e}")
 
     elif sub == "Goodness-of-fit":
-        st.markdown("## Categorical Tests — Goodness-of-fit")
-        # Template and computation for Goodness of fit
-        gof_tpl = pd.DataFrame({"Category": ["A", "B", "C"], "Observed": [30, 50, 20]})
-        st.dataframe(gof_tpl, use_container_width=True)
+        st.markdown("## Categorical Tests — Goodness-of-fit (Chi-square)")
+        template_gof = pd.DataFrame({"Category": ["A", "B", "C"], "Observed": [30, 50, 20]})
+        st.download_button("Download Excel template", data=df_to_excel_bytes({"gof_template": template_gof}), file_name="gof_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        up = st.file_uploader("Upload GOF template (XLSX/CSV)", type=["xlsx", "csv"], key="gof_upload")
+        if up is not None:
+            df_gof = load_uploaded_file(up)
+            st.dataframe(df_gof, use_container_width=True)
+            if "Observed" in df_gof.columns:
+                obs = pd.to_numeric(df_gof["Observed"], errors="coerce").dropna().values
+                if st.button("Run Goodness-of-fit", type="primary", use_container_width=True):
+                    exp = np.ones(len(obs)) * (np.sum(obs) / len(obs))
+                    stat, p = stats.chisquare(f_obs=obs, f_exp=exp)
+                    gof_res = compact_numeric_df(pd.DataFrame([["Chi-square Goodness-of-fit", stat, len(obs)-1, format_p_value(p), "Yes" if p < 0.05 else "No"]], columns=["Test", "Chi-square", "df", "Sig.", "Significant (p<0.05)"]), 3)
+                    show_table(gof_res, "Chi-Square Goodness-of-Fit Test")
+                    download_table_block(gof_res, "gof_results", "Goodness-of-Fit")
 
     elif sub == "Mantel–Haenszel":
         st.markdown("## Categorical Tests — Mantel–Haenszel (Stratified 2×2)")
-        st.caption("Upload long-format data: Stratum, a, b, c, d.")
+        template_mh = pd.DataFrame({"Stratum": ["S1", "S2"], "a": [5, 8], "b": [10, 12], "c": [7, 6], "d": [20, 18]})
+        st.download_button("Download Excel template", data=df_to_excel_bytes({"mh_template": template_mh}), file_name="mh_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        up = st.file_uploader("Upload MH template (XLSX/CSV)", type=["xlsx", "csv"], key="mh_upload")
+        if up is not None:
+            df_mh = load_uploaded_file(up)
+            st.dataframe(df_mh, use_container_width=True)
+            if st.button("Run Mantel–Haenszel", type="primary", use_container_width=True):
+                tables = []
+                for _, r in df_mh.iterrows():
+                    tables.append(np.array([[r["a"], r["b"]], [r["c"], r["d"]]], dtype=int))
+                stbl = StratifiedTable(tables)
+                mh_or = float(stbl.oddsratio_pooled)
+                mh_ci = stbl.oddsratio_pooled_confint()
+                mh_p = float(stbl.test_null_odds().pvalue)
+                out = compact_numeric_df(pd.DataFrame([["Mantel-Haenszel Pooled OR", mh_or, mh_ci[0], mh_ci[1], format_p_value(mh_p), "Yes" if mh_p < 0.05 else "No"]], columns=["Test", "Common OR", "CI 2.5%", "CI 97.5%", "Sig.", "Significant (p<0.05)"]), 3)
+                show_table(out, "Mantel-Haenszel Test")
+                download_table_block(out, "mh_results", "Mantel–Haenszel")
 
 # -----------------------------
 # QUANTITATIVE TESTS
 # -----------------------------
 elif section == "Quantitative Tests":
+    def _show_template_downloads(kind: str):
+        if kind == "ttest":
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                tpl = pd.DataFrame({"group": ["A", "A", "B", "B"], "value": [10.2, 11.1, 13.0, 12.4]})
+                st.download_button("Template: Independent / 1-sample", data=df_to_excel_bytes({"ttest_ind": tpl}), file_name="ttest_independent_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            with c2:
+                tpl = pd.DataFrame({"subject": [1, 2, 3, 4], "before": [10.0, 11.2, 9.8, 12.0], "after": [11.0, 12.1, 10.3, 12.9]})
+                st.download_button("Template: Paired-samples", data=df_to_excel_bytes({"ttest_pair": tpl}), file_name="ttest_paired_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            with c3:
+                tpl = pd.DataFrame({"group": ["A", "A", "B", "B"], "value": [10.2, 11.1, 13.0, 12.4], "before": [10.0, 11.2, 9.8, 12.0], "after": [11.0, 12.1, 10.3, 12.9]})
+                st.download_button("Template: Combined format", data=df_to_excel_bytes({"ttest_comb": tpl}), file_name="ttest_combined_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        elif kind == "nonparam":
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                tpl = pd.DataFrame({"group": ["A", "A", "B", "B", "C", "C"], "value": [10.2, 11.1, 13.0, 12.4, 9.5, 9.9]})
+                st.download_button("Template: Independent groups", data=df_to_excel_bytes({"nonparam_ind": tpl}), file_name="nonparam_independent_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            with c2:
+                tpl = pd.DataFrame({"subject": [1, 2, 3, 4], "before": [10.0, 11.2, 9.8, 12.0], "after": [11.0, 12.1, 10.3, 12.9]})
+                st.download_button("Template: Wilcoxon paired", data=df_to_excel_bytes({"wilcox_pair": tpl}), file_name="wilcoxon_paired_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            with c3:
+                tpl = pd.DataFrame({"subject": [1,1,1,2,2,2,3,3,3], "time": ["T1","T2","T3","T1","T2","T3","T1","T2","T3"], "value": [10,12,11,9,10,8,13,15,14]})
+                st.download_button("Template: Friedman", data=df_to_excel_bytes({"friedman": tpl}), file_name="friedman_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        elif kind == "anova":
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                tpl = pd.DataFrame({"group": ["A","A","B","B","C","C"], "value": [10.2,11.1,13.0,12.4,9.5,9.9]})
+                st.download_button("Template: One-way ANOVA", data=df_to_excel_bytes({"anova_1w": tpl}), file_name="anova_oneway_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            with c2:
+                tpl = pd.DataFrame({"subject": [1,1,1,2,2,2,3,3,3], "time": ["T1","T2","T3","T1","T2","T3","T1","T2","T3"], "value": [10,12,11,9,10,8,13,15,14]})
+                st.download_button("Template: Repeated-measures", data=df_to_excel_bytes({"anova_rm": tpl}), file_name="anova_repeated_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            with c3:
+                tpl = pd.DataFrame({"factor_a": ["A","A","B","B","A","A","B","B"], "factor_b": ["T1","T1","T1","T1","T2","T2","T2","T2"], "value": [10,11,13,14,12,13,15,16]})
+                st.download_button("Template: Two-way ANOVA", data=df_to_excel_bytes({"anova_2w": tpl}), file_name="anova_twoway_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
     if sub == "t Tests":
         st.markdown("## Quantitative Tests — t Tests")
+        _show_template_downloads("ttest")
         up = st.file_uploader("Upload t-test data (XLSX/CSV)", type=["xlsx", "csv"], key="ttest_upload")
         if up is not None:
             df = load_uploaded_file(up)
@@ -1630,19 +1717,131 @@ elif section == "Quantitative Tests":
             if test_type == "One-sample t test":
                 v_col = st.selectbox("Test variable", numeric_cols)
                 mu_val = st.number_input("Test value (mu)", value=0.0)
-                if st.button("Run One-Sample t Test"):
+                if st.button("Run One-Sample t Test", type="primary", use_container_width=True):
                     arr = numeric_series_from_df(df, v_col).values
                     res_t = one_sample_ttest_table(arr, mu_val)
                     show_table(res_t, "One-Sample Test")
                     download_table_block(res_t, "one_sample_ttest", "One-Sample t Test")
+            elif test_type == "Independent-samples t test":
+                v_col = st.selectbox("Test variable", numeric_cols)
+                g_col = st.selectbox("Grouping variable", categorical_candidate_cols(df, exclude=[v_col]))
+                g1, g2 = level_selector(df, g_col, "ind_ttest")
+                if st.button("Run Independent-Samples t Test", type="primary", use_container_width=True):
+                    d = df[df[g_col].astype(str).isin([g1, g2])].copy()
+                    groups, lev_tbl, t_tbl = independent_ttest_tables(d, v_col, g_col)
+                    show_table(descriptives_for_groups(groups), "Group Statistics")
+                    download_table_block(descriptives_for_groups(groups), "ttest_ind_desc", "Group Statistics")
+                    show_table(lev_tbl, "Test of Homogeneity of Variances")
+                    download_table_block(lev_tbl, "ttest_ind_levene", "Homogeneity of Variances")
+                    show_table(t_tbl, "Independent Samples Test")
+                    download_table_block(t_tbl, "ttest_ind_results", "Independent Samples Test")
+            else:
+                c1, c2 = st.columns(2)
+                with c1: col1 = st.selectbox("Variable 1 (Before)", numeric_cols)
+                with c2: col2 = st.selectbox("Variable 2 (After)", [c for c in numeric_cols if c != col1])
+                if st.button("Run Paired-Samples t Test", type="primary", use_container_width=True):
+                    d = paired_numeric_data(df, col1, col2)
+                    groups, t_tbl = paired_ttest_table(d, col1, col2)
+                    show_table(t_tbl, "Paired Samples Test")
+                    download_table_block(t_tbl, "ttest_paired_results", "Paired Samples Test")
 
     elif sub == "Nonparametric Tests":
         st.markdown("## Quantitative Tests — Nonparametric Tests")
-        st.info("Select test types: Mann-Whitney U, Wilcoxon signed-rank, Kruskal-Wallis, or Friedman.")
+        _show_template_downloads("nonparam")
+        up = st.file_uploader("Upload nonparametric data (XLSX/CSV)", type=["xlsx", "csv"], key="nonparam_upload")
+        if up is not None:
+            df = load_uploaded_file(up)
+            st.dataframe(df.head(30), use_container_width=True)
+            numeric_cols = numeric_candidate_cols(df)
+            test_type = st.radio("Test", ["Mann-Whitney U", "Wilcoxon signed-rank (paired)", "Kruskal-Wallis", "Friedman"])
+            if test_type == "Mann-Whitney U":
+                v_col = st.selectbox("Test variable", numeric_cols)
+                g_col = st.selectbox("Grouping variable", categorical_candidate_cols(df, exclude=[v_col]))
+                g1, g2 = level_selector(df, g_col, "mw_test")
+                if st.button("Run Mann-Whitney U", type="primary", use_container_width=True):
+                    x1 = pd.to_numeric(df.loc[df[g_col].astype(str) == g1, v_col], errors="coerce").dropna().values
+                    x2 = pd.to_numeric(df.loc[df[g_col].astype(str) == g2, v_col], errors="coerce").dropna().values
+                    stat, p = stats.mannwhitneyu(x1, x2, alternative="two-sided")
+                    out = nonparam_result_table("Mann-Whitney U Test", stat, p)
+                    show_table(out, "Test Statistics")
+                    download_table_block(out, "mann_whitney_u", "Mann-Whitney U Test")
+            elif test_type == "Wilcoxon signed-rank (paired)":
+                c1, c2 = st.columns(2)
+                with c1: col1 = st.selectbox("Variable 1", numeric_cols)
+                with c2: col2 = st.selectbox("Variable 2", [c for c in numeric_cols if c != col1])
+                if st.button("Run Wilcoxon Test", type="primary", use_container_width=True):
+                    d = paired_numeric_data(df, col1, col2)
+                    stat, p = stats.wilcoxon(d[col1].values, d[col2].values, zero_method="wilcox", alternative="two-sided")
+                    out = nonparam_result_table("Wilcoxon Signed-Rank Test", stat, p)
+                    show_table(out, "Test Statistics")
+                    download_table_block(out, "wilcoxon_paired", "Wilcoxon Test")
+            elif test_type == "Kruskal-Wallis":
+                v_col = st.selectbox("Test variable", numeric_cols)
+                g_col = st.selectbox("Grouping variable", categorical_candidate_cols(df, exclude=[v_col]))
+                if st.button("Run Kruskal-Wallis", type="primary", use_container_width=True):
+                    d = long_numeric_group_data(df, v_col, g_col)
+                    groups = [v[v_col].astype(float).values for _, v in d.groupby(g_col)]
+                    stat, p = stats.kruskal(*groups)
+                    out = nonparam_result_table("Kruskal-Wallis Test", stat, p)
+                    show_table(out, "Test Statistics")
+                    download_table_block(out, "kruskal_wallis", "Kruskal-Wallis")
+            elif test_type == "Friedman":
+                sub_col = selectbox_default("Subject ID", list(df.columns), default_subject_col(df))
+                val_col = selectbox_default("Test variable", numeric_cols, default_numeric_col(df))
+                win_col = selectbox_default("Within-subject factor", categorical_candidate_cols(df, exclude=[sub_col, val_col]))
+                if st.button("Run Friedman Test", type="primary", use_container_width=True):
+                    d = df[[sub_col, win_col, val_col]].dropna()
+                    wide = d.pivot_table(index=sub_col, columns=win_col, values=val_col, aggfunc="mean").dropna()
+                    stat, p = stats.friedmanchisquare(*[wide[c].values for c in wide.columns])
+                    out = nonparam_result_table("Friedman Test", stat, p)
+                    show_table(out, "Test Statistics")
+                    download_table_block(out, "friedman_test", "Friedman Test")
 
     elif sub == "ANOVA":
         st.markdown("## Quantitative Tests — ANOVA")
-        st.info("Run One-way ANOVA, Repeated-measures ANOVA, or Two-way ANOVA.")
+        _show_template_downloads("anova")
+        up = st.file_uploader("Upload ANOVA data (XLSX/CSV)", type=["xlsx", "csv"], key="anova_upload")
+        if up is not None:
+            df = load_uploaded_file(up)
+            st.dataframe(df.head(30), use_container_width=True)
+            numeric_cols = numeric_candidate_cols(df)
+            anova_type = st.radio("ANOVA Type", ["One-way ANOVA", "One-way repeated-measures ANOVA", "Two-way ANOVA"])
+            if anova_type == "One-way ANOVA":
+                v_col = st.selectbox("Dependent variable", numeric_cols)
+                f_col = st.selectbox("Factor", categorical_candidate_cols(df, exclude=[v_col]))
+                if st.button("Run One-way ANOVA", type="primary", use_container_width=True):
+                    d = long_numeric_group_data(df, v_col, f_col)
+                    model = smf.ols(f'Q("{v_col}") ~ C(Q("{f_col}"))', data=d).fit()
+                    a_tbl = anova_summary_table(model, typ=2)
+                    show_table(a_tbl, "ANOVA Table")
+                    download_table_block(a_tbl, "anova_oneway", "ANOVA")
+                    if d[f_col].nunique() >= 3:
+                        tukey = tukey_posthoc_table(d, v_col, f_col)
+                        show_table(tukey, "Tukey HSD Post-hoc")
+                        download_table_block(tukey, "anova_tukey", "Tukey HSD")
+            elif anova_type == "One-way repeated-measures ANOVA":
+                sub_col = selectbox_default("Subject ID", list(df.columns), default_subject_col(df))
+                val_col = selectbox_default("Dependent variable", numeric_cols, default_numeric_col(df))
+                win_col = selectbox_default("Within-subject factor", categorical_candidate_cols(df, exclude=[sub_col, val_col]))
+                if st.button("Run Repeated-Measures ANOVA", type="primary", use_container_width=True):
+                    d = df[[sub_col, win_col, val_col]].dropna()
+                    rm = sm.stats.AnovaRM(d, depvar=val_col, subject=sub_col, within=[win_col]).fit()
+                    out = rm.anova_table.reset_index().rename(columns={"index": "Source", "F Value": "F", "Num DF": "df1", "Den DF": "df2", "Pr > F": "Sig."})
+                    out["Sig."] = out["Sig."].apply(format_p_value)
+                    out = compact_numeric_df(out, 3)
+                    show_table(out, "Tests of Within-Subjects Effects")
+                    download_table_block(out, "anova_rm", "Repeated-Measures ANOVA")
+            else:
+                v_col = st.selectbox("Dependent variable", numeric_cols)
+                f_a = st.selectbox("Factor A", categorical_candidate_cols(df, exclude=[v_col]))
+                f_b = st.selectbox("Factor B", categorical_candidate_cols(df, exclude=[v_col, f_a]))
+                if st.button("Run Two-way ANOVA", type="primary", use_container_width=True):
+                    d = df[[v_col, f_a, f_b]].dropna()
+                    formula = f'Q("{v_col}") ~ C(Q("{f_a}")) * C(Q("{f_b}"))'
+                    model = smf.ols(formula=formula, data=d).fit()
+                    a_tbl = anova_summary_table(model, typ=2)
+                    show_table(a_tbl, "Tests of Between-Subjects Effects")
+                    download_table_block(a_tbl, "anova_twoway", "Two-way ANOVA")
 
 # -----------------------------
 # CONFIDENCE INTERVALS — PROPORTION
@@ -1753,7 +1952,6 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
                     "IQR": iqr
                 }])
                 desc_df = compact_numeric_df(desc_df, decimals=3)
-
                 show_table(desc_df, "Descriptive Statistics")
                 download_table_block(desc_df, "ci_descriptive_statistics", "Descriptive Statistics")
 
@@ -1784,7 +1982,6 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
                     "Phân phối chuẩn": norm_status
                 }])
                 normality_diag_df = compact_numeric_df(normality_diag_df, decimals=3)
-
                 show_table(normality_diag_df, "Normality & Outlier Diagnostics")
                 download_table_block(normality_diag_df, "ci_normality_diagnostics", "Normality & Outlier Diagnostics")
 
