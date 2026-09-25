@@ -181,7 +181,6 @@ section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
     unsafe_allow_html=True
 )
 
-# Header
 st.markdown(
     """
 <div class="header-banner">
@@ -910,7 +909,7 @@ def fit_linear_ols(df: pd.DataFrame, y_col: str, x_cols: List[str]):
     return model, data
 
 # =========================================================
-# Thuật toán Kiểm định Định lượng (t-tests, ANOVA, Nonparametric)
+# Thuật toán Ước lượng Khoảng tin cậy (CI)
 # =========================================================
 def ci_combined_estimates(x: np.ndarray, alpha: float = 0.05, use_bootstrap: bool = False, n_boot: int = 5000, seed: int = 123) -> pd.DataFrame:
     x = np.asarray(x, dtype=float)
@@ -963,6 +962,36 @@ def ci_combined_estimates(x: np.ndarray, alpha: float = 0.05, use_bootstrap: boo
 
     return compact_numeric_df(df_res, decimals=3)
 
+def ci_from_summary_stats(n: int, mean_val: float, s_val: float, s2_val: float, alpha: float = 0.05) -> pd.DataFrame:
+    lo_pct = alpha / 2 * 100
+    hi_pct = (1 - alpha / 2) * 100
+    lo_label = f"CI {lo_pct:.1f}%" if lo_pct % 1 != 0 else f"CI {lo_pct:.0f}%"
+    hi_label = f"CI {hi_pct:.1f}%" if hi_pct % 1 != 0 else f"CI {hi_pct:.0f}%"
+
+    tcrit = float(stats.t.ppf(1 - alpha / 2, df=n - 1))
+    se = s_val / math.sqrt(n)
+    mean_lo = mean_val - tcrit * se
+    mean_hi = mean_val + tcrit * se
+
+    chi2_lo = float(stats.chi2.ppf(alpha / 2, df=n - 1))
+    chi2_hi = float(stats.chi2.ppf(1 - alpha / 2, df=n - 1))
+    var_lo = (n - 1) * s2_val / chi2_hi
+    var_hi = (n - 1) * s2_val / chi2_lo
+
+    sd_lo = math.sqrt(max(0.0, var_lo))
+    sd_hi = math.sqrt(max(0.0, var_hi))
+
+    df_res = pd.DataFrame([
+        ["Mean", mean_val, mean_lo, mean_hi],
+        ["Std. Deviation", s_val, sd_lo, sd_hi],
+        ["Variance", s2_val, var_lo, var_hi],
+    ], columns=["Parameter", "Estimate", lo_label, hi_label])
+
+    return compact_numeric_df(df_res, decimals=3)
+
+# =========================================================
+# Thuật toán Kiểm định Định lượng
+# =========================================================
 def numeric_series_from_df(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce").dropna()
 
@@ -1046,18 +1075,6 @@ def long_numeric_group_data(df: pd.DataFrame, value_col: str, group_col: str) ->
         raise ValueError("No valid numeric observations after removing missing values.")
     return d
 
-def normality_by_group_table(groups: Dict[str, np.ndarray]) -> pd.DataFrame:
-    rows = []
-    for name, arr in groups.items():
-        x = pd.to_numeric(pd.Series(arr), errors="coerce").dropna().astype(float).values
-        n = len(x)
-        if 3 <= n <= 5000:
-            stat, pval = stats.shapiro(x)
-        else:
-            stat, pval = np.nan, np.nan
-        rows.append([name, n, stat, format_p_value(pval), "Yes" if isinstance(pval, float) and not np.isnan(pval) and pval >= 0.05 else "No"])
-    return compact_numeric_df(pd.DataFrame(rows, columns=["Group", "N", "Shapiro-Wilk", "Sig.", "Normal assumption"]), 3)
-
 def descriptives_for_groups(groups: Dict[str, np.ndarray]) -> pd.DataFrame:
     rows = []
     for name, arr in groups.items():
@@ -1076,26 +1093,6 @@ def conclusion_text(pval: float, alpha: float = 0.05, effect_label: str = "diffe
         return f"Statistically significant {effect_label} (p < {alpha:.2f})."
     return f"No statistically significant {effect_label} (p >= {alpha:.2f})."
 
-def assumption_recommendation(normal_ok: bool, equal_var_ok=None, parametric_name: str = "parametric test", nonparametric_name: str = "nonparametric alternative") -> str:
-    if not normal_ok:
-        return f"Normality assumption is not met. Prefer {nonparametric_name}."
-    if equal_var_ok is False:
-        return f"Normality is acceptable but equal variances are not met. Prefer Welch/robust version of {parametric_name}."
-    return f"Main assumptions are acceptable. {parametric_name} can be used."
-
-def normality_overall_ok(groups: Dict[str, np.ndarray]) -> bool:
-    ok = True
-    for arr in groups.values():
-        x = pd.to_numeric(pd.Series(arr), errors="coerce").dropna().astype(float).values
-        if 3 <= len(x) <= 5000:
-            _, pval = stats.shapiro(x)
-            if float(pval) < 0.05:
-                ok = False
-    return ok
-
-def recommendation_table(recommendation: str) -> pd.DataFrame:
-    return pd.DataFrame([[recommendation]], columns=["Recommendation"])
-
 def nonparam_result_table(test_name: str, statistic: float, pval: float) -> pd.DataFrame:
     out = pd.DataFrame([[test_name, statistic, format_p_value(pval), "Yes" if pval < 0.05 else "No", conclusion_text(pval)]], columns=["Test", "Statistic", "Sig.", "Significant (p<0.05)", "Conclusion"])
     return compact_numeric_df(out, 3)
@@ -1105,34 +1102,6 @@ def ttest_result_table(test_name: str, statistic: float, dfree, pval: float, mea
         ci = (np.nan, np.nan)
     out = pd.DataFrame([[test_name, statistic, dfree, format_p_value(pval), mean_diff, ci[0], ci[1], "Yes" if pval < 0.05 else "No", conclusion_text(pval)]], columns=["Test", "t", "df", "Sig. (2-tailed)", "Mean Difference", "CI 2.5%", "CI 97.5%", "Significant (p<0.05)", "Conclusion"])
     return compact_numeric_df(out, 3)
-
-def chi_square_expected_assumption_table(expected: np.ndarray) -> pd.DataFrame:
-    expected = np.asarray(expected, dtype=float)
-    total_cells = expected.size
-    cells_lt5 = int((expected < 5).sum())
-    min_expected = float(np.min(expected)) if total_cells else np.nan
-    pct_lt5 = cells_lt5 / total_cells * 100 if total_cells else np.nan
-    ok_strict = bool(cells_lt5 == 0)
-    ok_spss = bool(min_expected >= 1 and pct_lt5 <= 20)
-    return compact_numeric_df(pd.DataFrame([[total_cells, cells_lt5, pct_lt5, min_expected, "Yes" if ok_strict else "No", "Yes" if ok_spss else "No"]], columns=["Cells", "Expected < 5", "% Expected < 5", "Minimum Expected Count", "All expected >= 5", "Common rule acceptable"]), 3)
-
-def chi_square_guidance(obs: np.ndarray, expected: np.ndarray) -> str:
-    expected = np.asarray(expected, dtype=float)
-    if (expected >= 5).all():
-        return "Expected count condition is satisfied. Pearson Chi-square is appropriate."
-    if obs.shape == (2, 2):
-        return "Some expected counts are below 5. Prefer Fisher's Exact Test for a 2x2 table."
-    return "Some expected counts are below 5. Consider combining sparse categories or using an exact/Monte Carlo test."
-
-def chi_square_alternative_test_table(obs: np.ndarray, expected: np.ndarray, n_resamples: int = 10000, seed: int = 123) -> pd.DataFrame:
-    obs = np.asarray(obs, dtype=int)
-    expected = np.asarray(expected, dtype=float)
-    if obs.shape == (2, 2):
-        oddsratio, pval = stats.fisher_exact(obs, alternative="two-sided")
-        out = pd.DataFrame([["Fisher's Exact Test", oddsratio, format_p_value(pval), "Yes" if pval < 0.05 else "No", conclusion_text(pval)]], columns=["Alternative test", "Statistic / Odds Ratio", "Sig.", "Significant (p<0.05)", "Conclusion"])
-        return compact_numeric_df(out, 3)
-
-    return pd.DataFrame([["Exact / Monte Carlo test", "", "", "", "For tables larger than 2x2, combine sparse categories or use Monte Carlo methods."]], columns=["Alternative test", "Statistic / Odds Ratio", "Sig.", "Significant (p<0.05)", "Conclusion"])
 
 def one_sample_ttest_table(x: np.ndarray, mu: float, alpha: float = 0.05) -> pd.DataFrame:
     x = np.asarray(x, dtype=float)
@@ -1191,51 +1160,6 @@ def anova_summary_table(model, typ=2) -> pd.DataFrame:
             a[col] = pd.to_numeric(a[col], errors="coerce").round(3)
     return a.apply(lambda col: col.map(clean_cell))
 
-def effect_size_table(rows):
-    return compact_numeric_df(pd.DataFrame(rows, columns=["Effect size", "Estimate", "Interpretation"]), 3)
-
-def cohen_d_one_sample(x, mu=0.0):
-    x = pd.to_numeric(pd.Series(x), errors="coerce").dropna().astype(float).values
-    if len(x) < 2: return np.nan
-    sd = np.std(x, ddof=1)
-    return np.nan if sd == 0 else float((np.mean(x) - mu) / sd)
-
-def cohen_interpretation(d):
-    try: a = abs(float(d))
-    except Exception: return ""
-    if np.isnan(a): return ""
-    if a < 0.2: return "Very small"
-    if a < 0.5: return "Small"
-    if a < 0.8: return "Medium"
-    return "Large"
-
-def cramers_v_from_table(obs):
-    obs = np.asarray(obs, dtype=float)
-    if obs.ndim != 2 or obs.sum() <= 0: return np.nan
-    chi2, _, _, _ = stats.chi2_contingency(obs, correction=False)
-    n = obs.sum()
-    k = min(obs.shape[0]-1, obs.shape[1]-1)
-    return np.nan if k <= 0 else float(math.sqrt(chi2/(n*k)))
-
-def chi_square_effect_table(obs):
-    v = cramers_v_from_table(obs)
-    return effect_size_table([["Cramer's V", v, "Association strength for contingency tables"]])
-
-def eta_squared_from_anova_table(a):
-    df = a.copy()
-    if "Sum Sq" not in df.columns or "Source" not in df.columns:
-        return pd.DataFrame()
-    ss = pd.to_numeric(df["Sum Sq"], errors="coerce")
-    total = ss.sum(skipna=True)
-    rows = []
-    for _, r in df.iterrows():
-        src = str(r.get("Source", ""))
-        if src.lower() in {"residual", "error"}: continue
-        val = pd.to_numeric(pd.Series([r.get("Sum Sq")]), errors="coerce").iloc[0]
-        eta = val / total if total and not np.isnan(val) else np.nan
-        rows.append([src, eta])
-    return compact_numeric_df(pd.DataFrame(rows, columns=["Source", "Eta squared (η²)"]), 3)
-
 def tukey_posthoc_table(d, value_col, group_col, alpha=0.05):
     dd = d[[value_col, group_col]].dropna().copy()
     dd[value_col] = pd.to_numeric(dd[value_col], errors="coerce")
@@ -1244,45 +1168,6 @@ def tukey_posthoc_table(d, value_col, group_col, alpha=0.05):
     res = pairwise_tukeyhsd(endog=dd[value_col].astype(float), groups=dd[group_col].astype(str), alpha=alpha)
     tbl = pd.DataFrame(res.summary().data[1:], columns=res.summary().data[0])
     return compact_numeric_df(tbl, 3)
-
-def dunn_posthoc_table(d, value_col, group_col, alpha=0.05):
-    dd = d[[value_col, group_col]].dropna().copy()
-    dd[value_col] = pd.to_numeric(dd[value_col], errors="coerce")
-    dd[group_col] = dd[group_col].astype(str)
-    dd = dd.dropna()
-    groups = sorted(dd[group_col].unique())
-    if len(groups) < 2: return pd.DataFrame()
-    ranks = stats.rankdata(dd[value_col].values)
-    dd = dd.assign(_rank=ranks)
-    n = len(dd)
-    tie_counts = pd.Series(dd[value_col]).value_counts().values
-    tie_corr = 1 - np.sum(tie_counts**3 - tie_counts) / (n**3 - n) if n > 1 else 1
-    rows = []
-    m = len(groups) * (len(groups)-1) / 2
-    for i in range(len(groups)):
-        for j in range(i+1, len(groups)):
-            g1, g2 = groups[i], groups[j]
-            r1 = dd.loc[dd[group_col] == g1, "_rank"]
-            r2 = dd.loc[dd[group_col] == g2, "_rank"]
-            se = math.sqrt((n*(n+1)/12) * (1/len(r1) + 1/len(r2)) * tie_corr)
-            z = (r1.mean() - r2.mean()) / se if se > 0 else np.nan
-            p_raw = 2 * stats.norm.sf(abs(z)) if not np.isnan(z) else np.nan
-            p_adj = min(1.0, p_raw * m) if not np.isnan(p_raw) else np.nan
-            rows.append([g1, g2, z, format_p_value(p_raw), format_p_value(p_adj), "Yes" if p_adj < alpha else "No"])
-    return compact_numeric_df(pd.DataFrame(rows, columns=["Group 1", "Group 2", "Z", "Sig.", "Bonferroni Sig.", "Significant"]), 3)
-
-def pairwise_wilcoxon_related(wide, alpha=0.05):
-    cols = list(wide.columns)
-    rows = []
-    m = len(cols) * (len(cols)-1) / 2
-    for i in range(len(cols)):
-        for j in range(i+1, len(cols)):
-            a = wide[cols[i]].values
-            b = wide[cols[j]].values
-            stat, pval = stats.wilcoxon(a, b, zero_method="wilcox", alternative="two-sided")
-            p_adj = min(1.0, float(pval) * m)
-            rows.append([str(cols[i]), str(cols[j]), float(stat), format_p_value(float(pval)), format_p_value(p_adj), "Yes" if p_adj < alpha else "No"])
-    return compact_numeric_df(pd.DataFrame(rows, columns=["Condition 1", "Condition 2", "Statistic", "Sig.", "Bonferroni Sig.", "Significant"]), 3)
 
 # =========================================================
 # Khoảng tin cậy Tỷ lệ & Xác suất Chẩn đoán (PPV, NPV)
@@ -1589,7 +1474,6 @@ elif section == "Categorical Tests":
                 show_table(chi_tbl, "Chi-Square Tests")
                 download_table_block(chi_tbl, "chisq_tests", "Chi-Square Tests")
 
-                # Expected Frequencies Table
                 group_labels = st.session_state.get("ct_chisq", pd.DataFrame()).get("Group", pd.Series([""]*obs.shape[0])).tolist()
                 exp_df = pd.DataFrame(expected, columns=observed_df.columns)
                 exp_df.insert(0, "Group", group_labels[:exp_df.shape[0]])
@@ -1854,7 +1738,13 @@ elif section == "Confidence Intervals" and sub == "Proportion":
     with c2:
         n_tot = st.number_input("Total sample size (n)", min_value=1, value=100, step=1)
     with c3:
-        conf_l = st.slider("Confidence level", 0.80, 0.99, 0.95, 0.01)
+        conf_prop_choice = st.radio("Độ tin cậy", ["95%", "99%", "Khác..."], horizontal=True, key="prop_conf_choice")
+        if conf_prop_choice == "95%":
+            conf_l = 0.95
+        elif conf_prop_choice == "99%":
+            conf_l = 0.99
+        else:
+            conf_l = st.slider("Độ tin cậy tùy chỉnh", 0.80, 0.999, 0.90, 0.005, format="%.3f", key="prop_conf_custom")
 
     if int(x_evt) > int(n_tot):
         st.error("Number with event cannot be greater than total sample size.")
@@ -1879,9 +1769,15 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
         use_container_width=False
     )
 
-    method = st.radio("Input method", ["Upload file (template)", "Paste values"], horizontal=True)
+    method = st.radio(
+        "Input method",
+        ["Upload file (template)", "Paste values", "Enter summary statistics (n, Mean, s/s²)"],
+        horizontal=True
+    )
 
     x = None
+    summary_params = None
+
     if method == "Upload file (template)":
         up = st.file_uploader("Upload CI template (XLSX/CSV)", type=["xlsx", "csv"], key="ci_upload")
         if up is not None:
@@ -1891,7 +1787,7 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
                 st.error("Template must have a column named 'X'.")
             else:
                 x = pd.to_numeric(df["X"], errors="coerce").dropna().values
-    else:
+    elif method == "Paste values":
         txt = st.text_area(
             "Paste numeric values (separated by ; , space or newline)",
             value="3;5;6;8;4;5;8;5;9",
@@ -1902,107 +1798,203 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
             parts = [p for p in normalized.split() if p.strip()]
             vals = pd.to_numeric(pd.Series(parts), errors="coerce").dropna()
             x = vals.values
+    else:
+        # Nhập số liệu tóm tắt (n, Mean, s hoặc s²)
+        st.markdown("#### Nhập tham số thống kê mẫu")
+        c1, c2 = st.columns(2)
+        with c1:
+            n_input = st.number_input("Cỡ mẫu (n)", min_value=2, value=30, step=1, key="ci_sum_n")
+            mean_input = st.number_input("Trung bình mẫu (Mean, x̄)", value=5.889, format="%.4f", key="ci_sum_mean")
+        with c2:
+            disp_choice = st.radio(
+                "Chọn tham số độ phân tán để nhập:",
+                ["Độ lệch chuẩn (s)", "Phương sai (s²)"],
+                horizontal=True,
+                key="ci_sum_disp_choice"
+            )
+            if disp_choice == "Độ lệch chuẩn (s)":
+                s_input = st.number_input("Độ lệch chuẩn mẫu (s)", min_value=0.0001, value=2.028, format="%.4f", key="ci_sum_s")
+                var_input = s_input ** 2
+                st.caption(f"Phương sai tương ứng ($s^2$): **{var_input:.4f}**")
+            else:
+                var_input = st.number_input("Phương sai mẫu (s²)", min_value=0.0001, value=4.111, format="%.4f", key="ci_sum_var")
+                s_input = math.sqrt(var_input)
+                st.caption(f"Độ lệch chuẩn tương ứng ($s$): **{s_input:.4f}**")
 
-    conf_level = st.slider("Confidence level", min_value=0.80, max_value=0.99, value=0.95, step=0.01)
+        summary_params = {
+            "n": int(n_input),
+            "mean": float(mean_input),
+            "s": float(s_input),
+            "s2": float(var_input)
+        }
+
+    # Chọn độ tin cậy: Mặc định 95, 99 và Khác
+    st.markdown("#### Độ tin cậy (Confidence level)")
+    c_conf1, c_conf2 = st.columns([1, 1])
+    with c_conf1:
+        conf_choice = st.radio(
+            "Chọn mức tin cậy:",
+            ["95%", "99%", "Khác..."],
+            index=0,
+            horizontal=True,
+            key="ci_conf_choice"
+        )
+    with c_conf2:
+        if conf_choice == "95%":
+            conf_level = 0.95
+        elif conf_choice == "99%":
+            conf_level = 0.99
+        else:
+            conf_level = st.slider(
+                "Nhập mức tin cậy tùy chỉnh",
+                min_value=0.80,
+                max_value=0.999,
+                value=0.90,
+                step=0.005,
+                format="%.3f",
+                key="ci_conf_custom"
+            )
+
     alpha_tail = 1.0 - conf_level
 
-    force_boot = st.checkbox("Force bootstrap (recommended if non-normal)", value=False)
-    n_boot = st.number_input("Bootstrap resamples", min_value=1000, max_value=20000, value=5000, step=500)
+    # Bootstrap chỉ khả dụng khi có dữ liệu thô
+    if method in ["Upload file (template)", "Paste values"]:
+        c_boot1, c_boot2 = st.columns(2)
+        with c_boot1:
+            force_boot = st.checkbox("Force bootstrap (recommended if non-normal)", value=False, key="ci_force_boot")
+        with c_boot2:
+            n_boot = st.number_input("Bootstrap resamples", min_value=1000, max_value=20000, value=5000, step=500, key="ci_n_boot")
+    else:
+        force_boot = False
+        n_boot = 5000
 
     st.markdown("### Confidence Interval Results")
     if st.button("Compute CI", type="primary", use_container_width=True):
-        if x is None or len(x) < 2:
-            st.warning("Vui lòng nhập ít nhất 2 giá trị số hợp lệ.")
-        else:
+        if method == "Enter summary statistics (n, Mean, s/s²)":
             try:
-                n = int(len(x))
-                mean_v = float(np.mean(x))
-                median_v = float(np.median(x))
-                s_v = float(np.std(x, ddof=1))
-                s2_v = float(np.var(x, ddof=1))
-                min_v = float(np.min(x))
-                max_v = float(np.max(x))
-                rng_v = max_v - min_v
+                # 1. Bảng tóm tắt tham số mẫu
+                n_v = summary_params["n"]
+                m_v = summary_params["mean"]
+                s_v = summary_params["s"]
+                s2_v = summary_params["s2"]
+                se_v = s_v / math.sqrt(n_v)
 
-                q1 = float(np.percentile(x, 25))
-                q3 = float(np.percentile(x, 75))
-                iqr = q3 - q1
-                lower_bound = q1 - 1.5 * iqr
-                upper_bound = q3 + 1.5 * iqr
-                has_outliers = "Có" if np.any((x < lower_bound) | (x > upper_bound)) else "Không"
-
-                mode_res = stats.mode(x, keepdims=True)
-                mode_v = mode_res.mode[0] if len(mode_res.mode) > 0 else np.nan
-
-                # =========================================================
-                # BẢNG 1: THỐNG KÊ MÔ TẢ (Descriptive Statistics thuần túy)
-                # =========================================================
-                desc_df = pd.DataFrame([{
-                    "n": n,
-                    "Mean": mean_v,
-                    "Mode": mode_v,
-                    "Median": median_v,
+                desc_summary_df = pd.DataFrame([{
+                    "n": n_v,
+                    "Mean": m_v,
                     "s": s_v,
                     "s²": s2_v,
-                    "Min": min_v,
-                    "Max": max_v,
-                    "Range": rng_v,
-                    "Q1": q1,
-                    "Q3": q3,
-                    "IQR": iqr
+                    "Std. Error (SE)": se_v
                 }])
-                desc_df = compact_numeric_df(desc_df, decimals=3)
-                show_table(desc_df, "Descriptive Statistics")
-                download_table_block(desc_df, "ci_descriptive_statistics", "Descriptive Statistics")
+                desc_summary_df = compact_numeric_df(desc_summary_df, decimals=3)
+                show_table(desc_summary_df, "Sample Summary Statistics")
+                download_table_block(desc_summary_df, "ci_summary_statistics", "Sample Summary Statistics")
 
-                # =========================================================
-                # BẢNG 2: KIỂM ĐỊNH CHUẨN VÀ NGOẠI LAI (Normality & Diagnostics)
-                # =========================================================
-                if 3 <= n <= 5000:
-                    sw_stat, sw_p = stats.shapiro(x)
-                else:
-                    sw_stat, sw_p = np.nan, np.nan
-
-                if lilliefors is not None and n >= 4:
-                    ks_stat, ks_p = lilliefors(x, dist='norm')
-                else:
-                    ks_res = stats.kstest(x, 'norm', args=(mean_v, s_v))
-                    ks_stat, ks_p = float(ks_res.statistic), float(ks_res.pvalue)
-
-                is_normal = (sw_p >= 0.05) if not np.isnan(sw_p) else ((ks_p >= 0.05) if not np.isnan(ks_p) else True)
-                norm_status = "Có" if is_normal else "Không"
-
-                normality_diag_df = pd.DataFrame([{
-                    "[Q1-1.5IQR; Q3+1.5IQR]": f"[{smart_round_val(lower_bound, 3)}; {smart_round_val(upper_bound, 3)}]",
-                    "Outliers": has_outliers,
-                    "Statistic (Shapiro-Wilk)": sw_stat,
-                    "Sig. (Shapiro-Wilk)": format_p_value(sw_p),
-                    "Statistic (Kolmogorov-Smirnov)": ks_stat,
-                    "Sig. (Kolmogorov-Smirnov)": format_p_value(ks_p),
-                    "Phân phối chuẩn": norm_status
-                }])
-                normality_diag_df = compact_numeric_df(normality_diag_df, decimals=3)
-                show_table(normality_diag_df, "Normality & Outlier Diagnostics")
-                download_table_block(normality_diag_df, "ci_normality_diagnostics", "Normality & Outlier Diagnostics")
-
-                # =========================================================
-                # BẢNG 3: BẢNG ƯỚC LƯỢNG KHOẢNG TIN CẬY GỘP DUY NHẤT
-                # =========================================================
-                use_boot = force_boot or (not is_normal)
-                method_title = "Bootstrap" if use_boot else "Parametric"
-
-                ci_table = ci_combined_estimates(
-                    x=x,
-                    alpha=alpha_tail,
-                    use_bootstrap=use_boot,
-                    n_boot=int(n_boot)
+                # 2. Bảng khoảng tin cậy gộp duy nhất theo Student-t & Chi-square
+                ci_table = ci_from_summary_stats(
+                    n=n_v,
+                    mean_val=m_v,
+                    s_val=s_v,
+                    s2_val=s2_v,
+                    alpha=alpha_tail
                 )
-
-                show_table(ci_table, f"Confidence Interval Estimates ({method_title})")
-                download_table_block(ci_table, "ci_estimates_combined", f"Confidence Interval Estimates ({method_title})")
-
+                show_table(ci_table, "Confidence Interval Estimates (Parametric: Student-t & Chi-square)")
+                download_table_block(ci_table, "ci_estimates_combined", "Confidence Interval Estimates")
             except Exception as e:
                 st.error(f"Tính toán thất bại: {e}")
+        else:
+            if x is None or len(x) < 2:
+                st.warning("Vui lòng nhập ít nhất 2 giá trị số hợp lệ.")
+            else:
+                try:
+                    n = int(len(x))
+                    mean_v = float(np.mean(x))
+                    median_v = float(np.median(x))
+                    s_v = float(np.std(x, ddof=1))
+                    s2_v = float(np.var(x, ddof=1))
+                    min_v = float(np.min(x))
+                    max_v = float(np.max(x))
+                    rng_v = max_v - min_v
+
+                    q1 = float(np.percentile(x, 25))
+                    q3 = float(np.percentile(x, 75))
+                    iqr = q3 - q1
+                    lower_bound = q1 - 1.5 * iqr
+                    upper_bound = q3 + 1.5 * iqr
+                    has_outliers = "Có" if np.any((x < lower_bound) | (x > upper_bound)) else "Không"
+
+                    mode_res = stats.mode(x, keepdims=True)
+                    mode_v = mode_res.mode[0] if len(mode_res.mode) > 0 else np.nan
+
+                    # =========================================================
+                    # BẢNG 1: THỐNG KÊ MÔ TẢ (Descriptive Statistics thuần túy)
+                    # =========================================================
+                    desc_df = pd.DataFrame([{
+                        "n": n,
+                        "Mean": mean_v,
+                        "Mode": mode_v,
+                        "Median": median_v,
+                        "s": s_v,
+                        "s²": s2_v,
+                        "Min": min_v,
+                        "Max": max_v,
+                        "Range": rng_v,
+                        "Q1": q1,
+                        "Q3": q3,
+                        "IQR": iqr
+                    }])
+                    desc_df = compact_numeric_df(desc_df, decimals=3)
+                    show_table(desc_df, "Descriptive Statistics")
+                    download_table_block(desc_df, "ci_descriptive_statistics", "Descriptive Statistics")
+
+                    # =========================================================
+                    # BẢNG 2: KIỂM ĐỊNH CHUẨN VÀ NGOẠI LAI (Normality & Diagnostics)
+                    # =========================================================
+                    if 3 <= n <= 5000:
+                        sw_stat, sw_p = stats.shapiro(x)
+                    else:
+                        sw_stat, sw_p = np.nan, np.nan
+
+                    if lilliefors is not None and n >= 4:
+                        ks_stat, ks_p = lilliefors(x, dist='norm')
+                    else:
+                        ks_res = stats.kstest(x, 'norm', args=(mean_v, s_v))
+                        ks_stat, ks_p = float(ks_res.statistic), float(ks_res.pvalue)
+
+                    is_normal = (sw_p >= 0.05) if not np.isnan(sw_p) else ((ks_p >= 0.05) if not np.isnan(ks_p) else True)
+                    norm_status = "Có" if is_normal else "Không"
+
+                    normality_diag_df = pd.DataFrame([{
+                        "[Q1-1.5IQR; Q3+1.5IQR]": f"[{smart_round_val(lower_bound, 3)}; {smart_round_val(upper_bound, 3)}]",
+                        "Outliers": has_outliers,
+                        "Statistic (Shapiro-Wilk)": sw_stat,
+                        "Sig. (Shapiro-Wilk)": format_p_value(sw_p),
+                        "Statistic (Kolmogorov-Smirnov)": ks_stat,
+                        "Sig. (Kolmogorov-Smirnov)": format_p_value(ks_p),
+                        "Phân phối chuẩn": norm_status
+                    }])
+                    normality_diag_df = compact_numeric_df(normality_diag_df, decimals=3)
+                    show_table(normality_diag_df, "Normality & Outlier Diagnostics")
+                    download_table_block(normality_diag_df, "ci_normality_diagnostics", "Normality & Outlier Diagnostics")
+
+                    # =========================================================
+                    # BẢNG 3: BẢNG ƯỚC LƯỢNG KHOẢNG TIN CẬY GỘP DUY NHẤT
+                    # =========================================================
+                    use_boot = force_boot or (not is_normal)
+                    method_title = "Bootstrap" if use_boot else "Parametric"
+
+                    ci_table = ci_combined_estimates(
+                        x=x,
+                        alpha=alpha_tail,
+                        use_bootstrap=use_boot,
+                        n_boot=int(n_boot)
+                    )
+
+                    show_table(ci_table, f"Confidence Interval Estimates ({method_title})")
+                    download_table_block(ci_table, "ci_estimates_combined", f"Confidence Interval Estimates ({method_title})")
+
+                except Exception as e:
+                    st.error(f"Tính toán thất bại: {e}")
 
 # -----------------------------
 # DIAGNOSTIC PROBABILITY (PPV, NPV)
