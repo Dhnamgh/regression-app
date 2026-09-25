@@ -61,7 +61,7 @@ st.set_page_config(
 )
 
 # =========================================================
-# CSS Giao diện
+# CSS Giao diện: Tinh chỉnh chữ to, đậm, rõ nét như Navigation
 # =========================================================
 st.markdown(
     """
@@ -88,7 +88,8 @@ section[data-testid="stSidebar"] .stDownloadButton button{
   color: #ffffff !important;
   border: 1px solid rgba(255,255,255,0.30) !important;
   border-radius: 14px !important;
-  font-weight: 700 !important;
+  font-weight: 800 !important;
+  font-size: 17px !important;
   padding: 10px 12px !important;
 }
 section[data-testid="stSidebar"] .stButton button:hover,
@@ -103,28 +104,10 @@ section[data-testid="stSidebar"] details summary{
   border-radius: 14px !important;
   padding: 10px 12px !important;
   font-weight: 800 !important;
+  font-size: 18px !important;
 }
 
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] > div,
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] > div > div{
-  background: rgba(255,255,255,0.10) !important;
-  border-radius: 14px !important;
-}
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]{
-  border: 1px dashed rgba(255,255,255,0.35) !important;
-  border-radius: 14px !important;
-}
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] *{
-  color: #ffffff !important;
-}
-section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
-  background: rgba(255,255,255,0.14) !important;
-  color: #ffffff !important;
-  border: 1px solid rgba(255,255,255,0.40) !important;
-  border-radius: 12px !important;
-  font-weight: 800 !important;
-}
-
+/* Header banner */
 .header-banner{
   background: linear-gradient(90deg, #0B3A66 0%, #0A2D4E 100%);
   border-radius: 18px;
@@ -136,17 +119,95 @@ section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
   padding: 0;
   font-size: 34px;
   line-height: 1.1;
+  font-weight: 900;
 }
 .header-banner p{
   margin: 8px 0 0 0;
-  opacity: 0.90;
-  font-size: 15px;
+  opacity: 0.95;
+  font-size: 17px;
+  font-weight: 600;
 }
 
+/* TIÊU ĐỀ H2, H3, H4 CHÍNH */
+h2 {
+  font-size: 28px !important;
+  font-weight: 900 !important;
+  color: #0B3A66 !important;
+}
+h3 {
+  font-size: 23px !important;
+  font-weight: 800 !important;
+  color: #0B3A66 !important;
+  margin-top: 15px !important;
+}
+h4 {
+  font-size: 20px !important;
+  font-weight: 800 !important;
+  color: #0f172a !important;
+  margin-top: 12px !important;
+}
+
+/* NHÃN CỦA TẤT CẢ WIDGET (Input method, Độ tin cậy, Cỡ mẫu,...) */
+div[data-testid="stWidgetLabel"] label,
+div[data-testid="stWidgetLabel"] p,
+label[data-testid="stWidgetLabel"] {
+  font-size: 19px !important;
+  font-weight: 800 !important;
+  color: #0f172a !important;
+  line-height: 1.3 !important;
+}
+
+/* TÙY CHỌN RADIO (95%, 99%, Khác..., Upload file, Paste values,...) */
+div[data-testid="stRadio"] div[role="radiogroup"] label,
+div[data-testid="stRadio"] div[role="radiogroup"] label p,
+div[data-testid="stRadio"] div[role="radiogroup"] span {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+}
+
+/* TÙY CHỌN CHECKBOX (Force bootstrap,...) */
+div[data-testid="stCheckbox"] label,
+div[data-testid="stCheckbox"] label p,
+div[data-testid="stCheckbox"] span {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+}
+
+/* VĂN BẢN ĐOẠN VĂN, CHÚ THÍCH */
+.stMarkdown p {
+  font-size: 17px !important;
+  font-weight: 600 !important;
+  color: #0f172a !important;
+}
+.stCaption, [data-testid="stCaptionContainer"] p {
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  color: #334155 !important;
+}
+
+/* CÁC Ô NHẬP LIỆU: NUMBER, TEXT, SELECTBOX */
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input,
+div[data-testid="stTextArea"] textarea {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+  border-width: 1.5px !important;
+}
+
+div[data-baseweb="select"] * {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+}
+
+/* BẢNG KẾT QUẢ HIỂN THỊ */
 .analysis-table-wrap{
   width: 100%;
   overflow-x: auto;
-  margin: 0.5rem 0 1.2rem 0;
+  margin: 0.6rem 0 1.3rem 0;
 }
 .analysis-table{
   width: 100%;
@@ -160,18 +221,16 @@ section[data-testid="stSidebar"] [data-testid="stFileUploader"] button{
   color: #0f172a;
   font-weight: 900;
   border: 1.5px solid #cbd5e1;
-  padding: 12px 14px;
+  padding: 12px 15px;
   text-align: left;
-  white-space: normal;
   line-height: 1.25;
 }
 .analysis-table td{
   border: 1.2px solid #e2e8f0;
-  padding: 12px 14px;
+  padding: 12px 15px;
   color: #0f172a;
-  font-weight: 400;
+  font-weight: 500;
   line-height: 1.35;
-  white-space: normal;
 }
 .analysis-table tbody tr:nth-child(even){
   background: #f8fafc;
@@ -501,7 +560,7 @@ def require_df(store_key: str) -> pd.DataFrame:
     return df
 
 # =========================================================
-# Bảng liên định r x c & Đo lường chẩn đoán 2x2
+# Bảng liên định r x c & Đo lường 2x2
 # =========================================================
 def contingency_editor(key: str, default_rows: List[str], default_cols: List[str], default_counts: np.ndarray):
     ss_key = f"ct_{key}"
