@@ -235,7 +235,7 @@ st.markdown(
     """
 <div class="header-banner">
   <h1>Data Analysis in Health Sciences</h1>
-  <p>Regression, categorical analysis, quantitative tests, diagnostics and sample size estimation for health sciences.</p>
+  <p>Regression, categorical analysis, quantitative tests, diagnostics, sample size & probability theory.</p>
 </div>
 """,
     unsafe_allow_html=True
@@ -500,7 +500,7 @@ def show_table(df: pd.DataFrame, title: str):
     st.markdown(f'<div class="analysis-table-wrap">{html}</div>', unsafe_allow_html=True)
 
 # =========================================================
-# File loading & Data storage
+# File loading & Storage
 # =========================================================
 def load_uploaded_file(uploaded) -> pd.DataFrame:
     if uploaded is None:
@@ -1359,7 +1359,6 @@ with st.sidebar:
         if st.button("Predictive Values (PPV, NPV)", key="diag_prob", use_container_width=True):
             set_nav("Diagnostic Probability", "Predictive Values")
 
-    # MỤC MỚI: TÍNH CỠ MẪU
     with st.expander("Tính cỡ mẫu", expanded=(st.session_state.section == "Tính cỡ mẫu")):
         if st.button("Ước lượng KTC", key="ss_ci", use_container_width=True):
             set_nav("Tính cỡ mẫu", "Ước lượng KTC")
@@ -1371,6 +1370,15 @@ with st.sidebar:
             set_nav("Tính cỡ mẫu", "ANOVA")
         if st.button("Phân tích sống sót", key="ss_surv", use_container_width=True):
             set_nav("Tính cỡ mẫu", "Phân tích sống sót")
+
+    # MỤC MỚI: TÍNH XÁC SUẤT
+    with st.expander("Tính xác suất", expanded=(st.session_state.section == "Tính xác suất")):
+        if st.button("Công thức xác suất & Bayes", key="prob_formulas", use_container_width=True):
+            set_nav("Tính xác suất", "Công thức xác suất & Bayes")
+        if st.button("Phân phối Nhị thức B(n, p)", key="prob_binom", use_container_width=True):
+            set_nav("Tính xác suất", "Phân phối Nhị thức B(n, p)")
+        if st.button("Phân phối Chuẩn N(μ, σ)", key="prob_norm", use_container_width=True):
+            set_nav("Tính xác suất", "Phân phối Chuẩn N(μ, σ)")
 
 # =========================================================
 # Nội dung từng trang
@@ -1987,7 +1995,6 @@ elif section == "Confidence Intervals" and sub == "Mean & Variance":
                     max_v = float(np.max(x))
                     rng_v = max_v - min_v
 
-                    # Tính Q1, Q3 theo thuật toán 2 bước giáo trình
                     q1 = compute_percentile_textbook(x, 25)
                     q3 = compute_percentile_textbook(x, 75)
                     iqr = q3 - q1
@@ -2088,7 +2095,7 @@ elif section == "Diagnostic Probability" and sub == "Predictive Values":
         download_table_block(calc, "diagnostic_calculations", "Calculations")
 
 # -----------------------------
-# MÔ-ĐUN MỚI: TÍNH CỠ MẪU (SAMPLE SIZE)
+# TÍNH CỠ MẪU (SAMPLE SIZE)
 # -----------------------------
 elif section == "Tính cỡ mẫu":
     st.markdown(f"## Tính cỡ mẫu tối thiểu — {sub}")
@@ -2132,7 +2139,7 @@ elif section == "Tính cỡ mẫu":
                 show_table(res_df, "Kết quả tính cỡ mẫu ước lượng tỷ lệ")
                 download_table_block(res_df, "sample_size_ci_proportion", "Cỡ mẫu ước lượng tỷ lệ")
 
-        else: # Mean
+        else:
             c_m1, c_m2 = st.columns(2)
             with c_m1:
                 sd_est = st.number_input("Độ lệch chuẩn ước tính từ nghiên cứu trước (s hoặc σ)", min_value=0.001, value=5.000, step=0.5, format="%.4f")
@@ -2225,7 +2232,7 @@ elif section == "Tính cỡ mẫu":
                 show_table(res_df, "Kết quả cỡ mẫu so sánh 2 trung bình độc lập")
                 download_table_block(res_df, "sample_size_two_means", "Cỡ mẫu 2 trung bình")
 
-        else: # Paired
+        else:
             c_p1, c_p2 = st.columns(2)
             with c_p1:
                 mean_d = st.number_input("Hiệu số trung bình trước - sau mong muốn (|μ_d|)", min_value=0.01, value=1.5, step=0.1)
@@ -2262,10 +2269,8 @@ elif section == "Tính cỡ mẫu":
 
             if st.button("Tính cỡ mẫu hồi quy tuyến tính", type="primary", use_container_width=True):
                 f2 = r2_target / (1.0 - r2_target)
-                # Nguyên tắc kinh nghiệm của Green (1991)
                 n_green_overall = 50 + 8 * int(k_preds)
                 n_green_individual = 104 + int(k_preds)
-                # Tính theo Cohen f2 xấp xỉ
                 z_a = stats.norm.ppf(0.975)
                 z_b = stats.norm.ppf(power_reg)
                 n_cohen_approx = int(math.ceil(((z_a + z_b) ** 2) / f2 + int(k_preds) + 1))
@@ -2283,17 +2288,16 @@ elif section == "Tính cỡ mẫu":
                 show_table(res_df, "Cỡ mẫu hồi quy tuyến tính đa biến")
                 download_table_block(res_df, "sample_size_linear_regression", "Cỡ mẫu hồi quy tuyến tính")
 
-        else: # Logistic Regression
+        else:
             c1, c2, c3 = st.columns(3)
             with c1:
                 k_vars = st.number_input("Số biến độc lập đưa vào mô hình (k)", min_value=1, max_value=50, value=5, step=1)
             with c2:
                 prev_event = st.number_input("Tỷ lệ xảy ra biến cố trong quần thể (P)", min_value=0.01, max_value=0.50, value=0.15, step=0.01, format="%.3f")
             with c3:
-                epv_rule = st.selectbox("Nguyên tắc EPV (Events Per Variable)", [10, 20, 15], index=0, help="10 sự kiện trên mỗi biến là tiêu chuẩn kinh điển của Peduzzi et al.")
+                epv_rule = st.selectbox("Nguyên tắc EPV (Events Per Variable)", [10, 20, 15], index=0)
 
             if st.button("Tính cỡ mẫu hồi quy Logistic", type="primary", use_container_width=True):
-                # Quy tắc Events Per Variable: N = (k * EPV) / P
                 events_needed = int(k_vars) * int(epv_rule)
                 n_logistic = int(math.ceil(events_needed / prev_event))
 
@@ -2314,7 +2318,7 @@ elif section == "Tính cỡ mẫu":
         with c1:
             k_groups = st.number_input("Số nhóm so sánh (k)", min_value=3, max_value=12, value=3, step=1)
         with c2:
-            f_effect = st.number_input("Cỡ hiệu ứng Cohen's f", min_value=0.05, max_value=0.80, value=0.25, step=0.05, help="0.1: Nhỏ, 0.25: Trung bình, 0.4: Lớn")
+            f_effect = st.number_input("Cỡ hiệu ứng Cohen's f", min_value=0.05, max_value=0.80, value=0.25, step=0.05)
         with c3:
             power_a = st.selectbox("Lực lượng (Power)", [0.80, 0.90, 0.85, 0.95], index=0)
 
@@ -2322,7 +2326,6 @@ elif section == "Tính cỡ mẫu":
         if st.button("Tính cỡ mẫu One-way ANOVA", type="primary", use_container_width=True):
             k = int(k_groups)
             df1 = k - 1
-            # Tìm n mỗi nhóm dựa vào phân phối F không trung tâm (Non-central F)
             found_n = 5
             for n_trial in range(5, 5000):
                 df2 = k * (n_trial - 1)
@@ -2348,7 +2351,7 @@ elif section == "Tính cỡ mẫu":
             download_table_block(res_df, "sample_size_anova", "Cỡ mẫu ANOVA")
 
     elif sub == "Phân tích sống sót":
-        st.markdown("#### Phép kiểm Log-rank / Mô hình rủi ro tỷ lệ Cox (Schoenfeld formula)")
+        st.markdown("#### Phép kiểm Log-rank / Mô hình Cox (Schoenfeld formula)")
         c1, c2, c3 = st.columns(3)
         with c1:
             hr_val = st.number_input("Tỷ số nguy cơ kỳ vọng (Hazard Ratio, HR)", min_value=0.10, max_value=10.0, value=1.75, step=0.05)
@@ -2359,7 +2362,7 @@ elif section == "Tính cỡ mẫu":
 
         c4, c5 = st.columns(2)
         with c4:
-            p_event_total = st.number_input("Tỷ lệ bệnh nhân dự kiến xảy ra biến cố (P_event)", min_value=0.05, max_value=1.0, value=0.50, step=0.05, help="Tỷ lệ tử vong/tái phát chung trong suốt thời gian theo dõi")
+            p_event_total = st.number_input("Tỷ lệ bệnh nhân dự kiến xảy ra biến cố (P_event)", min_value=0.05, max_value=1.0, value=0.50, step=0.05)
         with c5:
             alloc_ratio = st.selectbox("Tỷ lệ phân bổ 2 nhóm", ["1:1 (Đều nhau)"], index=0)
 
@@ -2369,10 +2372,8 @@ elif section == "Tính cỡ mẫu":
             else:
                 z_a = stats.norm.ppf(1.0 - alpha_s / 2.0)
                 z_b = stats.norm.ppf(power_s)
-                # Schoenfeld formula for total number of events E:
                 events_needed = ((z_a + z_b) ** 2) * 4.0 / ((math.log(hr_val)) ** 2)
                 e_rec = int(math.ceil(events_needed))
-                # Tổng số bệnh nhân cần tuyển: N = E / P_event
                 n_total_surv = int(math.ceil(e_rec / p_event_total))
                 n_each_group = int(math.ceil(n_total_surv / 2.0))
 
@@ -2389,3 +2390,337 @@ elif section == "Tính cỡ mẫu":
                 res_df = compact_numeric_df(res_df, decimals=3)
                 show_table(res_df, "Kết quả cỡ mẫu phân tích sống sót (Log-rank / Cox)")
                 download_table_block(res_df, "sample_size_survival", "Cỡ mẫu phân tích sống sót")
+
+# -----------------------------
+# MÔ-ĐUN MỚI: TÍNH XÁC SUẤT (PROBABILITY)
+# -----------------------------
+elif section == "Tính xác suất":
+    st.markdown(f"## Tính toán lý thuyết xác suất — {sub}")
+
+    # =========================================================
+    # 1. CÔNG THỨC XÁC SUẤT CƠ BẢN & BAYES
+    # =========================================================
+    if sub == "Công thức xác suất & Bayes":
+        mode_prob = st.radio("Chọn dạng bài toán xác suất", [
+            "Công thức Cộng & Nhân (Hai biến cố A và B)",
+            "Xác suất Toàn phần & Công thức Bayes"
+        ], horizontal=True)
+
+        if mode_prob == "Công thức Cộng & Nhân (Hai biến cố A và B)":
+            c1, c2 = st.columns(2)
+            with c1:
+                p_a = st.number_input("Xác suất P(A)", min_value=0.0, max_value=1.0, value=0.40, step=0.05, format="%.4f")
+            with c2:
+                p_b = st.number_input("Xác suất P(B)", min_value=0.0, max_value=1.0, value=0.30, step=0.05, format="%.4f")
+
+            rel_type = st.radio("Mối quan hệ giữa A và B", [
+                "Độc lập (Independent): P(A ∩ B) = P(A) × P(B)",
+                "Xung khắc (Mutually exclusive): P(A ∩ B) = 0",
+                "Tùy biến (Nhập trực tiếp giao P(A ∩ B) hoặc P(B|A))"
+            ])
+
+            if rel_type.startswith("Độc lập"):
+                p_ab = p_a * p_b
+            elif rel_type.startswith("Xung khắc"):
+                p_ab = 0.0
+            else:
+                c_c1, c_c2 = st.columns(2)
+                with c_c1:
+                    input_mode_custom = st.selectbox("Nhập theo:", ["P(A ∩ B) - Đồng thời xảy ra", "P(B|A) - Có điều kiện"])
+                with c_c2:
+                    if input_mode_custom.startswith("P(A ∩ B)"):
+                        p_ab = st.number_input("P(A ∩ B)", min_value=0.0, max_value=min(p_a, p_b), value=min(p_a, p_b)*0.5, step=0.02, format="%.4f")
+                    else:
+                        p_b_given_a = st.number_input("P(B|A)", min_value=0.0, max_value=1.0, value=0.50, step=0.05, format="%.4f")
+                        p_ab = p_b_given_a * p_a
+
+            if st.button("Tính toán các xác suất", type="primary", use_container_width=True):
+                p_a_or_b = p_a + p_b - p_ab
+                p_b_given_a = p_ab / p_a if p_a > 0 else np.nan
+                p_a_given_b = p_ab / p_b if p_b > 0 else np.nan
+                p_not_a = 1.0 - p_a
+                p_not_b = 1.0 - p_b
+                p_neither = 1.0 - p_a_or_b
+
+                df_prob = pd.DataFrame([
+                    ["P(A)", p_a, "Xác suất của biến cố A"],
+                    ["P(B)", p_b, "Xác suất của biến cố B"],
+                    ["P(A ∩ B)", p_ab, "Xác suất A và B đồng thời xảy ra (Tích)"],
+                    ["P(A ∪ B)", p_a_or_b, "Xác suất ít nhất A hoặc B xảy ra (Cộng)"],
+                    ["P(B|A)", p_b_given_a, "Xác suất B xảy ra khi biết A đã xảy ra"],
+                    ["P(A|B)", p_a_given_b, "Xác suất A xảy ra khi biết B đã xảy ra"],
+                    ["P(A')", p_not_a, "Xác suất biến cố đối của A (không xảy ra A)"],
+                    ["P(B')", p_not_b, "Xác suất biến cố đối của B (không xảy ra B)"],
+                    ["P(A' ∩ B')", p_neither, "Xác suất cả A và B đều không xảy ra"]
+                ], columns=["Phép tính", "Giá trị xác suất", "Ý nghĩa"])
+
+                df_prob = compact_numeric_df(df_prob, decimals=3)
+                show_table(df_prob, "Kết quả công thức cộng & nhân xác suất")
+                download_table_block(df_prob, "probability_addition_multiplication", "Công thức cộng nhân xác suất")
+
+        else: # Xác suất toàn phần & Bayes
+            st.markdown("#### Hệ đầy đủ các biến cố $A_1, A_2, ..., A_k$ và biến cố $B$")
+            num_hyp = st.number_input("Số biến cố phân hoạch (k)", min_value=2, max_value=5, value=3, step=1)
+            k = int(num_hyp)
+
+            st.caption("Nhập xác suất tiên nghiệm P(Ai) [tổng phải bằng 1] và xác suất có điều kiện P(B|Ai):")
+            default_priors = [0.5, 0.3, 0.2, 0.0, 0.0][:k]
+            if sum(default_priors) != 1.0:
+                default_priors = [1.0/k]*k
+            default_conds = [0.08, 0.05, 0.02, 0.01, 0.01][:k]
+
+            cols_input = st.columns(k)
+            p_prior_list, p_cond_list = [], []
+            for i in range(k):
+                with cols_input[i]:
+                    st.markdown(f"**Nhóm A{i+1}**")
+                    p_prior = st.number_input(f"P(A{i+1})", min_value=0.0, max_value=1.0, value=float(default_priors[i]), step=0.05, key=f"prior_{i}", format="%.4f")
+                    p_cond = st.number_input(f"P(B|A{i+1})", min_value=0.0, max_value=1.0, value=float(default_conds[i]), step=0.01, key=f"cond_{i}", format="%.4f")
+                    p_prior_list.append(p_prior)
+                    p_cond_list.append(p_cond)
+
+            sum_priors = sum(p_prior_list)
+            if abs(sum_priors - 1.0) > 1e-4:
+                st.warning(f"⚠️ Tổng các xác suất tiên nghiệm P(Ai) = {sum_priors:.4f} (phải bằng 1.0). Vui lòng điều chỉnh lại.")
+
+            if st.button("Tính xác suất toàn phần & Công thức Bayes", type="primary", use_container_width=True):
+                # Tính tích P(Ai) * P(B|Ai)
+                joint_probs = [p_prior_list[i] * p_cond_list[i] for i in range(k)]
+                p_b_total = sum(joint_probs)
+
+                if p_b_total <= 0:
+                    st.error("Tổng P(B) = 0, không thể chia để tính công thức Bayes.")
+                else:
+                    posterior_probs = [j / p_b_total for j in joint_probs]
+
+                    table_rows = []
+                    for i in range(k):
+                        table_rows.append([
+                            f"A{i+1}",
+                            p_prior_list[i],
+                            p_cond_list[i],
+                            joint_probs[i],
+                            posterior_probs[i]
+                        ])
+
+                    table_rows.append([
+                        "Tổng (B)",
+                        sum(p_prior_list),
+                        "-",
+                        p_b_total,
+                        sum(posterior_probs)
+                    ])
+
+                    bayes_df = pd.DataFrame(table_rows, columns=[
+                        "Biến cố (Ai)",
+                        "Tiên nghiệm P(Ai)",
+                        "Khả năng P(B|Ai)",
+                        "Đồng thời P(Ai ∩ B)",
+                        "Hậu nghiệm Bayes P(Ai|B)"
+                    ])
+                    bayes_df = compact_numeric_df(bayes_df, decimals=4)
+                    show_table(bayes_df, f"Bảng tính chi tiết định lý Bayes (Xác suất toàn phần P(B) = {smart_round_val(p_b_total, 4)})")
+                    download_table_block(bayes_df, "bayes_theorem_results", "Định lý Bayes")
+
+                    # Biểu đồ so sánh Tiên nghiệm vs Hậu nghiệm
+                    fig, ax = plt.subplots(figsize=(8, 4))
+                    labels = [f"A{i+1}" for i in range(k)]
+                    x_idx = np.arange(k)
+                    width = 0.35
+
+                    rects1 = ax.bar(x_idx - width/2, p_prior_list, width, label='Tiên nghiệm P(Ai)', color='#0B3A66')
+                    rects2 = ax.bar(x_idx + width/2, posterior_probs, width, label='Hậu nghiệm P(Ai|B)', color='#E63946')
+
+                    ax.set_ylabel('Xác suất', fontsize=12, fontweight='bold')
+                    ax.set_title('So sánh xác suất Tiên nghiệm và Hậu nghiệm (Bayes)', fontsize=14, fontweight='bold')
+                    ax.set_xticks(x_idx)
+                    ax.set_xticklabels(labels, fontsize=12, fontweight='bold')
+                    ax.legend(fontsize=11)
+                    ax.grid(axis='y', linestyle='--', alpha=0.5)
+
+                    st.pyplot(fig)
+                    download_figure_block(fig, "bayes_comparison_chart")
+                    plt.close(fig)
+
+    # =========================================================
+    # 2. PHÂN PHỐI NHỊ THỨC B(n, p)
+    # =========================================================
+    elif sub == "Phân phối Nhị thức B(n, p)":
+        st.markdown("#### Biến ngẫu nhiên rời rạc: $X \sim B(n, p)$")
+        c1, c2 = st.columns(2)
+        with c1:
+            n_binom = st.number_input("Số phép thử độc lập (n)", min_value=1, max_value=500, value=20, step=1)
+        with c2:
+            p_binom = st.number_input("Xác suất thành công trong mỗi phép thử (p)", min_value=0.001, max_value=0.999, value=0.250, step=0.05, format="%.4f")
+
+        n_val = int(n_binom)
+        p_val = float(p_binom)
+        e_val = n_val * p_val
+        var_val = n_val * p_val * (1.0 - p_val)
+        sd_val = math.sqrt(var_val)
+
+        desc_binom_df = pd.DataFrame([{
+            "Số phép thử (n)": n_val,
+            "Xác suất (p)": p_val,
+            "Kỳ vọng E(X) = np": e_val,
+            "Phương sai Var(X)": var_val,
+            "Độ lệch chuẩn σ": sd_val
+        }])
+        desc_binom_df = compact_numeric_df(desc_binom_df, decimals=3)
+        show_table(desc_binom_df, "Đặc trưng của phân phối nhị thức")
+
+        st.markdown("#### Tính toán xác suất biến cố")
+        c_k1, c_k2, c_k3 = st.columns(3)
+        with c_k1:
+            k_target = st.number_input("Giá trị k", min_value=0, max_value=n_val, value=min(5, n_val), step=1)
+        with c_k2:
+            m_low = st.number_input("Cận dưới m", min_value=0, max_value=n_val, value=min(3, n_val), step=1)
+        with c_k3:
+            m_high = st.number_input("Cận trên n*", min_value=0, max_value=n_val, value=min(8, n_val), step=1)
+
+        k_val = int(k_target)
+        low_val = int(min(m_low, m_high))
+        high_val = int(max(m_low, m_high))
+
+        if st.button("Tính xác suất nhị thức & Vẽ đồ thị", type="primary", use_container_width=True):
+            p_eq = stats.binom.pmf(k_val, n_val, p_val)
+            p_le = stats.binom.cdf(k_val, n_val, p_val)
+            p_ge = stats.binom.sf(k_val - 1, n_val, p_val) if k_val > 0 else 1.0
+            p_between = stats.binom.cdf(high_val, n_val, p_val) - (stats.binom.cdf(low_val - 1, n_val, p_val) if low_val > 0 else 0.0)
+
+            prob_res_df = pd.DataFrame([
+                [f"P(X = {k_val})", p_eq, f"Đúng {k_val} lần thành công"],
+                [f"P(X <= {k_val})", p_le, f"Tối đa {k_val} lần thành công"],
+                [f"P(X >= {k_val})", p_ge, f"Ít nhất {k_val} lần thành công"],
+                [f"P({low_val} <= X <= {high_val})", p_between, f"Số lần thành công nằm trong đoạn [{low_val}, {high_val}]"]
+            ], columns=["Biến cố", "Xác suất", "Diễn giải"])
+
+            prob_res_df = compact_numeric_df(prob_res_df, decimals=4)
+            show_table(prob_res_df, "Kết quả tính xác suất nhị thức")
+            download_table_block(prob_res_df, "binomial_probability_results", "Xác suất nhị thức")
+
+            # Vẽ đồ thị phân phối xác suất
+            fig, ax = plt.subplots(figsize=(10, 4.5))
+            # Xác định phạm vi vẽ biểu đồ để dễ quan sát
+            x_min = max(0, int(e_val - 3.5 * sd_val))
+            x_max = min(n_val, int(e_val + 3.5 * sd_val) + 1)
+            if x_max - x_min < 12:
+                x_min = max(0, min(low_val, k_val) - 3)
+                x_max = min(n_val, max(high_val, k_val) + 4)
+
+            x_bars = np.arange(x_min, x_max + 1)
+            y_bars = stats.binom.pmf(x_bars, n_val, p_val)
+
+            # Đổi màu cho khoảng m <= X <= n*
+            colors = ['#E63946' if (low_val <= x <= high_val) else '#0B3A66' for x in x_bars]
+
+            bars = ax.bar(x_bars, y_bars, color=colors, width=0.7, edgecolor='#333333', alpha=0.85)
+            ax.set_xlabel('Số lần thành công (k)', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Xác suất P(X = k)', fontsize=12, fontweight='bold')
+            ax.set_title(f'Phân phối nhị thức B(n={n_val}, p={p_val}) — Tô đỏ khoảng [{low_val}; {high_val}]', fontsize=14, fontweight='bold')
+            ax.set_xticks(x_bars)
+            ax.grid(axis='y', linestyle='--', alpha=0.4)
+
+            st.pyplot(fig)
+            download_figure_block(fig, "binomial_distribution_chart")
+            plt.close(fig)
+
+    # =========================================================
+    # 3. PHÂN PHỐI CHUẨN N(μ, σ)
+    # =========================================================
+    else:
+        st.markdown("#### Biến ngẫu nhiên liên tục: $X \sim N(\mu, \sigma^2)$")
+        c1, c2 = st.columns(2)
+        with c1:
+            mean_norm = st.number_input("Trung bình (Mean, μ)", value=100.00, format="%.3f")
+        with c2:
+            disp_norm_choice = st.radio("Chọn tham số độ phân tán để nhập:", ["Độ lệch chuẩn (σ)", "Phương sai (σ²)"], horizontal=True)
+            if disp_norm_choice.startswith("Độ lệch chuẩn"):
+                sd_norm = st.number_input("Độ lệch chuẩn (σ)", min_value=0.0001, value=15.00, step=1.0, format="%.3f")
+                var_norm = sd_norm ** 2
+                st.caption(f"Phương sai tương ứng ($σ^2$): **{var_norm:.3f}**")
+            else:
+                var_norm = st.number_input("Phương sai (σ²)", min_value=0.0001, value=225.00, step=5.0, format="%.3f")
+                sd_norm = math.sqrt(var_norm)
+                st.caption(f"Độ lệch chuẩn tương ứng ($σ$): **{sd_norm:.3f}**")
+
+        mu_v = float(mean_norm)
+        sigma_v = float(sd_norm)
+
+        st.markdown("#### Thiết lập các mốc giá trị cần tính")
+        c_k1, c_k2, c_k3 = st.columns(3)
+        with c_k1:
+            k_norm = st.number_input("Mốc giá trị k", value=mu_v + sigma_v, format="%.3f")
+        with c_k2:
+            m_norm_low = st.number_input("Cận dưới m", value=mu_v - sigma_v, format="%.3f")
+        with c_k3:
+            m_norm_high = st.number_input("Cận trên n*", value=mu_v + sigma_v, format="%.3f")
+
+        k_norm_val = float(k_norm)
+        m_low_val = float(min(m_norm_low, m_norm_high))
+        m_high_val = float(max(m_norm_low, m_norm_high))
+
+        plot_option = st.selectbox("Chọn vùng tô màu trên đồ thị hình chuông:", [
+            f"Đoạn giữa m và n*: P({m_low_val:.2f} <= X <= {m_high_val:.2f})",
+            f"Vùng bên trái: P(X <= {k_norm_val:.2f})",
+            f"Vùng bên phải: P(X >= {k_norm_val:.2f})"
+        ])
+
+        if st.button("Tính xác suất phân phối chuẩn & Vẽ đồ thị", type="primary", use_container_width=True):
+            # Tính toán xác suất chuẩn
+            z_k = (k_norm_val - mu_v) / sigma_v
+            z_m = (m_low_val - mu_v) / sigma_v
+            z_n = (m_high_val - mu_v) / sigma_v
+
+            # P(X = k) = 0 đối với biến liên tục, nhưng hàm mật độ f(k) > 0
+            density_k = stats.norm.pdf(k_norm_val, loc=mu_v, scale=sigma_v)
+            p_norm_le = stats.norm.cdf(k_norm_val, loc=mu_v, scale=sigma_v)
+            p_norm_ge = 1.0 - p_norm_le
+            p_norm_between = stats.norm.cdf(m_high_val, loc=mu_v, scale=sigma_v) - stats.norm.cdf(m_low_val, loc=mu_v, scale=sigma_v)
+
+            norm_calc_df = pd.DataFrame([
+                [f"P(X = {k_norm_val:.3f})", 0.000, density_k, f"Xác suất tại 1 điểm bằng 0 (Mật độ f(k) = {density_k:.4f})"],
+                [f"P(X <= {k_norm_val:.3f})", p_norm_le, z_k, f"Xác suất tích lũy bên trái (Z = {z_k:.3f})"],
+                [f"P(X >= {k_norm_val:.3f})", p_norm_ge, z_k, f"Xác suất phần đuôi bên phải (Z = {z_k:.3f})"],
+                [f"P({m_low_val:.3f} <= X <= {m_high_val:.3f})", p_norm_between, f"Z1 = {z_m:.3f}, Z2 = {z_n:.3f}", f"Xác suất nằm trong khoảng [{m_low_val:.3f}, {m_high_val:.3f}]"]
+            ], columns=["Biến cố", "Xác suất", "Điểm Z / Mật độ", "Ghi chú"])
+
+            norm_calc_df = compact_numeric_df(norm_calc_df, decimals=4)
+            show_table(norm_calc_df, "Kết quả tính xác suất phân phối chuẩn")
+            download_table_block(norm_calc_df, "normal_probability_results", "Xác suất phân phối chuẩn")
+
+            # Vẽ đường cong Gauss và tô bóng diện tích
+            fig, ax = plt.subplots(figsize=(10, 4.5))
+            x_axis = np.linspace(mu_v - 3.8 * sigma_v, mu_v + 3.8 * sigma_v, 1000)
+            y_axis = stats.norm.pdf(x_axis, loc=mu_v, scale=sigma_v)
+
+            ax.plot(x_axis, y_axis, color='#0B3A66', linewidth=2.5, label=f'Đường cong Gauss N(μ={mu_v:.1f}, σ={sigma_v:.1f})')
+
+            # Tô màu theo lựa chọn
+            if plot_option.startswith("Đoạn giữa"):
+                x_fill = np.linspace(m_low_val, m_high_val, 500)
+                y_fill = stats.norm.pdf(x_fill, loc=mu_v, scale=sigma_v)
+                ax.fill_between(x_fill, y_fill, color='#E63946', alpha=0.5, label=f'P({m_low_val:.2f} <= X <= {m_high_val:.2f}) = {p_norm_between:.4f}')
+                ax.axvline(m_low_val, color='#E63946', linestyle='--', linewidth=1.5)
+                ax.axvline(m_high_val, color='#E63946', linestyle='--', linewidth=1.5)
+            elif plot_option.startswith("Vùng bên trái"):
+                x_fill = np.linspace(mu_v - 3.8 * sigma_v, k_norm_val, 500)
+                y_fill = stats.norm.pdf(x_fill, loc=mu_v, scale=sigma_v)
+                ax.fill_between(x_fill, y_fill, color='#2A9D8F', alpha=0.5, label=f'P(X <= {k_norm_val:.2f}) = {p_norm_le:.4f}')
+                ax.axvline(k_norm_val, color='#2A9D8F', linestyle='--', linewidth=1.5)
+            else:
+                x_fill = np.linspace(k_norm_val, mu_v + 3.8 * sigma_v, 500)
+                y_fill = stats.norm.pdf(x_fill, loc=mu_v, scale=sigma_v)
+                ax.fill_between(x_fill, y_fill, color='#F4A261', alpha=0.5, label=f'P(X >= {k_norm_val:.2f}) = {p_norm_ge:.4f}')
+                ax.axvline(k_norm_val, color='#F4A261', linestyle='--', linewidth=1.5)
+
+            ax.axvline(mu_v, color='#666666', linestyle=':', linewidth=1.2, label=f'Trung bình μ = {mu_v:.1f}')
+            ax.set_xlabel('Giá trị X', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Mật độ xác suất f(x)', fontsize=12, fontweight='bold')
+            ax.set_title('Biểu diễn diện tích xác suất trên phân phối chuẩn', fontsize=14, fontweight='bold')
+            ax.legend(fontsize=11, loc='upper right')
+            ax.grid(axis='both', linestyle='--', alpha=0.3)
+
+            st.pyplot(fig)
+            download_figure_block(fig, "normal_distribution_chart")
+            plt.close(fig)
