@@ -8,3 +8,4 @@ scikit-learn
 scipy
 python-docx
 openpyxl
+google-generativeai
