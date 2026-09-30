@@ -3135,38 +3135,78 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
         elif "GEMINI_API_KEY" not in st.secrets:
             st.error("Chưa cấu hình GEMINI_API_KEY trong Settings > Secrets của Streamlit Cloud.")
         else:
-            with st.spinner("AI đang nhận diện bài toán và tính toán chi tiết..."):
-                try:
-                    # Cập nhật sang model gemini-3.8-flash hoặc gemini-3-flash-preview
-                    try:
-                        model = genai.GenerativeModel("gemini-3.8-flash")
-                    except Exception:
-                        model = genai.GenerativeModel("gemini-3-flash-preview")
+            status_box = st.empty()
+        with status_box.status("⏳ Đang kết nối AI và phân tích...", expanded=True) as status:
+            try:
+                # 1. Tự động nén/thu nhỏ ảnh nếu dung lượng quá lớn để gửi đi siêu tốc
+                processed_image = None
+                if final_image is not None:
+                    status.write("🖼️ Đang xử lý và tối ưu ảnh...")
+                    img_copy = final_image.copy()
+                    if max(img_copy.size) > 1200:
+                        img_copy.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+                    processed_image = img_copy
 
-                    prompt = f"""
+                # 2. Xây dựng prompt chuẩn xác
+                prompt = f"""
 Bạn là chuyên gia Thống kê Y học và giảng viên bộ môn Xác suất Thống kê Y Dược.
 Nhiệm vụ: Nhận diện và giải quyết bài toán theo nội dung văn bản hoặc ảnh đính kèm.
 
 Yêu cầu thực hiện ({action_mode}):
-1. Tự động nhận diện dạng toán (so sánh 2 trung bình độc lập, bắt cặp, tỷ lệ, kiểm định hay KTC...).
+1. Nhận diện dạng toán (so sánh 2 trung bình độc lập, bắt cặp, tỷ lệ, kiểm định hay KTC...).
 2. Trình bày bài giải chi tiết từng bước: Các giả thuyết H0/H1, sai số chuẩn (SE), giá trị thống kê kiểm định (t hoặc Z), bậc tự do df, p-value, Khoảng tin cậy KTC 95%, và kết luận ý nghĩa y học lâm sàng rõ ràng.
 3. Nếu có tạo câu hỏi trắc nghiệm: Hãy tạo đúng {num_questions} câu hỏi 4 lựa chọn (A, B, C, D), có đáp án đúng và lời giải thích ngắn gọn cho mỗi câu.
 """
-                    parts = [prompt]
-                    if txt_input.strip():
-                        parts.append(f"ĐỀ BÀI:\n{txt_input}")
-                    if final_image is not None:
-                        parts.append(final_image)
+                parts = [prompt]
+                if txt_input.strip():
+                    parts.append(f"ĐỀ BÀI:\n{txt_input}")
+                if processed_image is not None:
+                    parts.append(processed_image)
 
-                    res = model.generate_content(parts)
-                    st.markdown("---")
-                    st.markdown(res.text)
+                status.write("🧠 Đang tính toán và truyền dòng kết quả...")
 
+                # 3. Kết nối trực tiếp vào model khả dụng trên AI Studio
+                # Danh sách model thử nghiệm theo thứ tự ưu tiên
+                candidate_models = ["gemini-3-flash-preview", "gemini-3.8-flash"]
+                response = None
+
+                for m_name in candidate_models:
+                    try:
+                        model = genai.GenerativeModel(m_name)
+                        # Bật stream=True để AI sinh chữ tới đâu đẩy về màn hình tới đó
+                        response = model.generate_content(parts, stream=True)
+                        break
+                    except Exception:
+                        continue
+
+                if response is None:
+                    raise RuntimeError("Không thể kết nối với mô hình Gemini. Vui lòng kiểm tra lại API Key.")
+
+                status.update(label="✅ Đã nhận diện xong đề bài!", state="complete", expanded=False)
+
+                st.markdown("---")
+                st.markdown("### 📋 Kết quả phân tích & Lời giải từ AI:")
+
+                # 4. Hiển thị chữ chạy theo thời gian thực (Real-time Stream)
+                def stream_output():
+                    collected_text = ""
+                    for chunk in response:
+                        if chunk.text:
+                            collected_text += chunk.text
+                            yield chunk.text
+                    st.session_state["ai_saved_result"] = collected_text
+
+                st.write_stream(stream_output)
+
+                # Nút tải kết quả về máy
+                if "ai_saved_result" in st.session_state and st.session_state["ai_saved_result"]:
                     st.download_button(
                         "📥 Tải nội dung lời giải & trắc nghiệm (.txt)",
-                        data=res.text,
+                        data=st.session_state["ai_saved_result"],
                         file_name="loi_giai_va_trac_nghiem.txt",
                         mime="text/plain"
                     )
-                except Exception as e:
-                    st.error(f"Lỗi: {e}")
+
+            except Exception as e:
+                status.update(label="❌ Có lỗi xảy ra!", state="error", expanded=True)
+                st.error(f"Lỗi chi tiết: {e}")
