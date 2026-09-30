@@ -9,3 +9,4 @@ scipy
 python-docx
 openpyxl
 google-generativeai
+streamlit-paste-button
