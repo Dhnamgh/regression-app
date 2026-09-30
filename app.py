@@ -3074,21 +3074,50 @@ elif section == "Tính xác suất":
 # -----------------------------
 # MÔ-ĐUN MỚI: AI TRỢ LÝ THÔNG MINH
 # -----------------------------
+# -----------------------------
+# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH
+# -----------------------------
 elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
     st.markdown("## 🤖 AI Trợ lý: Giải bài toán Thống kê Y sinh & Tạo trắc nghiệm")
-    st.write("Dán văn bản hoặc tải ảnh chụp bài toán. AI sẽ tự động nhận diện dạng toán, giải chi tiết (KTC + Kiểm định) và tạo bộ câu hỏi trắc nghiệm 4 phương án A, B, C, D.")
+    st.write("Dán văn bản hoặc dán/tải ảnh chụp bài toán. AI sẽ tự động nhận diện dạng toán, giải chi tiết (KTC + Kiểm định) và tạo bộ câu hỏi trắc nghiệm 4 phương án A, B, C, D.")
+
+    # Import thư viện dán ảnh
+    try:
+        from streamlit_paste_button import paste_image_button
+        has_paste = True
+    except ImportError:
+        has_paste = False
 
     c1, c2 = st.columns(2)
     with c1:
         txt_input = st.text_area(
             "Nhập hoặc dán văn bản đề bài:",
-            value="Một nghiên cứu so sánh huyết áp tâm thu giữa hai nhóm bệnh nhân.\nNhóm điều trị có n1 = 40, huyết áp tâm thu trung bình x̄1 = 128,5 mmHg và độ lệch chuẩn S1 = 10,0 mmHg.\nNhóm chứng có n2 = 40, huyết áp tâm thu trung bình x̄2 = 134,2 mmHg và độ lệch chuẩn S2 = 9,0 mmHg.",
+            value="Một nghiên cứu đánh giá một chương trình can thiệp kiểm soát đái tháo đường. Sau can thiệp, nhóm can thiệp có n1 = 40 đối tượng, x̄1 = 6.8% và s1 = 0.9%; nhóm chứng có n2 = 40 đối tượng, x̄2 = 7.4% và s2 = 1%. Nhà nghiên cứu muốn ước lượng hiệu trung bình bằng KTC 95%.",
             height=140
         )
     with c2:
-        img_file = st.file_uploader("Hoặc tải ảnh chụp đề bài (PNG, JPG):", type=["png", "jpg", "jpeg"])
-        if img_file is not None:
-            st.image(Image.open(img_file), caption="Ảnh đề bài đã tải lên", use_container_width=True)
+        st.markdown("**Ảnh chụp đề bài:**")
+        img_from_clipboard = None
+        if has_paste:
+            paste_result = paste_image_button(
+                label="📋 Bấm vào đây để Dán ảnh từ Clipboard (Ctrl + V)",
+                text_color="#ffffff",
+                background_color="#0B3A66",
+                hover_background_color="#1E40AF"
+            )
+            if paste_result.image_data is not None:
+                img_from_clipboard = paste_result.image_data
+
+        img_file = st.file_uploader("Hoặc tải ảnh từ máy tính (PNG, JPG):", type=["png", "jpg", "jpeg"])
+
+        # Ưu tiên lấy ảnh dán từ clipboard, nếu không có thì lấy ảnh tải lên
+        final_image = None
+        if img_from_clipboard is not None:
+            final_image = img_from_clipboard
+            st.image(final_image, caption="Đã nhận ảnh dán từ Clipboard", use_container_width=True)
+        elif img_file is not None:
+            final_image = Image.open(img_file)
+            st.image(final_image, caption="Đã nhận ảnh tải lên từ máy tính", use_container_width=True)
 
     c_cfg1, c_cfg2 = st.columns(2)
     with c_cfg1:
@@ -3101,14 +3130,19 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
         num_questions = st.number_input("Số lượng câu trắc nghiệm cần tạo:", min_value=1, max_value=20, value=4, step=1)
 
     if st.button("🚀 Bắt đầu phân tích với AI", type="primary", use_container_width=True):
-        if not txt_input.strip() and img_file is None:
-            st.warning("Vui lòng nhập văn bản hoặc tải ảnh đề bài.")
+        if not txt_input.strip() and final_image is None:
+            st.warning("Vui lòng nhập văn bản đề bài hoặc dán/tải ảnh lên.")
         elif "GEMINI_API_KEY" not in st.secrets:
             st.error("Chưa cấu hình GEMINI_API_KEY trong Settings > Secrets của Streamlit Cloud.")
         else:
             with st.spinner("AI đang nhận diện bài toán và tính toán chi tiết..."):
                 try:
-                    model = genai.GenerativeModel("gemini-2.5-flash")
+                    # Cập nhật sang model gemini-3.8-flash hoặc gemini-3-flash-preview
+                    try:
+                        model = genai.GenerativeModel("gemini-3.8-flash")
+                    except Exception:
+                        model = genai.GenerativeModel("gemini-3-flash-preview")
+
                     prompt = f"""
 Bạn là chuyên gia Thống kê Y học và giảng viên bộ môn Xác suất Thống kê Y Dược.
 Nhiệm vụ: Nhận diện và giải quyết bài toán theo nội dung văn bản hoặc ảnh đính kèm.
@@ -3121,8 +3155,8 @@ Yêu cầu thực hiện ({action_mode}):
                     parts = [prompt]
                     if txt_input.strip():
                         parts.append(f"ĐỀ BÀI:\n{txt_input}")
-                    if img_file is not None:
-                        parts.append(Image.open(img_file))
+                    if final_image is not None:
+                        parts.append(final_image)
 
                     res = model.generate_content(parts)
                     st.markdown("---")
