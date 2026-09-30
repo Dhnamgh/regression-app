@@ -257,6 +257,17 @@ def compute_percentile_textbook(arr: np.ndarray, p: float) -> float:
         return float(s[idx - 1])
 
 # =========================================================
+# Hàm phân tích chuỗi nhập liệu linh hoạt
+# =========================================================
+def parse_numeric_text(txt: str) -> np.ndarray:
+    if not txt or not txt.strip():
+        return np.array([], dtype=float)
+    normalized = txt.replace(";", " ").replace(",", " ")
+    parts = [p for p in normalized.split() if p.strip()]
+    vals = pd.to_numeric(pd.Series(parts), errors="coerce").dropna()
+    return vals.values
+
+# =========================================================
 # Quy tắc làm tròn số thông minh
 # =========================================================
 def smart_round_val(val, min_dec: int = 3) -> str:
@@ -882,7 +893,7 @@ def run_logistic_statsmodels(df: pd.DataFrame, target: str, features: List[str],
     classification_tbl = pd.DataFrame([
         ["Step 1", "0", tn, fp, tn / r0 * 100 if r0 else np.nan],
         ["Step 1", "1", fn, tp, tp / r1 * 100 if r1 else np.nan],
-        ["Step 1", "Overall Percentage", "", "", (tn + tp) / tot * 100 if tot else np.nan],
+        ["Step 1", "Overall Percentage", "", "", (tn + tp) / tot * 100 if total else np.nan],
     ], columns=["Step", "Observed", "Predicted 0", "Predicted 1", "Percentage Correct"])
 
     classification_cutoff = pd.DataFrame([[f"The cut value is {cutoff:.2f}"]], columns=["Classification cutoff"])
@@ -1051,6 +1062,83 @@ def ci_from_summary_stats(n: int, mean_val: float, s_val: float, s2_val: float, 
     ], columns=["Parameter", "Estimate", lo_label, hi_label])
 
     return compact_numeric_df(df_res, decimals=3)
+
+# Khoảng tin cậy cho HIỆU 2 SỐ TRUNG BÌNH (Difference between Two Means)
+def ci_two_means_diff(n1: int, m1: float, s1: float, n2: int, m2: float, s2: float, alpha: float = 0.05) -> pd.DataFrame:
+    diff = m1 - m2
+    s1_sq = s1 ** 2
+    s2_sq = s2 ** 2
+
+    # 1. Equal variances assumed (Student's t pooled)
+    df_pool = n1 + n2 - 2
+    sp_sq = ((n1 - 1) * s1_sq + (n2 - 1) * s2_sq) / df_pool
+    se_pool = math.sqrt(sp_sq * (1.0 / n1 + 1.0 / n2))
+    tcrit_pool = float(stats.t.ppf(1 - alpha / 2, df=df_pool))
+    lo_pool = diff - tcrit_pool * se_pool
+    hi_pool = diff + tcrit_pool * se_pool
+
+    # 2. Equal variances not assumed (Welch's t)
+    v1 = s1_sq / n1
+    v2 = s2_sq / n2
+    se_welch = math.sqrt(v1 + v2)
+    df_welch = ((v1 + v2) ** 2) / ((v1 ** 2) / (n1 - 1) + (v2 ** 2) / (n2 - 1))
+    tcrit_welch = float(stats.t.ppf(1 - alpha / 2, df=df_welch))
+    lo_welch = diff - tcrit_welch * se_welch
+    hi_welch = diff + tcrit_welch * se_welch
+
+    lo_pct = alpha / 2 * 100
+    hi_pct = (1 - alpha / 2) * 100
+    lo_lbl = f"CI {lo_pct:.1f}%" if lo_pct % 1 != 0 else f"CI {lo_pct:.0f}%"
+    hi_lbl = f"CI {hi_pct:.1f}%" if hi_pct % 1 != 0 else f"CI {hi_pct:.0f}%"
+
+    res = pd.DataFrame([
+        ["Phương sai đồng nhất (Student's t)", diff, se_pool, df_pool, lo_pool, hi_pool],
+        ["Phương sai không đồng nhất (Welch's t)", diff, se_welch, df_welch, lo_welch, hi_welch]
+    ], columns=["Giả định phương sai", "Hiệu TB (x̄₁ - x̄₂)", "Sai số chuẩn (SE)", "df", lo_lbl, hi_lbl])
+
+    return compact_numeric_df(res, decimals=3)
+
+# Khoảng tin cậy cho HIỆU 2 TỶ LỆ (Difference between Two Proportions)
+def ci_two_proportions_diff(x1: int, n1: int, x2: int, n2: int, conf_level: float = 0.95) -> pd.DataFrame:
+    alpha = 1.0 - conf_level
+    p1 = x1 / n1
+    p2 = x2 / n2
+    diff = p1 - p2
+    z = stats.norm.ppf(1.0 - alpha / 2.0)
+
+    # 1. Wald method
+    se_wald = math.sqrt(p1 * (1.0 - p1) / n1 + p2 * (1.0 - p2) / n2)
+    w_lo = diff - z * se_wald
+    w_hi = diff + z * se_wald
+
+    # 2. Agresti-Caffo (Adjusted Wald)
+    n1_ac = n1 + 2
+    x1_ac = x1 + 1
+    p1_ac = x1_ac / n1_ac
+    n2_ac = n2 + 2
+    x2_ac = x2 + 1
+    p2_ac = x2_ac / n2_ac
+    diff_ac = p1_ac - p2_ac
+    se_ac = math.sqrt(p1_ac * (1.0 - p1_ac) / n1_ac + p2_ac * (1.0 - p2_ac) / n2_ac)
+    ac_lo = diff_ac - z * se_ac
+    ac_hi = diff_ac + z * se_ac
+
+    # 3. Newcombe-Wilson (hybrid Score interval)
+    w1_lo, w1_hi = wilson_ci(x1, n1, alpha)
+    w2_lo, w2_hi = wilson_ci(x2, n2, alpha)
+    nw_lo = diff - z * math.sqrt(w1_lo * (1.0 - w1_lo) / n1 + w2_hi * (1.0 - w2_hi) / n2)
+    nw_hi = diff + z * math.sqrt(w1_hi * (1.0 - w1_hi) / n1 + w2_lo * (1.0 - w2_lo) / n2)
+
+    rows = [
+        ["Wald (Truyền thống)", diff * 100, w_lo * 100, w_hi * 100, (w_hi - w_lo) * 100, "Cỡ mẫu lớn (np >= 5)"],
+        ["Newcombe-Wilson (Khuyên dùng)", diff * 100, nw_lo * 100, nw_hi * 100, (nw_hi - nw_lo) * 100, "Tối ưu cho cả mẫu nhỏ & tỷ lệ gần 0 hoặc 1"],
+        ["Agresti-Caffo (Hiệu chỉnh)", diff * 100, ac_lo * 100, ac_hi * 100, (ac_hi - ac_lo) * 100, "Hiệu chỉnh cộng 2 thành công/thất bại"]
+    ]
+
+    out = pd.DataFrame(rows, columns=[
+        "Phương pháp (Method)", "Hiệu tỷ lệ (%)", "Cận dưới (%)", "Cận trên (%)", "Độ rộng KTC (%)", "Khuyến nghị sử dụng"
+    ])
+    return compact_numeric_df(out, decimals=3)
 
 # =========================================================
 # Thuật toán Kiểm định Định lượng
@@ -1371,7 +1459,6 @@ with st.sidebar:
         if st.button("Phân tích sống sót", key="ss_surv", use_container_width=True):
             set_nav("Tính cỡ mẫu", "Phân tích sống sót")
 
-    # MỤC MỚI: TÍNH XÁC SUẤT
     with st.expander("Tính xác suất", expanded=(st.session_state.section == "Tính xác suất")):
         if st.button("Công thức xác suất & Bayes", key="prob_formulas", use_container_width=True):
             set_nav("Tính xác suất", "Công thức xác suất & Bayes")
@@ -1816,27 +1903,156 @@ elif section == "Quantitative Tests":
 # -----------------------------
 elif section == "Confidence Intervals" and sub == "Proportion":
     st.markdown("## Confidence Intervals — Proportion")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        x_evt = st.number_input("Number with event (x)", min_value=0, value=50, step=1)
-    with c2:
-        n_tot = st.number_input("Total sample size (n)", min_value=1, value=100, step=1)
-    with c3:
-        conf_prop_choice = st.radio("Độ tin cậy", ["95%", "99%", "Khác..."], horizontal=True, key="prop_conf_choice")
-        if conf_prop_choice == "95%":
-            conf_l = 0.95
-        elif conf_prop_choice == "99%":
-            conf_l = 0.99
-        else:
-            conf_l = st.slider("Độ tin cậy tùy chỉnh", 0.80, 0.999, 0.90, 0.005, format="%.3f", key="prop_conf_custom")
 
-    if int(x_evt) > int(n_tot):
-        st.error("Number with event cannot be greater than total sample size.")
-    else:
-        if st.button("Compute Proportion CI", type="primary", use_container_width=True):
-            prop_tbl, wald_ok = proportion_ci_methods(int(x_evt), int(n_tot), float(conf_l))
-            show_table(prop_tbl, "Proportion Confidence Intervals (%)")
-            download_table_block(prop_tbl, "proportion_ci", "Proportion CI")
+    ci_prop_target = st.radio(
+        "Chọn mục tiêu ước lượng tỷ lệ:",
+        ["Ước lượng một tỷ lệ (Single Proportion)", "Ước lượng hiệu hai tỷ lệ (Difference between Two Proportions)"],
+        horizontal=True
+    )
+
+    if ci_prop_target.startswith("Ước lượng một tỷ lệ"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            x_evt = st.number_input("Số biến cố (x / events)", min_value=0, value=50, step=1)
+        with c2:
+            n_tot = st.number_input("Cỡ mẫu (n / total)", min_value=1, value=100, step=1)
+        with c3:
+            conf_prop_choice = st.radio("Độ tin cậy", ["95%", "99%", "Khác..."], horizontal=True, key="prop_conf_choice")
+            if conf_prop_choice == "95%":
+                conf_l = 0.95
+            elif conf_prop_choice == "99%":
+                conf_l = 0.99
+            else:
+                conf_l = st.slider("Độ tin cậy tùy chỉnh", 0.80, 0.999, 0.90, 0.005, format="%.3f", key="prop_conf_custom")
+
+        if int(x_evt) > int(n_tot):
+            st.error("Số biến cố không thể lớn hơn cỡ mẫu.")
+        else:
+            if st.button("Compute Proportion CI", type="primary", use_container_width=True):
+                prop_tbl, wald_ok = proportion_ci_methods(int(x_evt), int(n_tot), float(conf_l))
+                show_table(prop_tbl, "Proportion Confidence Intervals (%)")
+                download_table_block(prop_tbl, "proportion_ci", "Proportion CI")
+
+    else: # Hiệu 2 tỷ lệ
+        st.markdown("### Ước lượng khoảng tin cậy cho hiệu hai tỷ lệ ($p_1 - p_2$)")
+        method_p2 = st.radio(
+            "Phương thức nhập dữ liệu:",
+            ["Upload file (template)", "Paste values", "Enter summary statistics (x1, n1 & x2, n2)"],
+            horizontal=True,
+            key="prop2_method"
+        )
+
+        p2_tpl = pd.DataFrame({
+            "Sample_1": [1, 1, 0, 1, 0, 1, 1, 0, 1, 0],
+            "Sample_2": [0, 1, 0, 0, 1, 0, 0, 1, 0, 0]
+        })
+        st.download_button(
+            "Download Excel template (2 proportions)",
+            data=df_to_excel_bytes({"ci_prop2_template": p2_tpl}),
+            file_name="ci_diff_proportions_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=False
+        )
+
+        x1_val, n1_val, x2_val, n2_val = None, None, None, None
+
+        if method_p2 == "Upload file (template)":
+            up_p2 = st.file_uploader("Upload file chứa 2 cột tỷ lệ nhị phân 0/1 (XLSX/CSV)", type=["xlsx", "csv"], key="ci_prop2_up")
+            if up_p2 is not None:
+                df_p2 = load_uploaded_file(up_p2)
+                st.dataframe(df_p2.head(30), use_container_width=True)
+                cols_p2 = list(df_p2.columns)
+                if len(cols_p2) >= 2:
+                    col_p1 = st.selectbox("Cột nhóm 1", cols_p2, index=0)
+                    col_p2 = st.selectbox("Cột nhóm 2", [c for c in cols_p2 if c != col_p1], index=0)
+                    s1_arr = pd.to_numeric(df_p2[col_p1], errors="coerce").dropna().values
+                    s2_arr = pd.to_numeric(df_p2[col_p2], errors="coerce").dropna().values
+                    n1_val = len(s1_arr)
+                    x1_val = int(np.sum(s1_arr == 1))
+                    n2_val = len(s2_arr)
+                    x2_val = int(np.sum(s2_arr == 1))
+                else:
+                    st.error("File tải lên cần ít nhất 2 cột dữ liệu.")
+
+        elif method_p2 == "Paste values":
+            st.caption("Dán các giá trị 0 và 1 của từng nhóm (cách nhau bởi dấu cách, phẩy, chấm phẩy hoặc xuống dòng):")
+            c_txt1, c_txt2 = st.columns(2)
+            with c_txt1:
+                txt_p1 = st.text_area("Dãy số nhóm 1 (0 và 1)", value="1; 1; 0; 1; 0; 1; 1; 0; 1; 0; 1; 1", height=100)
+            with c_txt2:
+                txt_p2 = st.text_area("Dãy số nhóm 2 (0 và 1)", value="0; 1; 0; 0; 1; 0; 0; 1; 0; 0; 0; 1", height=100)
+
+            arr_p1 = parse_numeric_text(txt_p1)
+            arr_p2 = parse_numeric_text(txt_p2)
+            if len(arr_p1) > 0 and len(arr_p2) > 0:
+                n1_val = len(arr_p1)
+                x1_val = int(np.sum(arr_p1 == 1))
+                n2_val = len(arr_p2)
+                x2_val = int(np.sum(arr_p2 == 1))
+        else:
+            c_s1, c_s2 = st.columns(2)
+            with c_s1:
+                st.markdown("**Nhóm 1 (Sample 1)**")
+                n1_in = st.number_input("Cỡ mẫu nhóm 1 (n1)", min_value=1, value=100, step=1, key="prop2_n1")
+                type_p1 = st.radio("Cách nhập nhóm 1:", ["Số biến cố (x1)", "Tỷ lệ phần trăm (p1 %)"], horizontal=True, key="prop2_type1")
+                if type_p1.startswith("Số biến cố"):
+                    x1_in = st.number_input("Số biến cố (x1)", min_value=0, max_value=int(n1_in), value=45, step=1, key="prop2_x1")
+                else:
+                    pct1_in = st.number_input("Tỷ lệ nhóm 1 (p1 %)", min_value=0.0, max_value=100.0, value=45.0, step=1.0, key="prop2_pct1")
+                    x1_in = int(round(pct1_in * n1_in / 100.0))
+                    st.caption(f"Số biến cố x1 tương ứng: **{x1_in}**")
+
+            with c_s2:
+                st.markdown("**Nhóm 2 (Sample 2)**")
+                n2_in = st.number_input("Cỡ mẫu nhóm 2 (n2)", min_value=1, value=120, step=1, key="prop2_n2")
+                type_p2 = st.radio("Cách nhập nhóm 2:", ["Số biến cố (x2)", "Tỷ lệ phần trăm (p2 %)"], horizontal=True, key="prop2_type2")
+                if type_p2.startswith("Số biến cố"):
+                    x2_in = st.number_input("Số biến cố (x2)", min_value=0, max_value=int(n2_in), value=30, step=1, key="prop2_x2")
+                else:
+                    pct2_in = st.number_input("Tỷ lệ nhóm 2 (p2 %)", min_value=0.0, max_value=100.0, value=25.0, step=1.0, key="prop2_pct2")
+                    x2_in = int(round(pct2_in * n2_in / 100.0))
+                    st.caption(f"Số biến cố x2 tương ứng: **{x2_in}**")
+
+            x1_val, n1_val, x2_val, n2_val = int(x1_in), int(n1_in), int(x2_in), int(n2_in)
+
+        # Chọn độ tin cậy
+        st.markdown("#### Độ tin cậy (Confidence level)")
+        c_pconf1, c_pconf2 = st.columns([1, 1])
+        with c_pconf1:
+            conf_diff_choice = st.radio("Chọn mức tin cậy:", ["95%", "99%", "Khác..."], horizontal=True, key="prop2_conf_choice")
+        with c_pconf2:
+            if conf_diff_choice == "95%":
+                conf_level_diff = 0.95
+            elif conf_diff_choice == "99%":
+                conf_level_diff = 0.99
+            else:
+                conf_level_diff = st.slider("Nhập mức tin cậy tùy chỉnh", 0.80, 0.999, 0.90, 0.005, format="%.3f", key="prop2_conf_custom")
+
+        if st.button("Compute Difference in Proportions CI", type="primary", use_container_width=True):
+            if None in [x1_val, n1_val, x2_val, n2_val] or n1_val <= 0 or n2_val <= 0:
+                st.warning("Vui lòng cung cấp đầy đủ dữ liệu hợp lệ cho cả 2 nhóm.")
+            else:
+                try:
+                    p1_hat = x1_val / n1_val
+                    p2_hat = x2_val / n2_val
+                    se1 = math.sqrt(p1_hat * (1.0 - p1_hat) / n1_val) * 100
+                    se2 = math.sqrt(p2_hat * (1.0 - p2_hat) / n2_val) * 100
+
+                    # 1. Bảng mô tả 2 nhóm
+                    desc_prop2 = pd.DataFrame([
+                        ["Nhóm 1 (Sample 1)", x1_val, n1_val, p1_hat * 100, se1],
+                        ["Nhóm 2 (Sample 2)", x2_val, n2_val, p2_hat * 100, se2]
+                    ], columns=["Nhóm", "Số biến cố (x)", "Cỡ mẫu (n)", "Tỷ lệ (%)", "Sai số chuẩn SE (%)"])
+                    desc_prop2 = compact_numeric_df(desc_prop2, decimals=3)
+                    show_table(desc_prop2, "Thống kê mô tả hai nhóm tỷ lệ")
+                    download_table_block(desc_prop2, "desc_two_proportions", "Mô tả 2 tỷ lệ")
+
+                    # 2. Bảng khoảng tin cậy cho hiệu hai tỷ lệ
+                    diff_ci_tbl = ci_two_proportions_diff(x1_val, n1_val, x2_val, n2_val, conf_level=conf_level_diff)
+                    show_table(diff_ci_tbl, f"Khoảng tin cậy cho hiệu hai tỷ lệ (p₁ - p₂) — Mức tin cậy {conf_level_diff*100:.1f}%")
+                    download_table_block(diff_ci_tbl, "ci_difference_two_proportions", "KTC hiệu 2 tỷ lệ")
+                except Exception as e:
+                    st.error(f"Tính toán thất bại: {e}")
 
 # -----------------------------
 # CONFIDENCE INTERVALS — MEAN, SD & VARIANCE
@@ -1844,230 +2060,381 @@ elif section == "Confidence Intervals" and sub == "Proportion":
 elif section == "Confidence Intervals" and sub == "Mean & Variance":
     st.markdown("## Confidence Intervals — Mean, SD & Variance")
 
-    template = pd.DataFrame({"X": [1.2, 2.0, 1.8, 2.2, 1.6]})
-    st.download_button(
-        "Download Excel template",
-        data=df_to_excel_bytes({"ci_template": template}),
-        file_name="ci_template.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=False
-    )
-
-    method = st.radio(
-        "Input method",
-        ["Upload file (template)", "Paste values", "Enter summary statistics (n, Mean, s/s²)"],
+    ci_mean_target = st.radio(
+        "Chọn mục tiêu ước lượng:",
+        ["Ước lượng một số trung bình (Mean, SD, Variance)", "Ước lượng hiệu hai số trung bình (Difference between Two Means)"],
         horizontal=True
     )
 
-    x = None
-    summary_params = None
-
-    if method == "Upload file (template)":
-        up = st.file_uploader("Upload CI template (XLSX/CSV)", type=["xlsx", "csv"], key="ci_upload")
-        if up is not None:
-            df = load_uploaded_file(up)
-            st.dataframe(df.head(50), use_container_width=True)
-            if "X" not in df.columns:
-                st.error("Template must have a column named 'X'.")
-            else:
-                x = pd.to_numeric(df["X"], errors="coerce").dropna().values
-    elif method == "Paste values":
-        txt = st.text_area(
-            "Paste numeric values (separated by ; , space or newline)",
-            value="12; 14; 16; 18; 20; 22; 24; 26; 28; 30; 32; 34; 36; 38; 40; 42; 44; 46; 48; 50",
-            height=100
+    if ci_mean_target.startswith("Ước lượng một số trung bình"):
+        template = pd.DataFrame({"X": [1.2, 2.0, 1.8, 2.2, 1.6]})
+        st.download_button(
+            "Download Excel template",
+            data=df_to_excel_bytes({"ci_template": template}),
+            file_name="ci_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=False
         )
-        if txt.strip():
-            normalized = txt.replace(";", " ").replace(",", " ")
-            parts = [p for p in normalized.split() if p.strip()]
-            vals = pd.to_numeric(pd.Series(parts), errors="coerce").dropna()
-            x = vals.values
-    else:
-        st.markdown("#### Nhập tham số thống kê mẫu")
-        c1, c2 = st.columns(2)
-        with c1:
-            n_input = st.number_input("Cỡ mẫu (n)", min_value=2, value=20, step=1, key="ci_sum_n")
-            mean_input = st.number_input("Trung bình mẫu (Mean, x̄)", value=31.000, format="%.4f", key="ci_sum_mean")
-        with c2:
-            disp_choice = st.radio(
-                "Chọn tham số độ phân tán để nhập:",
-                ["Độ lệch chuẩn (s)", "Phương sai (s²)"],
-                horizontal=True,
-                key="ci_sum_disp_choice"
+
+        method = st.radio(
+            "Input method",
+            ["Upload file (template)", "Paste values", "Enter summary statistics (n, Mean, s/s²)"],
+            horizontal=True
+        )
+
+        x = None
+        summary_params = None
+
+        if method == "Upload file (template)":
+            up = st.file_uploader("Upload CI template (XLSX/CSV)", type=["xlsx", "csv"], key="ci_upload")
+            if up is not None:
+                df = load_uploaded_file(up)
+                st.dataframe(df.head(50), use_container_width=True)
+                if "X" not in df.columns:
+                    st.error("Template must have a column named 'X'.")
+                else:
+                    x = pd.to_numeric(df["X"], errors="coerce").dropna().values
+        elif method == "Paste values":
+            txt = st.text_area(
+                "Paste numeric values (separated by ; , space or newline)",
+                value="12; 14; 16; 18; 20; 22; 24; 26; 28; 30; 32; 34; 36; 38; 40; 42; 44; 46; 48; 50",
+                height=100
             )
-            if disp_choice == "Độ lệch chuẩn (s)":
-                s_input = st.number_input("Độ lệch chuẩn mẫu (s)", min_value=0.0001, value=11.832, format="%.4f", key="ci_sum_s")
-                var_input = s_input ** 2
-                st.caption(f"Phương sai tương ứng ($s^2$): **{var_input:.4f}**")
-            else:
-                var_input = st.number_input("Phương sai mẫu (s²)", min_value=0.0001, value=140.000, format="%.4f", key="ci_sum_var")
-                s_input = math.sqrt(var_input)
-                st.caption(f"Độ lệch chuẩn tương ứng ($s$): **{s_input:.4f}**")
-
-        summary_params = {
-            "n": int(n_input),
-            "mean": float(mean_input),
-            "s": float(s_input),
-            "s2": float(var_input)
-        }
-
-    st.markdown("#### Độ tin cậy (Confidence level)")
-    c_conf1, c_conf2 = st.columns([1, 1])
-    with c_conf1:
-        conf_choice = st.radio(
-            "Chọn mức tin cậy:",
-            ["95%", "99%", "Khác..."],
-            index=0,
-            horizontal=True,
-            key="ci_conf_choice"
-        )
-    with c_conf2:
-        if conf_choice == "95%":
-            conf_level = 0.95
-        elif conf_choice == "99%":
-            conf_level = 0.99
+            if txt.strip():
+                x = parse_numeric_text(txt)
         else:
-            conf_level = st.slider(
-                "Nhập mức tin cậy tùy chỉnh",
-                min_value=0.80,
-                max_value=0.999,
-                value=0.90,
-                step=0.005,
-                format="%.3f",
-                key="ci_conf_custom"
-            )
-
-    alpha_tail = 1.0 - conf_level
-
-    if method in ["Upload file (template)", "Paste values"]:
-        c_boot1, c_boot2 = st.columns(2)
-        with c_boot1:
-            force_boot = st.checkbox("Force bootstrap (recommended if non-normal)", value=False, key="ci_force_boot")
-        with c_boot2:
-            n_boot = st.number_input("Bootstrap resamples", min_value=1000, max_value=20000, value=5000, step=500, key="ci_n_boot")
-    else:
-        force_boot = False
-        n_boot = 5000
-
-    st.markdown("### Confidence Interval Results")
-    if st.button("Compute CI", type="primary", use_container_width=True):
-        if method == "Enter summary statistics (n, Mean, s/s²)":
-            try:
-                n_v = summary_params["n"]
-                m_v = summary_params["mean"]
-                s_v = summary_params["s"]
-                s2_v = summary_params["s2"]
-                se_v = s_v / math.sqrt(n_v)
-
-                desc_summary_df = pd.DataFrame([{
-                    "n": n_v,
-                    "Mean": m_v,
-                    "s": s_v,
-                    "s²": s2_v,
-                    "Std. Error (SE)": se_v
-                }])
-                desc_summary_df = compact_numeric_df(desc_summary_df, decimals=3)
-                show_table(desc_summary_df, "Sample Summary Statistics")
-                download_table_block(desc_summary_df, "ci_summary_statistics", "Sample Summary Statistics")
-
-                ci_table = ci_from_summary_stats(
-                    n=n_v,
-                    mean_val=m_v,
-                    s_val=s_v,
-                    s2_val=s2_v,
-                    alpha=alpha_tail
+            st.markdown("#### Nhập tham số thống kê mẫu")
+            c1, c2 = st.columns(2)
+            with c1:
+                n_input = st.number_input("Cỡ mẫu (n)", min_value=2, value=20, step=1, key="ci_sum_n")
+                mean_input = st.number_input("Trung bình mẫu (Mean, x̄)", value=31.000, format="%.4f", key="ci_sum_mean")
+            with c2:
+                disp_choice = st.radio(
+                    "Chọn tham số độ phân tán để nhập:",
+                    ["Độ lệch chuẩn (s)", "Phương sai (s²)"],
+                    horizontal=True,
+                    key="ci_sum_disp_choice"
                 )
-                show_table(ci_table, "Confidence Interval Estimates (Parametric: Student-t & Chi-square)")
-                download_table_block(ci_table, "ci_estimates_combined", "Confidence Interval Estimates")
-            except Exception as e:
-                st.error(f"Tính toán thất bại: {e}")
-        else:
-            if x is None or len(x) < 2:
-                st.warning("Vui lòng nhập ít nhất 2 giá trị số hợp lệ.")
+                if disp_choice == "Độ lệch chuẩn (s)":
+                    s_input = st.number_input("Độ lệch chuẩn mẫu (s)", min_value=0.0001, value=11.832, format="%.4f", key="ci_sum_s")
+                    var_input = s_input ** 2
+                    st.caption(f"Phương sai tương ứng ($s^2$): **{var_input:.4f}**")
+                else:
+                    var_input = st.number_input("Phương sai mẫu (s²)", min_value=0.0001, value=140.000, format="%.4f", key="ci_sum_var")
+                    s_input = math.sqrt(var_input)
+                    st.caption(f"Độ lệch chuẩn tương ứng ($s$): **{s_input:.4f}**")
+
+            summary_params = {
+                "n": int(n_input),
+                "mean": float(mean_input),
+                "s": float(s_input),
+                "s2": float(var_input)
+            }
+
+        st.markdown("#### Độ tin cậy (Confidence level)")
+        c_conf1, c_conf2 = st.columns([1, 1])
+        with c_conf1:
+            conf_choice = st.radio(
+                "Chọn mức tin cậy:",
+                ["95%", "99%", "Khác..."],
+                index=0,
+                horizontal=True,
+                key="ci_conf_choice"
+            )
+        with c_conf2:
+            if conf_choice == "95%":
+                conf_level = 0.95
+            elif conf_choice == "99%":
+                conf_level = 0.99
             else:
+                conf_level = st.slider(
+                    "Nhập mức tin cậy tùy chỉnh",
+                    min_value=0.80,
+                    max_value=0.999,
+                    value=0.90,
+                    step=0.005,
+                    format="%.3f",
+                    key="ci_conf_custom"
+                )
+
+        alpha_tail = 1.0 - conf_level
+
+        if method in ["Upload file (template)", "Paste values"]:
+            c_boot1, c_boot2 = st.columns(2)
+            with c_boot1:
+                force_boot = st.checkbox("Force bootstrap (recommended if non-normal)", value=False, key="ci_force_boot")
+            with c_boot2:
+                n_boot = st.number_input("Bootstrap resamples", min_value=1000, max_value=20000, value=5000, step=500, key="ci_n_boot")
+        else:
+            force_boot = False
+            n_boot = 5000
+
+        st.markdown("### Confidence Interval Results")
+        if st.button("Compute CI", type="primary", use_container_width=True):
+            if method == "Enter summary statistics (n, Mean, s/s²)":
                 try:
-                    n = int(len(x))
-                    mean_v = float(np.mean(x))
-                    median_v = float(np.median(x))
-                    s_v = float(np.std(x, ddof=1))
-                    s2_v = float(np.var(x, ddof=1))
-                    min_v = float(np.min(x))
-                    max_v = float(np.max(x))
-                    rng_v = max_v - min_v
+                    n_v = summary_params["n"]
+                    m_v = summary_params["mean"]
+                    s_v = summary_params["s"]
+                    s2_v = summary_params["s2"]
+                    se_v = s_v / math.sqrt(n_v)
 
-                    q1 = compute_percentile_textbook(x, 25)
-                    q3 = compute_percentile_textbook(x, 75)
-                    iqr = q3 - q1
-                    lower_bound = q1 - 1.5 * iqr
-                    upper_bound = q3 + 1.5 * iqr
-                    has_outliers = "Có" if np.any((x < lower_bound) | (x > upper_bound)) else "Không"
-
-                    mode_res = stats.mode(x, keepdims=True)
-                    mode_v = mode_res.mode[0] if len(mode_res.mode) > 0 else np.nan
-
-                    # BẢNG 1: THỐNG KÊ MÔ TẢ
-                    desc_df = pd.DataFrame([{
-                        "n": n,
-                        "Mean": mean_v,
-                        "Mode": mode_v,
-                        "Median": median_v,
+                    desc_summary_df = pd.DataFrame([{
+                        "n": n_v,
+                        "Mean": m_v,
                         "s": s_v,
                         "s²": s2_v,
-                        "Min": min_v,
-                        "Max": max_v,
-                        "Range": rng_v,
-                        "Q1": q1,
-                        "Q3": q3,
-                        "IQR": iqr
+                        "Std. Error (SE)": se_v
                     }])
-                    desc_df = compact_numeric_df(desc_df, decimals=3)
-                    show_table(desc_df, "Descriptive Statistics")
-                    download_table_block(desc_df, "ci_descriptive_statistics", "Descriptive Statistics")
+                    desc_summary_df = compact_numeric_df(desc_summary_df, decimals=3)
+                    show_table(desc_summary_df, "Sample Summary Statistics")
+                    download_table_block(desc_summary_df, "ci_summary_statistics", "Sample Summary Statistics")
 
-                    # BẢNG 2: KIỂM ĐỊNH CHUẨN VÀ NGOẠI LAI
-                    if 3 <= n <= 5000:
-                        sw_stat, sw_p = stats.shapiro(x)
-                    else:
-                        sw_stat, sw_p = np.nan, np.nan
-
-                    if lilliefors is not None and n >= 4:
-                        ks_stat, ks_p = lilliefors(x, dist='norm')
-                    else:
-                        ks_res = stats.kstest(x, 'norm', args=(mean_v, s_v))
-                        ks_stat, ks_p = float(ks_res.statistic), float(ks_res.pvalue)
-
-                    is_normal = (sw_p >= 0.05) if not np.isnan(sw_p) else ((ks_p >= 0.05) if not np.isnan(ks_p) else True)
-                    norm_status = "Có" if is_normal else "Không"
-
-                    normality_diag_df = pd.DataFrame([{
-                        "[Q1-1.5IQR; Q3+1.5IQR]": f"[{smart_round_val(lower_bound, 3)}; {smart_round_val(upper_bound, 3)}]",
-                        "Outliers": has_outliers,
-                        "Statistic (Shapiro-Wilk)": sw_stat,
-                        "Sig. (Shapiro-Wilk)": format_p_value(sw_p),
-                        "Statistic (Kolmogorov-Smirnov)": ks_stat,
-                        "Sig. (Kolmogorov-Smirnov)": format_p_value(ks_p),
-                        "Phân phối chuẩn": norm_status
-                    }])
-                    normality_diag_df = compact_numeric_df(normality_diag_df, decimals=3)
-                    show_table(normality_diag_df, "Normality & Outlier Diagnostics")
-                    download_table_block(normality_diag_df, "ci_normality_diagnostics", "Normality & Outlier Diagnostics")
-
-                    # BẢNG 3: BẢNG ƯỚC LƯỢNG KHOẢNG TIN CẬY GỘP
-                    use_boot = force_boot or (not is_normal)
-                    method_title = "Bootstrap" if use_boot else "Parametric"
-
-                    ci_table = ci_combined_estimates(
-                        x=x,
-                        alpha=alpha_tail,
-                        use_bootstrap=use_boot,
-                        n_boot=int(n_boot)
+                    ci_table = ci_from_summary_stats(
+                        n=n_v,
+                        mean_val=m_v,
+                        s_val=s_v,
+                        s2_val=s2_v,
+                        alpha=alpha_tail
                     )
-
-                    show_table(ci_table, f"Confidence Interval Estimates ({method_title})")
-                    download_table_block(ci_table, "ci_estimates_combined", f"Confidence Interval Estimates ({method_title})")
-
+                    show_table(ci_table, "Confidence Interval Estimates (Parametric: Student-t & Chi-square)")
+                    download_table_block(ci_table, "ci_estimates_combined", "Confidence Interval Estimates")
                 except Exception as e:
                     st.error(f"Tính toán thất bại: {e}")
+            else:
+                if x is None or len(x) < 2:
+                    st.warning("Vui lòng nhập ít nhất 2 giá trị số hợp lệ.")
+                else:
+                    try:
+                        n = int(len(x))
+                        mean_v = float(np.mean(x))
+                        median_v = float(np.median(x))
+                        s_v = float(np.std(x, ddof=1))
+                        s2_v = float(np.var(x, ddof=1))
+                        min_v = float(np.min(x))
+                        max_v = float(np.max(x))
+                        rng_v = max_v - min_v
+
+                        q1 = compute_percentile_textbook(x, 25)
+                        q3 = compute_percentile_textbook(x, 75)
+                        iqr = q3 - q1
+                        lower_bound = q1 - 1.5 * iqr
+                        upper_bound = q3 + 1.5 * iqr
+                        has_outliers = "Có" if np.any((x < lower_bound) | (x > upper_bound)) else "Không"
+
+                        mode_res = stats.mode(x, keepdims=True)
+                        mode_v = mode_res.mode[0] if len(mode_res.mode) > 0 else np.nan
+
+                        # BẢNG 1: THỐNG KÊ MÔ TẢ
+                        desc_df = pd.DataFrame([{
+                            "n": n,
+                            "Mean": mean_v,
+                            "Mode": mode_v,
+                            "Median": median_v,
+                            "s": s_v,
+                            "s²": s2_v,
+                            "Min": min_v,
+                            "Max": max_v,
+                            "Range": rng_v,
+                            "Q1": q1,
+                            "Q3": q3,
+                            "IQR": iqr
+                        }])
+                        desc_df = compact_numeric_df(desc_df, decimals=3)
+                        show_table(desc_df, "Descriptive Statistics")
+                        download_table_block(desc_df, "ci_descriptive_statistics", "Descriptive Statistics")
+
+                        # BẢNG 2: KIỂM ĐỊNH CHUẨN VÀ NGOẠI LAI
+                        if 3 <= n <= 5000:
+                            sw_stat, sw_p = stats.shapiro(x)
+                        else:
+                            sw_stat, sw_p = np.nan, np.nan
+
+                        if lilliefors is not None and n >= 4:
+                            ks_stat, ks_p = lilliefors(x, dist='norm')
+                        else:
+                            ks_res = stats.kstest(x, 'norm', args=(mean_v, s_v))
+                            ks_stat, ks_p = float(ks_res.statistic), float(ks_res.pvalue)
+
+                        is_normal = (sw_p >= 0.05) if not np.isnan(sw_p) else ((ks_p >= 0.05) if not np.isnan(ks_p) else True)
+                        norm_status = "Có" if is_normal else "Không"
+
+                        normality_diag_df = pd.DataFrame([{
+                            "[Q1-1.5IQR; Q3+1.5IQR]": f"[{smart_round_val(lower_bound, 3)}; {smart_round_val(upper_bound, 3)}]",
+                            "Outliers": has_outliers,
+                            "Statistic (Shapiro-Wilk)": sw_stat,
+                            "Sig. (Shapiro-Wilk)": format_p_value(sw_p),
+                            "Statistic (Kolmogorov-Smirnov)": ks_stat,
+                            "Sig. (Kolmogorov-Smirnov)": format_p_value(ks_p),
+                            "Phân phối chuẩn": norm_status
+                        }])
+                        normality_diag_df = compact_numeric_df(normality_diag_df, decimals=3)
+                        show_table(normality_diag_df, "Normality & Outlier Diagnostics")
+                        download_table_block(normality_diag_df, "ci_normality_diagnostics", "Normality & Outlier Diagnostics")
+
+                        # BẢNG 3: BẢNG ƯỚC LƯỢNG KHOẢNG TIN CẬY GỘP
+                        use_boot = force_boot or (not is_normal)
+                        method_title = "Bootstrap" if use_boot else "Parametric"
+
+                        ci_table = ci_combined_estimates(
+                            x=x,
+                            alpha=alpha_tail,
+                            use_bootstrap=use_boot,
+                            n_boot=int(n_boot)
+                        )
+
+                        show_table(ci_table, f"Confidence Interval Estimates ({method_title})")
+                        download_table_block(ci_table, "ci_estimates_combined", f"Confidence Interval Estimates ({method_title})")
+
+                    except Exception as e:
+                        st.error(f"Tính toán thất bại: {e}")
+
+    else: # Hiệu 2 trung bình
+        st.markdown("### Ước lượng khoảng tin cậy cho hiệu hai số trung bình ($\mu_1 - \mu_2$)")
+        method_m2 = st.radio(
+            "Phương thức nhập dữ liệu:",
+            ["Upload file (template)", "Paste values", "Enter summary statistics (n, Mean, s/s²)"],
+            horizontal=True,
+            key="mean2_method"
+        )
+
+        template_diff_m = pd.DataFrame({
+            "Sample_1": [12.5, 14.2, 11.8, 15.0, 13.6, 14.8, 12.9],
+            "Sample_2": [10.2, 11.5, 9.8, 12.0, 10.9, 11.2, 9.5]
+        })
+        st.download_button(
+            "Download Excel template (2 samples)",
+            data=df_to_excel_bytes({"ci_diff_mean_template": template_diff_m}),
+            file_name="ci_diff_mean_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=False
+        )
+
+        s1_arr, s2_arr = None, None
+        m2_summary = None
+
+        if method_m2 == "Upload file (template)":
+            up_m2 = st.file_uploader("Upload file chứa 2 cột dữ liệu độc lập (XLSX/CSV)", type=["xlsx", "csv"], key="ci_mean2_up")
+            if up_m2 is not None:
+                df_m2 = load_uploaded_file(up_m2)
+                st.dataframe(df_m2.head(30), use_container_width=True)
+                cols_m2 = list(df_m2.columns)
+                if len(cols_m2) >= 2:
+                    c_col1 = st.selectbox("Cột mẫu 1", cols_m2, index=0)
+                    c_col2 = st.selectbox("Cột mẫu 2", [c for c in cols_m2 if c != c_col1], index=0)
+                    s1_arr = pd.to_numeric(df_m2[c_col1], errors="coerce").dropna().values
+                    s2_arr = pd.to_numeric(df_m2[c_col2], errors="coerce").dropna().values
+                else:
+                    st.error("File tải lên cần ít nhất 2 cột dữ liệu số.")
+
+        elif method_m2 == "Paste values":
+            st.caption("Dán các giá trị của từng nhóm (cách nhau bởi dấu cách, phẩy, chấm phẩy hoặc xuống dòng):")
+            c_txt1, c_txt2 = st.columns(2)
+            with c_txt1:
+                txt_m1 = st.text_area("Dãy số nhóm 1 (Sample 1)", value="12.5; 14.2; 11.8; 15.0; 13.6; 14.8; 12.9", height=100)
+            with c_txt2:
+                txt_m2 = st.text_area("Dãy số nhóm 2 (Sample 2)", value="10.2; 11.5; 9.8; 12.0; 10.9; 11.2; 9.5", height=100)
+
+            s1_arr = parse_numeric_text(txt_m1)
+            s2_arr = parse_numeric_text(txt_m2)
+        else:
+            c_s1, c_s2 = st.columns(2)
+            with c_s1:
+                st.markdown("**Nhóm 1 (Sample 1)**")
+                n1_m = st.number_input("Cỡ mẫu (n1)", min_value=2, value=30, step=1, key="m2_n1")
+                m1_m = st.number_input("Trung bình (x̄1)", value=14.500, format="%.4f", key="m2_m1")
+                disp1_choice = st.radio("Độ phân tán nhóm 1:", ["Độ lệch chuẩn (s1)", "Phương sai (s1²)"], horizontal=True, key="m2_disp1")
+                if disp1_choice.startswith("Độ lệch"):
+                    s1_m = st.number_input("s1", min_value=0.0001, value=2.500, format="%.4f", key="m2_s1")
+                else:
+                    var1_m = st.number_input("s1²", min_value=0.0001, value=6.250, format="%.4f", key="m2_var1")
+                    s1_m = math.sqrt(var1_m)
+
+            with c_s2:
+                st.markdown("**Nhóm 2 (Sample 2)**")
+                n2_m = st.number_input("Cỡ mẫu (n2)", min_value=2, value=35, step=1, key="m2_n2")
+                m2_m = st.number_input("Trung bình (x̄2)", value=11.200, format="%.4f", key="m2_m2")
+                disp2_choice = st.radio("Độ phân tán nhóm 2:", ["Độ lệch chuẩn (s2)", "Phương sai (s2²)"], horizontal=True, key="m2_disp2")
+                if disp2_choice.startswith("Độ lệch"):
+                    s2_m = st.number_input("s2", min_value=0.0001, value=2.800, format="%.4f", key="m2_s2")
+                else:
+                    var2_m = st.number_input("s2²", min_value=0.0001, value=7.840, format="%.4f", key="m2_var2")
+                    s2_m = math.sqrt(var2_m)
+
+            m2_summary = {
+                "n1": int(n1_m), "m1": float(m1_m), "s1": float(s1_m),
+                "n2": int(n2_m), "m2": float(m2_m), "s2": float(s2_m)
+            }
+
+        st.markdown("#### Độ tin cậy (Confidence level)")
+        c_mconf1, c_mconf2 = st.columns([1, 1])
+        with c_mconf1:
+            conf_m2_choice = st.radio("Chọn mức tin cậy:", ["95%", "99%", "Khác..."], horizontal=True, key="m2_conf_choice")
+        with c_mconf2:
+            if conf_m2_choice == "95%":
+                conf_level_m2 = 0.95
+            elif conf_m2_choice == "99%":
+                conf_level_m2 = 0.99
+            else:
+                conf_level_m2 = st.slider("Nhập mức tin cậy tùy chỉnh", 0.80, 0.999, 0.90, 0.005, format="%.3f", key="m2_conf_custom")
+
+        alpha_m2 = 1.0 - conf_level_m2
+
+        if st.button("Compute Difference in Means CI", type="primary", use_container_width=True):
+            if method_m2 == "Enter summary statistics (n, Mean, s/s²)":
+                try:
+                    n1 = m2_summary["n1"]
+                    m1 = m2_summary["m1"]
+                    s1 = m2_summary["s1"]
+                    n2 = m2_summary["n2"]
+                    m2 = m2_summary["m2"]
+                    s2 = m2_summary["s2"]
+
+                    # Bảng thống kê mô tả 2 nhóm
+                    desc_two_df = pd.DataFrame([
+                        ["Nhóm 1 (Sample 1)", n1, m1, s1, s1**2, s1/math.sqrt(n1)],
+                        ["Nhóm 2 (Sample 2)", n2, m2, s2, s2**2, s2/math.sqrt(n2)]
+                    ], columns=["Nhóm", "Cỡ mẫu (n)", "Trung bình (x̄)", "Độ lệch chuẩn (s)", "Phương sai (s²)", "Sai số chuẩn (SE)"])
+                    desc_two_df = compact_numeric_df(desc_two_df, decimals=3)
+                    show_table(desc_two_df, "Thống kê mô tả hai nhóm")
+                    download_table_block(desc_two_df, "desc_two_means", "Mô tả 2 nhóm")
+
+                    diff_tbl = ci_two_means_diff(n1, m1, s1, n2, m2, s2, alpha=alpha_m2)
+                    show_table(diff_tbl, f"Khoảng tin cậy cho hiệu hai số trung bình (μ₁ - μ₂) — Mức tin cậy {conf_level_m2*100:.1f}%")
+                    download_table_block(diff_tbl, "ci_difference_two_means", "KTC hiệu 2 trung bình")
+                except Exception as e:
+                    st.error(f"Tính toán thất bại: {e}")
+            else:
+                if s1_arr is None or s2_arr is None or len(s1_arr) < 2 or len(s2_arr) < 2:
+                    st.warning("Vui lòng cung cấp ít nhất 2 quan sát hợp lệ cho mỗi nhóm.")
+                else:
+                    try:
+                        n1, m1, s1 = len(s1_arr), float(np.mean(s1_arr)), float(np.std(s1_arr, ddof=1))
+                        n2, m2, s2 = len(s2_arr), float(np.mean(s2_arr)), float(np.std(s2_arr, ddof=1))
+
+                        desc_two_df = pd.DataFrame([
+                            ["Nhóm 1 (Sample 1)", n1, m1, s1, s1**2, s1/math.sqrt(n1)],
+                            ["Nhóm 2 (Sample 2)", n2, m2, s2, s2**2, s2/math.sqrt(n2)]
+                        ], columns=["Nhóm", "Cỡ mẫu (n)", "Trung bình (x̄)", "Độ lệch chuẩn (s)", "Phương sai (s²)", "Sai số chuẩn (SE)"])
+                        desc_two_df = compact_numeric_df(desc_two_df, decimals=3)
+                        show_table(desc_two_df, "Thống kê mô tả hai nhóm")
+                        download_table_block(desc_two_df, "desc_two_means", "Mô tả 2 nhóm")
+
+                        # Levene test
+                        lev_s, lev_p = stats.levene(s1_arr, s2_arr, center="mean")
+                        lev_df = compact_numeric_df(pd.DataFrame([[
+                            "Levene's Test for Equality of Variances", lev_s, format_p_value(lev_p),
+                            "Phương sai đồng nhất (p >= 0.05)" if lev_p >= 0.05 else "Phương sai không đồng nhất (p < 0.05)"
+                        ]], columns=["Kiểm định", "Thống kê F", "Sig.", "Kết luận"]), decimals=3)
+                        show_table(lev_df, "Kiểm định tính đồng nhất của phương sai (Levene)")
+                        download_table_block(lev_df, "levene_homogeneity", "Kiểm định Levene")
+
+                        diff_tbl = ci_two_means_diff(n1, m1, s1, n2, m2, s2, alpha=alpha_m2)
+                        diff_tbl["Khuyến nghị"] = ["Ưu tiên sử dụng" if lev_p >= 0.05 else "", "Ưu tiên sử dụng" if lev_p < 0.05 else ""]
+                        show_table(diff_tbl, f"Khoảng tin cậy cho hiệu hai số trung bình (μ₁ - μ₂) — Mức tin cậy {conf_level_m2*100:.1f}%")
+                        download_table_block(diff_tbl, "ci_difference_two_means", "KTC hiệu 2 trung bình")
+                    except Exception as e:
+                        st.error(f"Tính toán thất bại: {e}")
 
 # -----------------------------
 # DIAGNOSTIC PROBABILITY (PPV, NPV)
@@ -2392,14 +2759,11 @@ elif section == "Tính cỡ mẫu":
                 download_table_block(res_df, "sample_size_survival", "Cỡ mẫu phân tích sống sót")
 
 # -----------------------------
-# MÔ-ĐUN MỚI: TÍNH XÁC SUẤT (PROBABILITY)
+# TÍNH XÁC SUẤT (PROBABILITY)
 # -----------------------------
 elif section == "Tính xác suất":
     st.markdown(f"## Tính toán lý thuyết xác suất — {sub}")
 
-    # =========================================================
-    # 1. CÔNG THỨC XÁC SUẤT CƠ BẢN & BAYES
-    # =========================================================
     if sub == "Công thức xác suất & Bayes":
         mode_prob = st.radio("Chọn dạng bài toán xác suất", [
             "Công thức Cộng & Nhân (Hai biến cố A và B)",
@@ -2458,7 +2822,7 @@ elif section == "Tính xác suất":
                 show_table(df_prob, "Kết quả công thức cộng & nhân xác suất")
                 download_table_block(df_prob, "probability_addition_multiplication", "Công thức cộng nhân xác suất")
 
-        else: # Xác suất toàn phần & Bayes
+        else:
             st.markdown("#### Hệ đầy đủ các biến cố $A_1, A_2, ..., A_k$ và biến cố $B$")
             num_hyp = st.number_input("Số biến cố phân hoạch (k)", min_value=2, max_value=5, value=3, step=1)
             k = int(num_hyp)
@@ -2484,7 +2848,6 @@ elif section == "Tính xác suất":
                 st.warning(f"⚠️ Tổng các xác suất tiên nghiệm P(Ai) = {sum_priors:.4f} (phải bằng 1.0). Vui lòng điều chỉnh lại.")
 
             if st.button("Tính xác suất toàn phần & Công thức Bayes", type="primary", use_container_width=True):
-                # Tính tích P(Ai) * P(B|Ai)
                 joint_probs = [p_prior_list[i] * p_cond_list[i] for i in range(k)]
                 p_b_total = sum(joint_probs)
 
@@ -2522,7 +2885,6 @@ elif section == "Tính xác suất":
                     show_table(bayes_df, f"Bảng tính chi tiết định lý Bayes (Xác suất toàn phần P(B) = {smart_round_val(p_b_total, 4)})")
                     download_table_block(bayes_df, "bayes_theorem_results", "Định lý Bayes")
 
-                    # Biểu đồ so sánh Tiên nghiệm vs Hậu nghiệm
                     fig, ax = plt.subplots(figsize=(8, 4))
                     labels = [f"A{i+1}" for i in range(k)]
                     x_idx = np.arange(k)
@@ -2542,9 +2904,6 @@ elif section == "Tính xác suất":
                     download_figure_block(fig, "bayes_comparison_chart")
                     plt.close(fig)
 
-    # =========================================================
-    # 2. PHÂN PHỐI NHỊ THỨC B(n, p)
-    # =========================================================
     elif sub == "Phân phối Nhị thức B(n, p)":
         st.markdown("#### Biến ngẫu nhiên rời rạc: $X \sim B(n, p)$")
         c1, c2 = st.columns(2)
@@ -2599,9 +2958,7 @@ elif section == "Tính xác suất":
             show_table(prob_res_df, "Kết quả tính xác suất nhị thức")
             download_table_block(prob_res_df, "binomial_probability_results", "Xác suất nhị thức")
 
-            # Vẽ đồ thị phân phối xác suất
             fig, ax = plt.subplots(figsize=(10, 4.5))
-            # Xác định phạm vi vẽ biểu đồ để dễ quan sát
             x_min = max(0, int(e_val - 3.5 * sd_val))
             x_max = min(n_val, int(e_val + 3.5 * sd_val) + 1)
             if x_max - x_min < 12:
@@ -2610,8 +2967,6 @@ elif section == "Tính xác suất":
 
             x_bars = np.arange(x_min, x_max + 1)
             y_bars = stats.binom.pmf(x_bars, n_val, p_val)
-
-            # Đổi màu cho khoảng m <= X <= n*
             colors = ['#E63946' if (low_val <= x <= high_val) else '#0B3A66' for x in x_bars]
 
             bars = ax.bar(x_bars, y_bars, color=colors, width=0.7, edgecolor='#333333', alpha=0.85)
@@ -2625,10 +2980,7 @@ elif section == "Tính xác suất":
             download_figure_block(fig, "binomial_distribution_chart")
             plt.close(fig)
 
-    # =========================================================
-    # 3. PHÂN PHỐI CHUẨN N(μ, σ)
-    # =========================================================
-    else:
+    else: # Phân phối Chuẩn
         st.markdown("#### Biến ngẫu nhiên liên tục: $X \sim N(\mu, \sigma^2)$")
         c1, c2 = st.columns(2)
         with c1:
@@ -2667,12 +3019,10 @@ elif section == "Tính xác suất":
         ])
 
         if st.button("Tính xác suất phân phối chuẩn & Vẽ đồ thị", type="primary", use_container_width=True):
-            # Tính toán xác suất chuẩn
             z_k = (k_norm_val - mu_v) / sigma_v
             z_m = (m_low_val - mu_v) / sigma_v
             z_n = (m_high_val - mu_v) / sigma_v
 
-            # P(X = k) = 0 đối với biến liên tục, nhưng hàm mật độ f(k) > 0
             density_k = stats.norm.pdf(k_norm_val, loc=mu_v, scale=sigma_v)
             p_norm_le = stats.norm.cdf(k_norm_val, loc=mu_v, scale=sigma_v)
             p_norm_ge = 1.0 - p_norm_le
@@ -2689,14 +3039,12 @@ elif section == "Tính xác suất":
             show_table(norm_calc_df, "Kết quả tính xác suất phân phối chuẩn")
             download_table_block(norm_calc_df, "normal_probability_results", "Xác suất phân phối chuẩn")
 
-            # Vẽ đường cong Gauss và tô bóng diện tích
             fig, ax = plt.subplots(figsize=(10, 4.5))
             x_axis = np.linspace(mu_v - 3.8 * sigma_v, mu_v + 3.8 * sigma_v, 1000)
             y_axis = stats.norm.pdf(x_axis, loc=mu_v, scale=sigma_v)
 
             ax.plot(x_axis, y_axis, color='#0B3A66', linewidth=2.5, label=f'Đường cong Gauss N(μ={mu_v:.1f}, σ={sigma_v:.1f})')
 
-            # Tô màu theo lựa chọn
             if plot_option.startswith("Đoạn giữa"):
                 x_fill = np.linspace(m_low_val, m_high_val, 500)
                 y_fill = stats.norm.pdf(x_fill, loc=mu_v, scale=sigma_v)
