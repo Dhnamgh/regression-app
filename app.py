@@ -3071,142 +3071,322 @@ elif section == "Tính xác suất":
             download_figure_block(fig, "normal_distribution_chart")
             plt.close(fig)
 
-# -----------------------------
-# MÔ-ĐUN MỚI: AI TRỢ LÝ THÔNG MINH
-# -----------------------------
-# -----------------------------
-# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH
+
+# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (TỐI ƯU TỐC ĐỘ, FONT TIMES 13, XUẤT WORD & LƯU TRẠNG THÁI)
 # -----------------------------
 elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
-    st.markdown("## 🤖 AI Trợ lý: Giải bài toán Thống kê Y sinh & Tạo trắc nghiệm")
-    st.write("Dán văn bản hoặc dán/tải ảnh chụp bài toán. AI sẽ tự động nhận diện dạng toán, giải chi tiết (KTC + Kiểm định) và tạo bộ câu hỏi trắc nghiệm 4 phương án A, B, C, D.")
+  st.markdown(
+      "## 🤖 AI Trợ lý: Giải bài toán Thống kê Y sinh & Tạo trắc nghiệm"
+  )
+  st.write(
+      "Nhập/dán văn bản hoặc ảnh chụp đề bài. AI sẽ tự động giải chi tiết và tạo"
+      " câu hỏi trắc nghiệm."
+  )
 
-    # Import thư viện dán ảnh
-    try:
-        from streamlit_paste_button import paste_image_button
-        has_paste = True
-    except ImportError:
-        has_paste = False
+  # CSS chuyên biệt cho phần hiển thị: Times New Roman cỡ 13 (18px), đen tuyền, rõ nét
+  st.markdown(
+      """
+    <style>
+    .ai-doc-view {
+        font-family: 'Times New Roman', Times, serif !important;
+        font-size: 18px !important;
+        color: #000000 !important;
+        line-height: 1.6 !important;
+        background: #ffffff !important;
+        padding: 25px 30px !important;
+        border: 2px solid #cbd5e1 !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.07) !important;
+    }
+    .ai-doc-view h1, .ai-doc-view h2, .ai-doc-view h3, .ai-doc-view h4 {
+        font-family: 'Times New Roman', Times, serif !important;
+        color: #0B3A66 !important;
+        font-weight: 800 !important;
+        margin-top: 15px !important;
+    }
+    .ai-doc-view p, .ai-doc-view li, .ai-doc-view span {
+        font-family: 'Times New Roman', Times, serif !important;
+        font-size: 18px !important;
+        color: #111827 !important;
+        font-weight: 500 !important;
+    }
+    .ai-doc-view strong {
+        font-weight: 800 !important;
+        color: #000000 !important;
+    }
+    </style>
+    """,
+      unsafe_allow_html=True,
+  )
 
-    c1, c2 = st.columns(2)
-    with c1:
-        txt_input = st.text_area(
-            "Nhập hoặc dán văn bản đề bài:",
-            value="Một nghiên cứu đánh giá một chương trình can thiệp kiểm soát đái tháo đường. Sau can thiệp, nhóm can thiệp có n1 = 40 đối tượng, x̄1 = 6.8% và s1 = 0.9%; nhóm chứng có n2 = 40 đối tượng, x̄2 = 7.4% và s2 = 1%. Nhà nghiên cứu muốn ước lượng hiệu trung bình bằng KTC 95%.",
-            height=140
+  # Hàm chuyển đổi Markdown & công thức sang file Word HTML chuẩn Times New Roman 13pt
+  def convert_markdown_to_word_doc(md_text: str) -> bytes:
+    clean_text = md_text
+
+    # Chuyển đổi các ký hiệu LaTeX phổ biến sang ký tự toán học chuẩn
+    replacements = [
+        (r"\bar{x}_1", "x̄₁"),
+        (r"\bar{x}_2", "x̄₂"),
+        (r"\bar{x}", "x̄"),
+        (r"\mu_1", "μ₁"),
+        (r"\mu_2", "μ₂"),
+        (r"\mu", "μ"),
+        (r"\sigma", "σ"),
+        (r"S_1", "S₁"),
+        (r"S_2", "S₂"),
+        (r"n_1", "n₁"),
+        (r"n_2", "n₂"),
+        (r"S_p^2", "S²ₚ"),
+        (r"S_p", "Sₚ"),
+        (r"\pm", "±"),
+        (r"\le", "≤"),
+        (r"\ge", "≥"),
+        (r"\neq", "≠"),
+        (r"\approx", "≈"),
+        (r"\alpha", "α"),
+        (r"\beta", "β"),
+        (r"\times", "×"),
+        (r"\cdot", "·"),
+        (r"\sqrt", "√"),
+        ("$", ""),  # Loại bỏ dấu $ bao quanh công thức
+    ]
+    for old, new in replacements:
+      clean_text = clean_text.replace(old, new)
+
+    # Chuyển đổi định dạng Markdown cơ bản sang HTML
+    lines = clean_text.split("\n")
+    html_lines = []
+    in_list = False
+
+    for line in lines:
+      sline = line.strip()
+      if not sline:
+        if in_list:
+          html_lines.append("</ul>")
+          in_list = False
+        continue
+
+      # Tiêu đề
+      if sline.startswith("### "):
+        html_lines.append(
+            f"<h3 style='color:#0B3A66; margin-top:14pt;"
+            f" margin-bottom:4pt;'>{sline[4:]}</h3>"
         )
-    with c2:
-        st.markdown("**Ảnh chụp đề bài:**")
-        img_from_clipboard = None
-        if has_paste:
-            paste_result = paste_image_button(
-                label="📋 Bấm vào đây để Dán ảnh từ Clipboard (Ctrl + V)",
-                text_color="#ffffff",
-                background_color="#0B3A66",
-                hover_background_color="#1E40AF"
-            )
-            if paste_result.image_data is not None:
-                img_from_clipboard = paste_result.image_data
-
-        img_file = st.file_uploader("Hoặc tải ảnh từ máy tính (PNG, JPG):", type=["png", "jpg", "jpeg"])
-
-        # Ưu tiên lấy ảnh dán từ clipboard, nếu không có thì lấy ảnh tải lên
-        final_image = None
-        if img_from_clipboard is not None:
-            final_image = img_from_clipboard
-            st.image(final_image, caption="Đã nhận ảnh dán từ Clipboard", use_container_width=True)
-        elif img_file is not None:
-            final_image = Image.open(img_file)
-            st.image(final_image, caption="Đã nhận ảnh tải lên từ máy tính", use_container_width=True)
-
-    c_cfg1, c_cfg2 = st.columns(2)
-    with c_cfg1:
-        action_mode = st.radio(
-            "Chọn yêu cầu xử lý:",
-            ["Giải bài toán chi tiết (KTC + Kiểm định)", "Tạo câu hỏi trắc nghiệm A, B, C, D", "Cả giải chi tiết và tạo trắc nghiệm"],
-            horizontal=False
+      elif sline.startswith("## "):
+        html_lines.append(
+            f"<h2 style='color:#0B3A66; margin-top:16pt;"
+            f" margin-bottom:6pt;'>{sline[3:]}</h2>"
         )
-    with c_cfg2:
-        num_questions = st.number_input("Số lượng câu trắc nghiệm cần tạo:", min_value=1, max_value=20, value=4, step=1)
+      elif sline.startswith("# "):
+        html_lines.append(
+            f"<h1 style='color:#0B3A66; margin-top:18pt;"
+            f" margin-bottom:8pt;'>{sline[2:]}</h1>"
+        )
+      elif sline.startswith("* ") or sline.startswith("- "):
+        if not in_list:
+          html_lines.append("<ul style='margin-top:2pt; margin-bottom:4pt;'>")
+          in_list = True
+        html_lines.append(f"<li style='margin-bottom:3pt;'>{sline[2:]}</li>")
+      else:
+        if in_list:
+          html_lines.append("</ul>")
+          in_list = False
+        # Xử lý in đậm
+        import re
 
-    if st.button("🚀 Bắt đầu phân tích với AI", type="primary", use_container_width=True):
-        if not txt_input.strip() and final_image is None:
-            st.warning("Vui lòng nhập văn bản đề bài hoặc dán/tải ảnh lên.")
-        elif "GEMINI_API_KEY" not in st.secrets:
-            st.error("Chưa cấu hình GEMINI_API_KEY trong Settings > Secrets của Streamlit Cloud.")
-        else:
-            status_box = st.empty()
-        with status_box.status("⏳ Đang kết nối AI và phân tích...", expanded=True) as status:
-            try:
-                # 1. Tự động nén/thu nhỏ ảnh nếu dung lượng quá lớn để gửi đi siêu tốc
-                processed_image = None
-                if final_image is not None:
-                    status.write("🖼️ Đang xử lý và tối ưu ảnh...")
-                    img_copy = final_image.copy()
-                    if max(img_copy.size) > 1200:
-                        img_copy.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
-                    processed_image = img_copy
+        formatted_line = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", sline)
+        html_lines.append(
+            f"<p style='margin-top:3pt; margin-bottom:4pt;'>{formatted_line}</p>"
+        )
 
-                # 2. Xây dựng prompt chuẩn xác
-                prompt = f"""
+    if in_list:
+      html_lines.append("</ul>")
+
+    body_content = "\n".join(html_lines)
+
+    # Khung Word HTML hoàn chỉnh với header chỉ định mở thẳng bằng MS Word
+    doc_html = f"""
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head>
+            <meta charset='utf-8'>
+            <title>Loi giai va Cau hoi trac nghiem</title>
+            <!--[if gte mso 9]>
+            <xml>
+                <w:WordDocument>
+                    <w:View>Print</w:View>
+                    <w:Zoom>100</w:Zoom>
+                    <w:DoNotOptimizeForBrowser/>
+                </w:WordDocument>
+            </xml>
+            <![endif]-->
+            <style>
+                @page {{
+                    size: 21.0cm 29.7cm; /* A4 */
+                    margin: 2.0cm 2.0cm 2.0cm 2.0cm;
+                    mso-page-orientation: portrait;
+                }}
+                body {{
+                    font-family: 'Times New Roman', serif;
+                    font-size: 13pt;
+                    line-height: 1.5;
+                    color: #000000;
+                }}
+                p, li {{
+                    font-family: 'Times New Roman', serif;
+                    font-size: 13pt;
+                    text-align: justify;
+                }}
+                h1, h2, h3 {{
+                    font-family: 'Times New Roman', serif;
+                    font-weight: bold;
+                }}
+            </style>
+        </head>
+        <body>
+            {body_content}
+        </body>
+        </html>
+        """
+    return doc_html.encode("utf-8")
+
+  # Khởi tạo bộ nhớ đệm session_state
+  if "ai_solution_text" not in st.session_state:
+    st.session_state["ai_solution_text"] = ""
+
+  c1, c2 = st.columns(2)
+  with c1:
+    txt_input = st.text_area(
+        "Nhập hoặc dán văn bản đề bài:",
+        value=(
+            "Một nghiên cứu đánh giá một chương trình can thiệp kiểm soát đái"
+            " tháo đường. Sau can thiệp, nhóm can thiệp có n1 = 40 đối tượng,"
+            " x̄1 = 6.8% và s1 = 0.9%; nhóm chứng có n2 = 40 đối tượng, x̄2 ="
+            " 7.4% và s2 = 1%. Nhà nghiên cứu muốn ước lượng hiệu trung bình"
+            " bằng KTC 95%."
+        ),
+        height=140,
+    )
+  with c2:
+    img_file = st.file_uploader(
+        "Hoặc tải / kéo-thả ảnh đề bài (PNG, JPG):", type=["png", "jpg", "jpeg"]
+    )
+    if img_file is not None:
+      st.image(
+          Image.open(img_file),
+          caption="Ảnh đề bài đã nạp",
+          use_container_width=True,
+      )
+
+  c_cfg1, c_cfg2, c_cfg3 = st.columns([1.5, 1, 1])
+  with c_cfg1:
+    action_mode = st.radio(
+        "Yêu cầu xử lý:",
+        [
+            "Giải bài toán chi tiết (KTC + Kiểm định)",
+            "Tạo câu hỏi trắc nghiệm A, B, C, D",
+            "Cả giải chi tiết và tạo trắc nghiệm",
+        ],
+        horizontal=False,
+    )
+  with c_cfg2:
+    num_questions = st.number_input(
+        "Số câu trắc nghiệm:", min_value=1, max_value=20, value=4, step=1
+    )
+  with c_cfg3:
+    # Cho phép chọn mô hình: gemini-1.5-flash chạy siêu tốc trong 3-5 giây
+    model_choice = st.selectbox(
+        "Mô hình AI:",
+        ["gemini-1.5-flash (Cực nhanh)", "gemini-2.0-flash", "gemini-3.8-flash"],
+        index=0,
+        help="gemini-1.5-flash phản hồi siêu tốc chỉ mất vài giây.",
+    )
+    target_model_name = model_choice.split()[0]
+
+  c_btn1, c_btn2 = st.columns([2, 1])
+  with c_btn1:
+    btn_run = st.button(
+        "🚀 Bắt đầu phân tích với AI", type="primary", use_container_width=True
+    )
+  with c_btn2:
+    if st.session_state["ai_solution_text"]:
+      if st.button("🗑️ Làm bài mới / Xóa", use_container_width=True):
+        st.session_state["ai_solution_text"] = ""
+        st.rerun()
+
+  # KHI BẤM NÚT BẮT ĐẦU: Xử lý và lưu vào bộ nhớ
+  if btn_run:
+    if not txt_input.strip() and img_file is None:
+      st.warning("Vui lòng cung cấp văn bản hoặc hình ảnh đề bài.")
+    elif "GEMINI_API_KEY" not in st.secrets:
+      st.error("Chưa cấu hình GEMINI_API_KEY trong Streamlit Secrets.")
+    else:
+      with st.spinner("⚡ AI đang giải toán và tạo trắc nghiệm..."):
+        try:
+          model = genai.GenerativeModel(target_model_name)
+
+          prompt = f"""
 Bạn là chuyên gia Thống kê Y học và giảng viên bộ môn Xác suất Thống kê Y Dược.
-Nhiệm vụ: Nhận diện và giải quyết bài toán theo nội dung văn bản hoặc ảnh đính kèm.
+Nhiệm vụ: Giải bài toán và tạo câu hỏi trắc nghiệm theo đề bài dưới đây.
 
-Yêu cầu thực hiện ({action_mode}):
-1. Nhận diện dạng toán (so sánh 2 trung bình độc lập, bắt cặp, tỷ lệ, kiểm định hay KTC...).
-2. Trình bày bài giải chi tiết từng bước: Các giả thuyết H0/H1, sai số chuẩn (SE), giá trị thống kê kiểm định (t hoặc Z), bậc tự do df, p-value, Khoảng tin cậy KTC 95%, và kết luận ý nghĩa y học lâm sàng rõ ràng.
-3. Nếu có tạo câu hỏi trắc nghiệm: Hãy tạo đúng {num_questions} câu hỏi 4 lựa chọn (A, B, C, D), có đáp án đúng và lời giải thích ngắn gọn cho mỗi câu.
+YÊU CẦU QUAN TRỌNG:
+1. Hãy đi thẳng vào bài giải, ngắn gọn, súc tích và chuẩn xác. Không viết lời chào hỏi rườm rà.
+2. Trình bày các công thức toán bằng ký hiệu rõ ràng, dễ đọc (ví dụ: x̄₁, x̄₂, S₁, S₂, Sp, t, Z, p-value, df, KTC 95%).
+3. Thực hiện đúng chế độ: "{action_mode}".
+   - Nếu giải toán: Nêu rõ giả thuyết H0/H1, tính SE, giá trị thống kê kiểm định, bậc tự do df, p-value, KTC 95% và kết luận ý nghĩa y học lâm sàng.
+   - Nếu tạo trắc nghiệm: Tạo đúng {num_questions} câu hỏi 4 lựa chọn (A, B, C, D), có chỉ rõ đáp án đúng và lời giải thích ngắn gọn cho mỗi câu.
 """
-                parts = [prompt]
-                if txt_input.strip():
-                    parts.append(f"ĐỀ BÀI:\n{txt_input}")
-                if processed_image is not None:
-                    parts.append(processed_image)
+          parts = [prompt]
+          if txt_input.strip():
+            parts.append(f"ĐỀ BÀI:\n{txt_input}")
+          if img_file is not None:
+            # Tối ưu kích thước ảnh để truyền dữ liệu nhanh
+            img_to_send = Image.open(img_file)
+            if max(img_to_send.size) > 1200:
+              img_to_send.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+            parts.append(img_to_send)
 
-                status.write("🧠 Đang tính toán và truyền dòng kết quả...")
+          # Gọi AI với cấu hình nhiệt độ thấp để ra kết quả toán học chuẩn xác nhất
+          response = model.generate_content(
+              parts, generation_config={"temperature": 0.2}
+          )
 
-                # 3. Kết nối trực tiếp vào model khả dụng trên AI Studio
-                # Danh sách model thử nghiệm theo thứ tự ưu tiên
-                candidate_models = ["gemini-3-flash-preview", "gemini-3.8-flash"]
-                response = None
+          # LƯU KẾT QUẢ VÀO SESSION STATE ĐỂ KHÔNG BỊ MẤT
+          st.session_state["ai_solution_text"] = response.text
 
-                for m_name in candidate_models:
-                    try:
-                        model = genai.GenerativeModel(m_name)
-                        # Bật stream=True để AI sinh chữ tới đâu đẩy về màn hình tới đó
-                        response = model.generate_content(parts, stream=True)
-                        break
-                    except Exception:
-                        continue
+        except Exception as e:
+          st.error(f"Lỗi: {e}")
 
-                if response is None:
-                    raise RuntimeError("Không thể kết nối với mô hình Gemini. Vui lòng kiểm tra lại API Key.")
+  # HIỂN THỊ KẾT QUẢ: Đặt ngoài nút bấm để KHÔNG BAO GIỜ BỊ MẤT KHI CHÉP / TẢI VỀ
+  if st.session_state["ai_solution_text"]:
+    st.markdown("---")
+    st.markdown("### 📋 Lời giải chi tiết & Đề trắc nghiệm:")
 
-                status.update(label="✅ Đã nhận diện xong đề bài!", state="complete", expanded=False)
+    # Hiển thị trên web với phông chữ Times New Roman 13 rõ nét
+    st.markdown(
+        f'<div class="ai-doc-view">{st.session_state["ai_solution_text"]}</div>',
+        unsafe_allow_html=True,
+    )
 
-                st.markdown("---")
-                st.markdown("### 📋 Kết quả phân tích & Lời giải từ AI:")
-
-                # 4. Hiển thị chữ chạy theo thời gian thực (Real-time Stream)
-                def stream_output():
-                    collected_text = ""
-                    for chunk in response:
-                        if chunk.text:
-                            collected_text += chunk.text
-                            yield chunk.text
-                    st.session_state["ai_saved_result"] = collected_text
-
-                st.write_stream(stream_output)
-
-                # Nút tải kết quả về máy
-                if "ai_saved_result" in st.session_state and st.session_state["ai_saved_result"]:
-                    st.download_button(
-                        "📥 Tải nội dung lời giải & trắc nghiệm (.txt)",
-                        data=st.session_state["ai_saved_result"],
-                        file_name="loi_giai_va_trac_nghiem.txt",
-                        mime="text/plain"
-                    )
-
-            except Exception as e:
-                status.update(label="❌ Có lỗi xảy ra!", state="error", expanded=True)
-                st.error(f"Lỗi chi tiết: {e}")
+    st.write("")
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+      # Tải file Word (.doc) mở thẳng trong Word với font Times New Roman 13pt
+      word_data = convert_markdown_to_word_doc(
+          st.session_state["ai_solution_text"]
+      )
+      st.download_button(
+          "📥 Tải tài liệu Word (.doc)",
+          data=word_data,
+          file_name="Loi_giai_va_Trac_nghiem.doc",
+          mime="application/msword",
+          use_container_width=True,
+      )
+    with col_dl2:
+      # Tải file văn bản thuần
+      st.download_button(
+          "📄 Tải dạng văn bản (.txt)",
+          data=st.session_state["ai_solution_text"],
+          file_name="Loi_giai_va_Trac_nghiem.txt",
+          mime="text/plain",
+          use_container_width=True,
+      )
