@@ -3073,7 +3073,7 @@ elif section == "Tính xác suất":
 
 
 # -----------------------------
-# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (TỐI ƯU SIÊU TỐC THINKING=0, SẠCH 100% DẤU ### TRÊN WEB)
+# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (TỰ ĐỘNG XOAY VÒNG NHIỀU API KEY KHI HẾT QUOTA 429)
 # -----------------------------
 elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
   st.markdown(
@@ -3145,11 +3145,43 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
   except ImportError:
     has_paste = False
 
+  # Hàm tự động quét và gom toàn bộ các API Key có trong Secrets hoặc ô dự phòng
+  def get_all_configured_api_keys(custom_key: str = "") -> List[str]:
+    keys = []
+    if custom_key and custom_key.strip():
+      keys.append(custom_key.strip())
+
+    # 1. Quét danh sách mảng GEMINI_API_KEYS = ["key1", "key2"]
+    sec_keys = st.secrets.get("GEMINI_API_KEYS", None)
+    if sec_keys:
+      if isinstance(sec_keys, (list, tuple)):
+        keys.extend([str(k).strip() for k in sec_keys if str(k).strip()])
+      elif isinstance(sec_keys, str):
+        keys.extend(
+            [str(k).strip() for k in sec_keys.split(",") if str(k).strip()]
+        )
+
+    # 2. Quét key đơn GEMINI_API_KEY (hoặc chứa chuỗi ngăn cách bởi dấu phẩy)
+    single_key = st.secrets.get("GEMINI_API_KEY", "")
+    if single_key:
+      if "," in single_key:
+        keys.extend([k.strip() for k in single_key.split(",") if k.strip()])
+      else:
+        keys.append(single_key.strip())
+
+    # Khử trùng lặp và giữ nguyên thứ tự ưu tiên
+    seen = set()
+    ordered_keys = []
+    for k in keys:
+      if k not in seen:
+        seen.add(k)
+        ordered_keys.append(k)
+    return ordered_keys
+
   # Hàm xử lý chuỗi: Bóc tách bullet rác, in đậm Câu hỏi và dọn sạch Markdown cho Word
   def format_clean_markdown_for_docx(text: str) -> str:
     import re
 
-    # 1. Bắt buộc cắt bỏ toàn bộ lời chào/mở bài trước PHẦN 1 hoặc BÀI GIẢI
     idx_p1 = re.search(
         r"(#{1,4}\s*(PHẦN\s*1|BÀI\s*GIẢI|BỘ\s*CÂU\s*HỎI)|(PHẦN\s*1|BÀI\s*GIẢI|BỘ\s*CÂU\s*HỎI)\s*:)",
         text,
@@ -3160,12 +3192,10 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
     else:
       cleaned_text = text
 
-    # 2. Tự động in đậm "Câu 1:", "Câu 2:" nếu AI chưa in đậm
     cleaned_text = re.sub(
         r"(?<!\*\*)(Câu\s+\d+[:\.])(?!\*\*)", r"**\1**", cleaned_text
     )
 
-    # 3. Tách các gạch đầu dòng bị dính trên 1 dòng
     lines = cleaned_text.split("\n")
     new_lines = []
     for line in lines:
@@ -3194,7 +3224,6 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
 
       new_lines.append(s)
 
-    # 4. Định dạng chuẩn danh sách để Word tạo bullet tròn đen (•)
     cleaned = []
     in_table = False
     in_list = False
@@ -3255,7 +3284,6 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
     import re
 
     web_text = format_clean_markdown_for_docx(text)
-    # Chuyển đổi các cấp độ tiêu đề markdown sang thẻ HTML tiêu chuẩn
     web_text = re.sub(
         r"^###\s+(.+)$",
         r'<h3 style="color:#0B3A66; font-weight:800; margin-top:16px;'
@@ -3349,6 +3377,19 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
   if "ai_solution_text" not in st.session_state:
     st.session_state["ai_solution_text"] = ""
 
+  with st.expander("🔑 Cấu hình danh sách API Key dự phòng", expanded=False):
+    custom_api_key = st.text_input(
+        "Nhập API Key thủ công (nếu cần dán key tạm thời):",
+        type="password",
+        placeholder="AIzaSy...",
+        key="custom_gemini_api_key",
+    )
+    st.caption(
+        "💡 Hệ thống sẽ tự động quét toàn bộ danh sách key trong Secrets (hoặc"
+        " ô nhập này). Nếu Key 1 hết lượt (429), app sẽ tự động nhảy sang Key"
+        " 2, Key 3... để tiếp tục xử lý."
+    )
+
   c1, c2 = st.columns(2)
   with c1:
     txt_input = st.text_area(
@@ -3441,21 +3482,19 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
         st.session_state["ai_solution_text"] = ""
         st.rerun()
 
-  # Xử lý khi nhấn nút
+  # Xử lý khi nhấn nút bắt đầu
   if btn_run:
+    all_keys = get_all_configured_api_keys(custom_api_key)
+
     if not txt_input.strip() and final_image is None:
       st.warning("Vui lòng cung cấp văn bản hoặc hình ảnh đề bài.")
-    elif "GEMINI_API_KEY" not in st.secrets:
-      st.error("Chưa cấu hình GEMINI_API_KEY trong Streamlit Secrets.")
+    elif not all_keys:
+      st.error(
+          "Chưa cấu hình API Key nào trong Streamlit Secrets hoặc ô nhập dự"
+          " phòng."
+      )
     else:
-      try:
-        try:
-          model = genai.GenerativeModel(target_model_name)
-        except Exception:
-          model = genai.GenerativeModel("gemini-3-flash-preview")
-
-        # CÁC QUY TẮC CỐT LÕI
-        core_rules = """
+      core_rules = """
 Bạn là chuyên gia Thống kê Y học và giảng viên bộ môn Xác suất Thống kê Y Dược.
 Nhiệm vụ: Giải bài toán theo đúng các quy chuẩn sau đây.
 
@@ -3469,8 +3508,8 @@ CÁC NGUYÊN TẮC BẮT BUỘC TUÂN THỦ:
    - Khoảng tin cậy KTC (nếu có) bắt buộc đặt trong ngoặc vuông: [cận dưới; cận trên] (ngăn cách bằng dấu chấm phẩy ';').
 """
 
-        if action_mode == "Giải chi tiết bài toán":
-          mode_prompt = """
+      if action_mode == "Giải chi tiết bài toán":
+        mode_prompt = """
 CHẾ ĐỘ YÊU CẦU: CHỈ GIẢI CHI TIẾT BÀI TOÁN.
 TUYỆT ĐỐI KHÔNG TẠO CÂU HỎI TRẮC NGHIỆM, KHÔNG CÓ PHẦN 2.
 
@@ -3481,8 +3520,8 @@ Cấu trúc trình bày:
 - Các bước tính toán: Trình bày chuỗi công thức 3 vế trực diện, chính xác.
 - Kết luận: Nêu đáp số và ý nghĩa thực tế/lâm sàng.
 """
-        elif action_mode == "Tạo câu hỏi trắc nghiệm A, B, C, D":
-          mode_prompt = f"""
+      elif action_mode == "Tạo câu hỏi trắc nghiệm A, B, C, D":
+        mode_prompt = f"""
 CHẾ ĐỘ YÊU CẦU: CHỈ TẠO BỘ CÂU HỎI TRẮC NGHIỆM ĐỘC LẬP.
 TUYỆT ĐỐI KHÔNG GIẢI BÀI TOÁN, KHÔNG CÓ PHẦN BÀI GIẢI CHI TIẾT.
 
@@ -3504,8 +3543,8 @@ Cấu trúc trình bày:
 
   D. [Phương án sai]
 """
-        else:  # "Cả giải chi tiết và tạo trắc nghiệm"
-          mode_prompt = f"""
+      else:
+        mode_prompt = f"""
 CHẾ ĐỘ YÊU CẦU: CẢ GIẢI CHI TIẾT VÀ TẠO CÂU HỎI TRẮC NGHIỆM.
 
 ### PHẦN 1: BÀI GIẢI CHI TIẾT
@@ -3532,53 +3571,85 @@ CHẾ ĐỘ YÊU CẦU: CẢ GIẢI CHI TIẾT VÀ TẠO CÂU HỎI TRẮC NGHI�
   D. [Phương án sai]
 """
 
-        prompt = core_rules + "\n" + mode_prompt
+      prompt = core_rules + "\n" + mode_prompt
 
-        parts = [prompt]
-        if txt_input.strip():
-          parts.append(f"ĐỀ BÀI:\n{txt_input}")
-        if final_image is not None:
-          img_to_send = final_image.copy()
-          if max(img_to_send.size) > 1000:
-            img_to_send.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
-          parts.append(img_to_send)
+      parts = [prompt]
+      if txt_input.strip():
+        parts.append(f"ĐỀ BÀI:\n{txt_input}")
+      if final_image is not None:
+        img_to_send = final_image.copy()
+        if max(img_to_send.size) > 1000:
+          img_to_send.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
+        parts.append(img_to_send)
 
-        st.markdown("---")
-        st.markdown("### 📋 Kết quả phân tích từ AI:")
+      # VÒNG LẶP TỰ ĐỘNG THỬ TỪNG KEY THEO THỨ TỰ
+      success = False
+      last_err = ""
+      status_box = st.empty()
 
-        # TẮT CHẾ ĐỘ THINKING (THINKING_BUDGET = 0) ĐỂ TĂNG TỐC ĐỘ PHẢN HỒI LÊN GẤP 10 LẦN
+      for idx, api_key in enumerate(all_keys):
         try:
-          fast_config = {
-              "temperature": 0.1,
-              "thinking_config": {"thinking_budget": 0},
-          }
-          response = model.generate_content(
-              parts, stream=True, generation_config=fast_config
-          )
-        except Exception:
-          # Dự phòng nếu model không hỗ trợ tham số thinking_config
-          response = model.generate_content(
-              parts, stream=True, generation_config={"temperature": 0.1}
-          )
+          genai.configure(api_key=api_key)
+          try:
+            model = genai.GenerativeModel(target_model_name)
+          except Exception:
+            model = genai.GenerativeModel("gemini-3-flash-preview")
 
-        raw_text = ""
-        placeholder = st.empty()
-        for chunk in response:
-          if chunk.text:
-            raw_text += chunk.text
-            # Hiển thị web bằng HTML chuẩn, không bao giờ để lộ '###'
-            formatted_web = render_markdown_to_web_html(raw_text)
-            placeholder.markdown(
-                f'<div class="ai-doc-view">{formatted_web}</div>',
-                unsafe_allow_html=True,
+          # Cấu hình phản hồi tức thì
+          try:
+            fast_config = {
+                "temperature": 0.1,
+                "thinking_config": {"thinking_budget": 0},
+            }
+            response = model.generate_content(
+                parts, stream=True, generation_config=fast_config
+            )
+          except Exception:
+            response = model.generate_content(
+                parts, stream=True, generation_config={"temperature": 0.1}
             )
 
-        st.session_state["ai_solution_text"] = format_clean_markdown_for_docx(
-            raw_text
-        )
+          status_box.empty()
+          st.markdown("---")
+          st.markdown("### 📋 Kết quả phân tích từ AI:")
 
-      except Exception as e:
-        st.error(f"Lỗi: {e}")
+          raw_text = ""
+          placeholder = st.empty()
+          for chunk in response:
+            if chunk.text:
+              raw_text += chunk.text
+              formatted_web = render_markdown_to_web_html(raw_text)
+              placeholder.markdown(
+                  f'<div class="ai-doc-view">{formatted_web}</div>',
+                  unsafe_allow_html=True,
+              )
+
+          st.session_state["ai_solution_text"] = format_clean_markdown_for_docx(
+              raw_text
+          )
+          success = True
+          break  # Gọi thành công -> dừng vòng lặp
+
+        except Exception as e:
+          err_str = str(e)
+          last_err = err_str
+          # Nếu gặp lỗi Quota 429 -> tự động chuyển sang Key tiếp theo
+          if "429" in err_str or "quota" in err_str.lower():
+            if idx + 1 < len(all_keys):
+              status_box.warning(
+                  f"⚠️ Key số {idx + 1} đã hết hạn mức (429). Hệ thống đang tự"
+                  f" động chuyển sang Key số {idx + 2}..."
+              )
+              continue
+            else:
+              status_box.error(
+                  "⚠️ Tất cả các API Key bạn cung cấp đều đã hết hạn mức hôm"
+                  " nay (20 lượt/ngày/key)!"
+              )
+              break
+          else:
+            status_box.error(f"Lỗi: {e}")
+            break
 
   # HIỂN THỊ KẾT QUẢ ĐÃ LƯU & CÁC NÚT TẢI VỀ
   if st.session_state["ai_solution_text"]:
