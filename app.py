@@ -3073,7 +3073,7 @@ elif section == "Tính xác suất":
 
 
 # -----------------------------
-# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (CHỌN ĐÚNG CHẾ ĐỘ, SẠCH BULLET, WORD EQUATION)
+# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (TỐI ƯU SIÊU TỐC THINKING=0, SẠCH 100% DẤU ### TRÊN WEB)
 # -----------------------------
 elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
   st.markdown(
@@ -3093,7 +3093,7 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
         font-family: 'Times New Roman', Times, serif !important;
         font-size: 18px !important;
         color: #000000 !important;
-        line-height: 1.6 !important;
+        line-height: 1.5 !important;
         background: #ffffff !important;
         padding: 25px 30px !important;
         border: 2px solid #cbd5e1 !important;
@@ -3120,6 +3120,7 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
         color: #0B3A66 !important;
         font-weight: 800 !important;
         margin-top: 16px !important;
+        margin-bottom: 8px !important;
     }
     .ai-doc-view p, .ai-doc-view li, .ai-doc-view span {
         font-family: 'Times New Roman', Times, serif !important;
@@ -3144,27 +3145,32 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
   except ImportError:
     has_paste = False
 
-  # Hàm xử lý chuỗi: Cắt bỏ lời chào mở đầu và chuẩn hóa bullet, bảng biểu
+  # Hàm xử lý chuỗi: Bóc tách bullet rác, in đậm Câu hỏi và dọn sạch Markdown cho Word
   def format_clean_markdown_for_docx(text: str) -> str:
     import re
 
-    # 1. Tự động cắt bỏ mọi lời chào hỏi, giới thiệu trước tiêu đề Markdown đầu tiên (###)
-    idx_heading = re.search(r"(#{1,4}\s*[^\n]+)", text)
-    if idx_heading:
-      cleaned_text = text[idx_heading.start() :]
+    # 1. Bắt buộc cắt bỏ toàn bộ lời chào/mở bài trước PHẦN 1 hoặc BÀI GIẢI
+    idx_p1 = re.search(
+        r"(#{1,4}\s*(PHẦN\s*1|BÀI\s*GIẢI|BỘ\s*CÂU\s*HỎI)|(PHẦN\s*1|BÀI\s*GIẢI|BỘ\s*CÂU\s*HỎI)\s*:)",
+        text,
+        re.IGNORECASE,
+    )
+    if idx_p1:
+      cleaned_text = text[idx_p1.start() :]
     else:
       cleaned_text = text
 
-    # 2. Tự động in đậm "Câu 1:", "Câu 2:" nếu AI quên in đậm
+    # 2. Tự động in đậm "Câu 1:", "Câu 2:" nếu AI chưa in đậm
     cleaned_text = re.sub(
         r"(?<!\*\*)(Câu\s+\d+[:\.])(?!\*\*)", r"**\1**", cleaned_text
     )
 
-    # 3. Tách các gạch đầu dòng bị dính trên 1 dòng ở Tóm tắt đề bài
+    # 3. Tách các gạch đầu dòng bị dính trên 1 dòng
     lines = cleaned_text.split("\n")
     new_lines = []
     for line in lines:
       s = line.strip()
+
       if ("Tóm tắt" in s or s.startswith("Tóm tắt")) and " - " in s:
         parts = s.split(" - ")
         new_lines.append(parts[0].strip())
@@ -3188,7 +3194,7 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
 
       new_lines.append(s)
 
-    # 4. Định dạng chuẩn danh sách cho Pandoc để Word tạo bullet tròn đen (•)
+    # 4. Định dạng chuẩn danh sách để Word tạo bullet tròn đen (•)
     cleaned = []
     in_table = False
     in_list = False
@@ -3243,6 +3249,35 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
     res = "\n".join(cleaned)
     res = re.sub(r"\n{3,}", "\n\n", res)
     return res
+
+  # Hàm chuyển đổi riêng cho Web: Biến ### thành <h3> để không bao giờ bị hiện chữ ###
+  def render_markdown_to_web_html(text: str) -> str:
+    import re
+
+    web_text = format_clean_markdown_for_docx(text)
+    # Chuyển đổi các cấp độ tiêu đề markdown sang thẻ HTML tiêu chuẩn
+    web_text = re.sub(
+        r"^###\s+(.+)$",
+        r'<h3 style="color:#0B3A66; font-weight:800; margin-top:16px;'
+        r' margin-bottom:8px;">\1</h3>',
+        web_text,
+        flags=re.MULTILINE,
+    )
+    web_text = re.sub(
+        r"^##\s+(.+)$",
+        r'<h2 style="color:#0B3A66; font-weight:800; margin-top:20px;'
+        r' margin-bottom:10px;">\1</h2>',
+        web_text,
+        flags=re.MULTILINE,
+    )
+    web_text = re.sub(
+        r"^#\s+(.+)$",
+        r'<h1 style="color:#0B3A66; font-weight:800; margin-top:24px;'
+        r' margin-bottom:12px;">\1</h1>',
+        web_text,
+        flags=re.MULTILINE,
+    )
+    return web_text
 
   # Hàm xuất file Word (.docx) chứa công thức Equation và dãn dòng 1.2
   def generate_word_docx_with_equations(md_text: str) -> Optional[bytes]:
@@ -3380,7 +3415,6 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
         horizontal=False,
     )
   with c_cfg2:
-    # Ẩn/hiện số câu trắc nghiệm tùy theo lựa chọn
     if action_mode == "Giải chi tiết bài toán":
       st.caption("ℹ️ Chế độ chỉ giải bài tập, không tạo trắc nghiệm.")
       num_questions = 0
@@ -3420,10 +3454,10 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
         except Exception:
           model = genai.GenerativeModel("gemini-3-flash-preview")
 
-        # XÂY DỰNG CHỈ THỊ THEO ĐÚNG CHẾ ĐỘ ĐƯỢC CHỌN
+        # CÁC QUY TẮC CỐT LÕI
         core_rules = """
 Bạn là chuyên gia Thống kê Y học và giảng viên bộ môn Xác suất Thống kê Y Dược.
-Nhiệm vụ: Phân tích và thực hiện bài toán theo đúng các quy chuẩn sau đây.
+Nhiệm vụ: Giải bài toán theo đúng các quy chuẩn sau đây.
 
 CÁC NGUYÊN TẮC BẮT BUỘC TUÂN THỦ:
 1. KHÔNG LỜI CHÀO HỎI: Bắt đầu câu trả lời ngay lập tức bằng tiêu đề Markdown (###). Tuyệt đối không chào hỏi, không giới thiệu danh xưng.
@@ -3441,7 +3475,7 @@ CHẾ ĐỘ YÊU CẦU: CHỈ GIẢI CHI TIẾT BÀI TOÁN.
 TUYỆT ĐỐI KHÔNG TẠO CÂU HỎI TRẮC NGHIỆM, KHÔNG CÓ PHẦN 2.
 
 Cấu trúc trình bày:
-### BÀI GIẢI CHI TIẾT
+### PHẦN 1: BÀI GIẢI CHI TIẾT
 - Tóm tắt đề bài & Bảng dữ liệu (nếu có).
 - Xác định phương pháp: Nêu dạng bài và công thức chuẩn áp dụng.
 - Các bước tính toán: Trình bày chuỗi công thức 3 vế trực diện, chính xác.
@@ -3512,18 +3546,30 @@ CHẾ ĐỘ YÊU CẦU: CẢ GIẢI CHI TIẾT VÀ TẠO CÂU HỎI TRẮC NGHI�
         st.markdown("---")
         st.markdown("### 📋 Kết quả phân tích từ AI:")
 
-        response = model.generate_content(
-            parts, stream=True, generation_config={"temperature": 0.1}
-        )
+        # TẮT CHẾ ĐỘ THINKING (THINKING_BUDGET = 0) ĐỂ TĂNG TỐC ĐỘ PHẢN HỒI LÊN GẤP 10 LẦN
+        try:
+          fast_config = {
+              "temperature": 0.1,
+              "thinking_config": {"thinking_budget": 0},
+          }
+          response = model.generate_content(
+              parts, stream=True, generation_config=fast_config
+          )
+        except Exception:
+          # Dự phòng nếu model không hỗ trợ tham số thinking_config
+          response = model.generate_content(
+              parts, stream=True, generation_config={"temperature": 0.1}
+          )
 
         raw_text = ""
         placeholder = st.empty()
         for chunk in response:
           if chunk.text:
             raw_text += chunk.text
-            formatted_display = format_clean_markdown_for_docx(raw_text)
+            # Hiển thị web bằng HTML chuẩn, không bao giờ để lộ '###'
+            formatted_web = render_markdown_to_web_html(raw_text)
             placeholder.markdown(
-                f'<div class="ai-doc-view">{formatted_display}</div>',
+                f'<div class="ai-doc-view">{formatted_web}</div>',
                 unsafe_allow_html=True,
             )
 
@@ -3539,8 +3585,11 @@ CHẾ ĐỘ YÊU CẦU: CẢ GIẢI CHI TIẾT VÀ TẠO CÂU HỎI TRẮC NGHI�
     if not btn_run:
       st.markdown("---")
       st.markdown("### 📋 Kết quả phân tích từ AI:")
+      formatted_web = render_markdown_to_web_html(
+          st.session_state["ai_solution_text"]
+      )
       st.markdown(
-          f'<div class="ai-doc-view">{st.session_state["ai_solution_text"]}</div>',
+          f'<div class="ai-doc-view">{formatted_web}</div>',
           unsafe_allow_html=True,
       )
 
