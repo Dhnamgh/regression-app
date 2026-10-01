@@ -3073,20 +3073,15 @@ elif section == "Tính xác suất":
 
 
 # -----------------------------
-# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (XUẤT WORD EQUATION CHUẨN, STREAMING SIÊU TỐC, TRẮC NGHIỆM A ĐÚNG)
+# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (TRẮC NGHIỆM ĐỘC LẬP TỰ ĐỦ DỮ LIỆU & TÁCH DÒNG RIÊNG TỪNG PHƯƠNG ÁN)
 # -----------------------------
 elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
-  st.markdown(
-      "## 🤖 AI Trợ lý: Giải bài toán Thống kê Y sinh & Tạo trắc nghiệm"
-  )
-  st.write(
-      "Nhập/dán văn bản hoặc dán/tải ảnh chụp đề bài. AI sẽ tự động giải chi tiết"
-      " và tạo bộ câu hỏi trắc nghiệm."
-  )
+    st.markdown("## 🤖 AI Trợ lý: Giải bài toán Thống kê Y sinh & Tạo trắc nghiệm")
+    st.write("Nhập/dán văn bản hoặc dán/tải ảnh chụp đề bài. AI sẽ tự động giải chi tiết và tạo bộ câu hỏi trắc nghiệm độc lập.")
 
-  # CSS hiển thị web phông Times New Roman 13 (18px), đen tuyền, rõ nét
-  st.markdown(
-      """
+    # CSS hiển thị web phông Times New Roman 13 (18px), đen tuyền, rõ nét
+    st.markdown(
+        """
     <style>
     .katex { font-size: 1.15em !important; }
     .ai-doc-view {
@@ -3118,263 +3113,250 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
     }
     </style>
     """,
-      unsafe_allow_html=True,
-  )
+        unsafe_allow_html=True,
+    )
 
-  # Nút dán ảnh từ Clipboard
-  try:
-    from streamlit_paste_button import paste_image_button
-
-    has_paste = True
-  except ImportError:
-    has_paste = False
-
-  # Hàm tạo file Word (.docx) chứa công thức Word Equation nguyên bản
-  def generate_word_docx_with_equations(md_text: str) -> Optional[bytes]:
-    import os
-    import tempfile
-
+    # Nút dán ảnh từ Clipboard
     try:
-      import pypandoc
+        from streamlit_paste_button import paste_image_button
+        has_paste = True
+    except ImportError:
+        has_paste = False
 
-      with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
-        tmp_docx = tmp.name
+    # Hàm chuẩn hóa ngắt dòng: ép mỗi phương án A, B, C, D và Câu hỏi thành đoạn văn riêng biệt
+    def format_quiz_layout(text: str) -> str:
+        import re
+        formatted = text
+        # 1. Đảm bảo trước Câu X: luôn có 2 dấu xuống dòng
+        formatted = re.sub(r'(?<!\n)\n(Câu\s+\d+[:\.])', r'\n\n\1', formatted)
+        # 2. Tách A. B. C. D. nếu bị dính trên cùng 1 dòng
+        formatted = re.sub(r'(\?|\.)\s*(A\.\s+)', r'\1\n\n\2', formatted)
+        formatted = re.sub(r'(?<!\n)\s+([B-D]\.\s+)', r'\n\n\1', formatted)
+        # 3. Nếu các phương án chỉ cách nhau 1 dấu \n -> đổi thành \n\n để Word/Markdown không dồn hàng
+        formatted = re.sub(r'(?<!\n)\n([A-D]\.\s+)', r'\n\n\1', formatted)
+        return formatted
 
-      # Pandoc chuyển đổi trực tiếp $...$ sang định dạng Word OMML Equation
-      pypandoc.convert_text(
-          md_text,
-          "docx",
-          format="markdown+tex_math_dollars",
-          outputfile=tmp_docx,
-      )
-
-      # Định dạng phông Times New Roman cỡ 13pt
-      try:
-        from docx import Document
-        from docx.oxml.ns import qn
-        from docx.shared import Pt
-
-        doc = Document(tmp_docx)
-        style = doc.styles["Normal"]
-        style.font.name = "Times New Roman"
-        style.font.size = Pt(13)
-
-        for p in doc.paragraphs:
-          p.paragraph_format.line_spacing = 1.3
-          for r in p.runs:
-            r.font.name = "Times New Roman"
-            r.font.size = Pt(13)
-            r._element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
-        doc.save(tmp_docx)
-      except Exception:
-        pass
-
-      with open(tmp_docx, "rb") as f:
-        data = f.read()
-      os.remove(tmp_docx)
-      return data
-    except Exception:
-      return None
-
-  # Khởi tạo bộ nhớ đệm
-  if "ai_solution_text" not in st.session_state:
-    st.session_state["ai_solution_text"] = ""
-
-  c1, c2 = st.columns(2)
-  with c1:
-    txt_input = st.text_area(
-        "Nhập hoặc dán văn bản đề bài:",
-        value=(
-            "Một nghiên cứu đánh giá một chương trình can thiệp kiểm soát đái"
-            " tháo đường. Sau can thiệp, nhóm can thiệp có n1 = 40 đối tượng,"
-            " x̄1 = 6.8% và s1 = 0.9%; nhóm chứng có n2 = 40 đối tượng, x̄2 ="
-            " 7.4% và s2 = 1%. Nhà nghiên cứu muốn ước lượng hiệu trung bình"
-            " bằng KTC 95%."
-        ),
-        height=140,
-    )
-  with c2:
-    st.markdown("**Ảnh chụp đề bài:**")
-    pasted_image = None
-    if has_paste:
-      paste_res = paste_image_button(
-          label="📋 Bấm vào đây để Dán ảnh từ Clipboard (Ctrl + V)",
-          text_color="#ffffff",
-          background_color="#0B3A66",
-          hover_background_color="#1E40AF",
-          key="btn_paste_ai_image_fix",
-      )
-      if paste_res.image_data is not None:
-        pasted_image = paste_res.image_data
-    else:
-      st.info(
-          "💡 Cần có 'streamlit-paste-button' trong requirements.txt để bật nút"
-          " dán ảnh."
-      )
-
-    img_file = st.file_uploader(
-        "Hoặc tải ảnh từ máy tính (PNG, JPG):",
-        type=["png", "jpg", "jpeg"],
-        key="uploader_ai_img",
-    )
-
-    final_image = None
-    if pasted_image is not None:
-      final_image = pasted_image
-      st.image(
-          final_image,
-          caption="Đã nhận ảnh dán từ Clipboard",
-          use_container_width=True,
-      )
-    elif img_file is not None:
-      final_image = Image.open(img_file)
-      st.image(
-          final_image,
-          caption="Đã nhận ảnh tải lên từ máy tính",
-          use_container_width=True,
-      )
-
-  c_cfg1, c_cfg2, c_cfg3 = st.columns([1.5, 1, 1])
-  with c_cfg1:
-    action_mode = st.radio(
-        "Yêu cầu xử lý:",
-        [
-            "Giải bài toán chi tiết (KTC + Kiểm định)",
-            "Tạo câu hỏi trắc nghiệm A, B, C, D",
-            "Cả giải chi tiết và tạo trắc nghiệm",
-        ],
-        horizontal=False,
-    )
-  with c_cfg2:
-    num_questions = st.number_input(
-        "Số câu trắc nghiệm:", min_value=1, max_value=20, value=4, step=1
-    )
-  with c_cfg3:
-    model_choice = st.selectbox(
-        "Mô hình AI:",
-        ["gemini-3-flash-preview", "gemini-3.8-flash"],
-        index=0,
-    )
-    target_model_name = model_choice.split()[0]
-
-  c_btn1, c_btn2 = st.columns([2, 1])
-  with c_btn1:
-    btn_run = st.button(
-        "🚀 Bắt đầu phân tích với AI", type="primary", use_container_width=True
-    )
-  with c_btn2:
-    if st.session_state["ai_solution_text"]:
-      if st.button("🗑️ Làm bài mới / Xóa", use_container_width=True):
-        st.session_state["ai_solution_text"] = ""
-        st.rerun()
-
-  # Xử lý khi nhấn nút
-  if btn_run:
-    if not txt_input.strip() and final_image is None:
-      st.warning("Vui lòng cung cấp văn bản hoặc hình ảnh đề bài.")
-    elif "GEMINI_API_KEY" not in st.secrets:
-      st.error("Chưa cấu hình GEMINI_API_KEY trong Streamlit Secrets.")
-    else:
-      try:
+    # Hàm tạo file Word (.docx) chứa công thức Word Equation nguyên bản
+    def generate_word_docx_with_equations(md_text: str) -> Optional[bytes]:
+        import tempfile
+        import os
         try:
-          model = genai.GenerativeModel(target_model_name)
-        except Exception:
-          model = genai.GenerativeModel("gemini-3-flash-preview")
+            import pypandoc
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+                tmp_docx = tmp.name
 
-        prompt = f"""
+            # Chuẩn hóa ngắt đoạn trước khi đưa vào Pandoc
+            ready_md = format_quiz_layout(md_text)
+
+            # Pandoc biên dịch Markdown + LaTeX $...$ sang Word Equation OMML
+            pypandoc.convert_text(
+                ready_md,
+                'docx',
+                format='markdown+tex_math_dollars',
+                outputfile=tmp_docx
+            )
+
+            # Định dạng toàn bộ văn bản sang Times New Roman 13pt
+            try:
+                from docx import Document
+                from docx.shared import Pt
+                from docx.oxml.ns import qn
+
+                doc = Document(tmp_docx)
+                style = doc.styles['Normal']
+                style.font.name = 'Times New Roman'
+                style.font.size = Pt(13)
+
+                for p in doc.paragraphs:
+                    p.paragraph_format.line_spacing = 1.3
+                    for r in p.runs:
+                        r.font.name = 'Times New Roman'
+                        r.font.size = Pt(13)
+                        r._element.rPr.rFonts.set(qn('w:eastAsia'), 'Times New Roman')
+                doc.save(tmp_docx)
+            except Exception:
+                pass
+
+            with open(tmp_docx, "rb") as f:
+                data = f.read()
+            os.remove(tmp_docx)
+            return data
+        except Exception:
+            return None
+
+    # Khởi tạo bộ nhớ đệm
+    if "ai_solution_text" not in st.session_state:
+        st.session_state["ai_solution_text"] = ""
+
+    c1, c2 = st.columns(2)
+    with c1:
+        txt_input = st.text_area(
+            "Nhập hoặc dán văn bản đề bài:",
+            value="Một nghiên cứu đánh giá một chương trình can thiệp kiểm soát đái tháo đường. Sau can thiệp, nhóm can thiệp có n1 = 40 đối tượng, x̄1 = 6.8% và s1 = 0.9%; nhóm chứng có n2 = 40 đối tượng, x̄2 = 7.4% và s2 = 1%. Nhà nghiên cứu muốn ước lượng hiệu trung bình bằng KTC 95%.",
+            height=140
+        )
+    with c2:
+        st.markdown("**Ảnh chụp đề bài:**")
+        pasted_image = None
+        if has_paste:
+            paste_res = paste_image_button(
+                label="📋 Bấm vào đây để Dán ảnh từ Clipboard (Ctrl + V)",
+                text_color="#ffffff",
+                background_color="#0B3A66",
+                hover_background_color="#1E40AF",
+                key="btn_paste_ai_image_fix"
+            )
+            if paste_res.image_data is not None:
+                pasted_image = paste_res.image_data
+        else:
+            st.info("💡 Cần có 'streamlit-paste-button' trong requirements.txt để bật nút dán ảnh.")
+
+        img_file = st.file_uploader("Hoặc tải ảnh từ máy tính (PNG, JPG):", type=["png", "jpg", "jpeg"], key="uploader_ai_img")
+
+        final_image = None
+        if pasted_image is not None:
+            final_image = pasted_image
+            st.image(final_image, caption="Đã nhận ảnh dán từ Clipboard", use_container_width=True)
+        elif img_file is not None:
+            final_image = Image.open(img_file)
+            st.image(final_image, caption="Đã nhận ảnh tải lên từ máy tính", use_container_width=True)
+
+    c_cfg1, c_cfg2, c_cfg3 = st.columns([1.5, 1, 1])
+    with c_cfg1:
+        action_mode = st.radio(
+            "Yêu cầu xử lý:",
+            [
+                "Giải bài toán chi tiết (KTC + Kiểm định)",
+                "Tạo câu hỏi trắc nghiệm A, B, C, D",
+                "Cả giải chi tiết và tạo trắc nghiệm"
+            ],
+            horizontal=False
+        )
+    with c_cfg2:
+        num_questions = st.number_input("Số câu trắc nghiệm:", min_value=1, max_value=20, value=4, step=1)
+    with c_cfg3:
+        model_choice = st.selectbox(
+            "Mô hình AI:",
+            ["gemini-3-flash-preview", "gemini-3.8-flash"],
+            index=0
+        )
+        target_model_name = model_choice.split()[0]
+
+    c_btn1, c_btn2 = st.columns([2, 1])
+    with c_btn1:
+        btn_run = st.button("🚀 Bắt đầu phân tích với AI", type="primary", use_container_width=True)
+    with c_btn2:
+        if st.session_state["ai_solution_text"]:
+            if st.button("🗑️ Làm bài mới / Xóa", use_container_width=True):
+                st.session_state["ai_solution_text"] = ""
+                st.rerun()
+
+    # Xử lý khi nhấn nút
+    if btn_run:
+        if not txt_input.strip() and final_image is None:
+            st.warning("Vui lòng cung cấp văn bản hoặc hình ảnh đề bài.")
+        elif "GEMINI_API_KEY" not in st.secrets:
+            st.error("Chưa cấu hình GEMINI_API_KEY trong Streamlit Secrets.")
+        else:
+            try:
+                try:
+                    model = genai.GenerativeModel(target_model_name)
+                except Exception:
+                    model = genai.GenerativeModel("gemini-3-flash-preview")
+
+                prompt = f"""
 Bạn là chuyên gia Thống kê Y học và giảng viên bộ môn Xác suất Thống kê Y Dược.
-Nhiệm vụ: Giải bài toán và tạo câu hỏi trắc nghiệm theo đề bài dưới đây.
+Nhiệm vụ: Giải bài toán và tạo bộ câu hỏi trắc nghiệm theo đề bài dưới đây.
 
 YÊU CẦU QUAN TRỌNG VỀ TỐC ĐỘ VÀ ĐỊNH DẠNG:
-1. Trả lời trực tiếp, nhanh chóng, súc tích và chuẩn xác. TUYỆT ĐỐI KHÔNG viết lời chào hỏi hay diễn giải ngoài lề.
-2. CÔNG THỨC TOÁN: Bắt buộc đặt trong dấu $...$ (cho công thức nội dòng) hoặc $$...$$ (cho công thức dòng riêng) bằng chuẩn LaTeX chuẩn xác (ví dụ: $H_0: \mu_1 = \mu_2$, $s_p = \sqrt{{\\frac{{(n_1-1)s_1^2 + (n_2-1)s_2^2}}{{n_1+n_2-2}}}}$, $SE = s_p \sqrt{{\\frac{{1}}{{n_1}} + \\frac{{1}}{{n_2}}}}$, $t = \\frac{{\\bar{{x}}_1 - \\bar{{x}}_2}}{{SE}}$).
+1. Trả lời trực tiếp, nhanh chóng, súc tích và chuẩn xác. TUYỆT ĐỐI KHÔNG viết lời chào hỏi hay mở bài rườm rà.
+2. CÔNG THỨC TOÁN: Bắt buộc đặt trong dấu $...$ (nội dòng) hoặc $$...$$ (dòng riêng) bằng mã LaTeX chuẩn (ví dụ: $H_0: \mu_1 = \mu_2$, $s_p = \sqrt{{\\frac{{(n_1-1)s_1^2 + (n_2-1)s_2^2}}{{n_1+n_2-2}}}}$, $SE = s_p \sqrt{{\\frac{{1}}{{n_1}} + \\frac{{1}}{{n_2}}}}$, $t = \\frac{{\\bar{{x}}_1 - \\bar{{x}}_2}}{{SE}}$).
 
 CHẾ ĐỘ XỬ LÝ: "{action_mode}"
 - NẾU CÓ PHẦN 1 (BÀI GIẢI CHI TIẾT):
-  + Nêu rõ giả thuyết H0, H1.
-  + Tính toán từng bước: Hiệu trung bình, sai số chuẩn (SE), thống kê kiểm định t, bậc tự do df, p-value, Khoảng tin cậy KTC 95%.
+  + Nêu rõ các giả thuyết thống kê H0, H1.
+  + Tính toán chi tiết từng bước: Hiệu trung bình, sai số chuẩn (SE), giá trị thống kê kiểm định t, bậc tự do df, p-value, Khoảng tin cậy KTC 95%.
   + Đưa ra kết luận lâm sàng y học rõ ràng.
 
 - NẾU CÓ PHẦN 2 (CÂU HỎI TRẮC NGHIỆM):
-  + Soạn đúng {num_questions} câu hỏi trắc nghiệm liên quan trực tiếp đến bài toán trên.
-  + Mỗi câu gồm nội dung câu hỏi và 4 phương án A, B, C, D (mỗi phương án trên một dòng riêng).
-  + QUY TẮC BẮT BUỘC:
-    * PHƯƠNG ÁN A LUÔN LUÔN LÀ ĐÁP ÁN ĐÚNG. Các phương án B, C, D là các phương án gây nhiễu sai.
-    * TUYỆT ĐỐI KHÔNG hiển thị dòng "Đáp án đúng: ..." hay bất kỳ ký hiệu nào chỉ ra đáp án.
-    * TUYỆT ĐỐI KHÔNG hiển thị dòng "Giải thích: ..." (vì đáp án A mặc định đúng và phần 1 đã giải thích rồi).
-  + Định dạng chuẩn cho mỗi câu:
-    Câu [X]: [Nội dung câu hỏi]?
-    A. [Phương án đúng]
-    B. [Phương án sai]
-    C. [Phương án sai]
-    D. [Phương án sai]
+  + Soạn đúng {num_questions} câu hỏi trắc nghiệm phục vụ ngân hàng đề thi.
+  + NGUYÊN TẮC BẮT BUỘC VỀ TÍNH ĐỘC LẬP (ĐỂ TRỘN ĐỀ THI):
+    * Khi đưa vào phần mềm thi, thứ tự câu hỏi sẽ bị XÁO TRỘN NGẪU NHIÊN. Do đó, MỖI CÂU HỎI PHẢI LÀ MỘT THỂ THỐNG NHẤT, ĐỘC LẬP HOÀN TOÀN, TỰ ĐỦ DỮ LIỆU.
+    * Trong phần dẫn của TỪNG CÂU HỎI, BẮT BUỘC PHẢI LẶP LẠI TÓM TẮT ĐẦY ĐỦ CÁC THÔNG SỐ ĐỀ BÀI (cỡ mẫu n, trung bình x̄, độ lệch chuẩn s/phương sai s²,...).
+    * TUYỆT ĐỐI KHÔNG viết: "trong nghiên cứu trên...", "theo số liệu trên...", "dựa vào kết quả ở câu 1...". Câu này không được dựa vào kết quả trung gian của câu kia.
+    * Ví dụ câu dẫn chuẩn: "Một nghiên cứu can thiệp kiểm soát đái tháo đường gồm nhóm can thiệp (n1 = 40, x̄1 = 6.8%, s1 = 0.9%) và nhóm chứng (n2 = 40, x̄2 = 7.4%, s2 = 1.0%). Sai số chuẩn (SE) của hiệu hai số trung bình là bao nhiêu?"
+  + NGUYÊN TẮC BẮT BUỘC VỀ ĐÁP ÁN & CẤU TRÚC PHƯƠNG ÁN:
+    * PHƯƠNG ÁN A LUÔN LUÔN LÀ ĐÁP ÁN ĐÚNG. Các phương án B, C, D là các phương án gây nhiễu hợp lý nhưng sai.
+    * TUYỆT ĐỐI KHÔNG ghi dòng "Đáp án đúng: ..." hay bất kỳ ký hiệu nào đánh dấu đáp án.
+    * TUYỆT ĐỐI KHÔNG ghi dòng "Giải thích: ..." (vì đáp án A mặc định đúng và phần 1 đã giải thích rồi).
+    * BẮT BUỘC MỖI PHƯƠNG ÁN A, B, C, D PHẢI TRÊN MỘT DÒNG RIÊNG BIỆT (xuống dòng rõ ràng):
+      Câu [X]: [Câu dẫn chứa đầy đủ số liệu đề bài] [Nội dung câu hỏi]?
+      A. [Phương án đúng]
+      B. [Phương án sai]
+      C. [Phương án sai]
+      D. [Phương án sai]
 """
-        parts = [prompt]
-        if txt_input.strip():
-          parts.append(f"ĐỀ BÀI:\n{txt_input}")
-        if final_image is not None:
-          img_to_send = final_image.copy()
-          if max(img_to_send.size) > 1000:
-            img_to_send.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
-          parts.append(img_to_send)
+                parts = [prompt]
+                if txt_input.strip():
+                    parts.append(f"ĐỀ BÀI:\n{txt_input}")
+                if final_image is not None:
+                    img_to_send = final_image.copy()
+                    if max(img_to_send.size) > 1000:
+                        img_to_send.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
+                    parts.append(img_to_send)
 
-        st.markdown("---")
-        st.markdown("### 📋 Lời giải chi tiết & Đề trắc nghiệm:")
+                st.markdown("---")
+                st.markdown("### 📋 Lời giải chi tiết & Đề trắc nghiệm:")
 
-        # Bật Streaming: Chữ chạy ra màn hình ngay lập tức, không phải chờ đợi
-        response = model.generate_content(
-            parts, stream=True, generation_config={"temperature": 0.1}
-        )
+                # Truyền dòng kết quả trực tiếp
+                response = model.generate_content(
+                    parts, stream=True, generation_config={"temperature": 0.1}
+                )
 
-        def stream_output_generator():
-          full_text = ""
-          for chunk in response:
-            if chunk.text:
-              full_text += chunk.text
-              yield chunk.text
-          st.session_state["ai_solution_text"] = full_text
+                raw_text = ""
+                placeholder = st.empty()
+                for chunk in response:
+                    if chunk.text:
+                        raw_text += chunk.text
+                        # Chuẩn hóa ngắt dòng liên tục để hiển thị web chuẩn
+                        formatted_display = format_quiz_layout(raw_text)
+                        placeholder.markdown(f'<div class="ai-doc-view">{formatted_display}</div>', unsafe_allow_html=True)
 
-        st.write_stream(stream_output_generator)
+                st.session_state["ai_solution_text"] = format_quiz_layout(raw_text)
 
-      except Exception as e:
-        st.error(f"Lỗi: {e}")
+            except Exception as e:
+                st.error(f"Lỗi: {e}")
 
-  # HIỂN THỊ KẾT QUẢ ĐÃ LƯU & CÁC NÚT TẢI VỀ (Không bao giờ bị mất)
-  if st.session_state["ai_solution_text"]:
-    # Nếu không phải vừa bấm chạy (đã có kết quả lưu trước đó), hiển thị lại kết quả
-    if not btn_run:
-      st.markdown("---")
-      st.markdown("### 📋 Lời giải chi tiết & Đề trắc nghiệm:")
-      st.markdown(
-          f'<div class="ai-doc-view">{st.session_state["ai_solution_text"]}</div>',
-          unsafe_allow_html=True,
-      )
+    # HIỂN THỊ KẾT QUẢ ĐÃ LƯU & NÚT TẢI VỀ
+    if st.session_state["ai_solution_text"]:
+        if not btn_run:
+            st.markdown("---")
+            st.markdown("### 📋 Lời giải chi tiết & Đề trắc nghiệm:")
+            st.markdown(
+                f'<div class="ai-doc-view">{st.session_state["ai_solution_text"]}</div>',
+                unsafe_allow_html=True,
+            )
 
-    st.write("")
-    col_dl1, col_dl2 = st.columns(2)
-    with col_dl1:
-      docx_bytes = generate_word_docx_with_equations(
-          st.session_state["ai_solution_text"]
-      )
-      if docx_bytes:
-        st.download_button(
-            "📥 Tải tài liệu Word chuẩn Equation (.docx)",
-            data=docx_bytes,
-            file_name="Loi_giai_va_Trac_nghiem.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True,
-        )
-      else:
-        st.info(
-            "💡 Thêm 'pypandoc-binary' và 'python-docx' vào requirements.txt để"
-            " xuất Word Equation tự động."
-        )
+        st.write("")
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            docx_bytes = generate_word_docx_with_equations(st.session_state["ai_solution_text"])
+            if docx_bytes:
+                st.download_button(
+                    "📥 Tải tài liệu Word chuẩn Equation (.docx)",
+                    data=docx_bytes,
+                    file_name="Loi_giai_va_Trac_nghiem.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True,
+                )
+            else:
+                st.info("💡 Cần có 'pypandoc-binary' và 'python-docx' trong requirements.txt để tải file Word Equation.")
 
-    with col_dl2:
-      st.download_button(
-          "📄 Tải dạng văn bản thuần (.txt)",
-          data=st.session_state["ai_solution_text"],
-          file_name="Loi_giai_va_Trac_nghiem.txt",
-          mime="text/plain",
-          use_container_width=True,
-      )
+        with col_dl2:
+            st.download_button(
+                "📄 Tải dạng văn bản thuần (.txt)",
+                data=st.session_state["ai_solution_text"],
+                file_name="Loi_giai_va_Trac_nghiem.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
