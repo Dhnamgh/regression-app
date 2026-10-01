@@ -3073,20 +3073,14 @@ elif section == "Tính xác suất":
 
 
 # -----------------------------
-# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (TỰ ĐỘNG XOAY VÒNG NHIỀU API KEY KHI HẾT QUOTA 429)
+# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (XOAY VÒNG KEY NGẦM, XÓA KHUNG THỪA, WORD EQUATION CHUẨN)
 # -----------------------------
 elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
-  st.markdown(
-      "## 🤖 AI Trợ lý: Giải bài toán Thống kê Y sinh & Tạo trắc nghiệm"
-  )
-  st.write(
-      "Nhập/dán văn bản hoặc dán/tải ảnh chụp đề bài. AI sẽ tự động giải chi tiết"
-      " và tạo bộ câu hỏi trắc nghiệm độc lập."
-  )
+    st.markdown("## 🤖 AI Trợ lý: Giải bài toán Thống kê Y sinh & Tạo trắc nghiệm")
 
-  # CSS hiển thị web phông Times New Roman 13 (18px), đen tuyền, rõ nét
-  st.markdown(
-      """
+    # CSS hiển thị web phông Times New Roman 13 (18px), đen tuyền, rõ nét
+    st.markdown(
+        """
     <style>
     .katex { font-size: 1.15em !important; }
     .ai-doc-view {
@@ -3134,367 +3128,304 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
     }
     </style>
     """,
-      unsafe_allow_html=True,
-  )
-
-  # Nút dán ảnh từ Clipboard
-  try:
-    from streamlit_paste_button import paste_image_button
-
-    has_paste = True
-  except ImportError:
-    has_paste = False
-
-  # Hàm tự động quét và gom toàn bộ các API Key có trong Secrets hoặc ô dự phòng
-  def get_all_configured_api_keys(custom_key: str = "") -> List[str]:
-    keys = []
-    if custom_key and custom_key.strip():
-      keys.append(custom_key.strip())
-
-    # 1. Quét danh sách mảng GEMINI_API_KEYS = ["key1", "key2"]
-    sec_keys = st.secrets.get("GEMINI_API_KEYS", None)
-    if sec_keys:
-      if isinstance(sec_keys, (list, tuple)):
-        keys.extend([str(k).strip() for k in sec_keys if str(k).strip()])
-      elif isinstance(sec_keys, str):
-        keys.extend(
-            [str(k).strip() for k in sec_keys.split(",") if str(k).strip()]
-        )
-
-    # 2. Quét key đơn GEMINI_API_KEY (hoặc chứa chuỗi ngăn cách bởi dấu phẩy)
-    single_key = st.secrets.get("GEMINI_API_KEY", "")
-    if single_key:
-      if "," in single_key:
-        keys.extend([k.strip() for k in single_key.split(",") if k.strip()])
-      else:
-        keys.append(single_key.strip())
-
-    # Khử trùng lặp và giữ nguyên thứ tự ưu tiên
-    seen = set()
-    ordered_keys = []
-    for k in keys:
-      if k not in seen:
-        seen.add(k)
-        ordered_keys.append(k)
-    return ordered_keys
-
-  # Hàm xử lý chuỗi: Bóc tách bullet rác, in đậm Câu hỏi và dọn sạch Markdown cho Word
-  def format_clean_markdown_for_docx(text: str) -> str:
-    import re
-
-    idx_p1 = re.search(
-        r"(#{1,4}\s*(PHẦN\s*1|BÀI\s*GIẢI|BỘ\s*CÂU\s*HỎI)|(PHẦN\s*1|BÀI\s*GIẢI|BỘ\s*CÂU\s*HỎI)\s*:)",
-        text,
-        re.IGNORECASE,
-    )
-    if idx_p1:
-      cleaned_text = text[idx_p1.start() :]
-    else:
-      cleaned_text = text
-
-    cleaned_text = re.sub(
-        r"(?<!\*\*)(Câu\s+\d+[:\.])(?!\*\*)", r"**\1**", cleaned_text
+        unsafe_allow_html=True,
     )
 
-    lines = cleaned_text.split("\n")
-    new_lines = []
-    for line in lines:
-      s = line.strip()
+    # Nút dán ảnh từ Clipboard
+    try:
+        from streamlit_paste_button import paste_image_button
+        has_paste = True
+    except ImportError:
+        has_paste = False
 
-      if ("Tóm tắt" in s or s.startswith("Tóm tắt")) and " - " in s:
-        parts = s.split(" - ")
-        new_lines.append(parts[0].strip())
-        new_lines.append("")
-        for p in parts[1:]:
-          if p.strip():
-            new_lines.append(f"* {p.strip()}")
-        new_lines.append("")
-        continue
+    # Hàm tự động quét toàn bộ API Key được cấu hình trong Secrets
+    def get_all_configured_api_keys() -> List[str]:
+        keys = []
+        sec_keys = st.secrets.get("GEMINI_API_KEYS", None)
+        if sec_keys is not None:
+            if isinstance(sec_keys, (list, tuple)):
+                keys.extend([str(k).strip() for k in sec_keys if str(k).strip()])
+            elif isinstance(sec_keys, str):
+                keys.extend([str(k).strip() for k in sec_keys.split(",") if str(k).strip()])
 
-      s = re.sub(r"^(\d+\.\s+[^:]+:)\s*-\s+", r"\1\n\n* ", s)
-      s = re.sub(r"^(#{1,4}\s+[^:]+:)\s*-\s+", r"\1\n\n* ", s)
+        single_key = st.secrets.get("GEMINI_API_KEY", "")
+        if single_key:
+            if isinstance(single_key, (list, tuple)):
+                keys.extend([str(k).strip() for k in single_key if str(k).strip()])
+            elif isinstance(single_key, str):
+                if "," in single_key:
+                    keys.extend([k.strip() for k in single_key.split(",") if k.strip()])
+                else:
+                    keys.append(single_key.strip())
 
-      if s.count(" - ") >= 2 and not s.startswith("$$"):
-        parts = s.split(" - ")
-        new_lines.append(parts[0].strip())
-        for p in parts[1:]:
-          if p.strip():
-            new_lines.append(f"* {p.strip()}")
-        continue
+        seen = set()
+        ordered = []
+        for k in keys:
+            if k not in seen:
+                seen.add(k)
+                ordered.append(k)
+        return ordered
 
-      new_lines.append(s)
+    # Hàm xử lý chuỗi: Bóc tách bullet rác, in đậm Câu hỏi và dọn sạch Markdown cho Word
+    def format_clean_markdown_for_docx(text: str) -> str:
+        import re
 
-    cleaned = []
-    in_table = False
-    in_list = False
+        idx_p1 = re.search(r"(#{1,4}\s*(PHẦN\s*1|BÀI\s*GIẢI|BỘ\s*CÂU\s*HỎI)|(PHẦN\s*1|BÀI\s*GIẢI|BỘ\s*CÂU\s*HỎI)\s*:)", text, re.IGNORECASE)
+        if idx_p1:
+            cleaned_text = text[idx_p1.start():]
+        else:
+            cleaned_text = text
 
-    for s in new_lines:
-      if s.startswith("|") and s.endswith("|"):
-        cleaned.append(s)
-        in_table = True
-        continue
-      else:
-        if in_table:
-          cleaned.append("")
-          in_table = False
+        cleaned_text = re.sub(r"(?<!\*\*)(Câu\s+\d+[:\.])(?!\*\*)", r"**\1**", cleaned_text)
 
-      if not s or s in ["*", "-", "•", "**", "--", "o", "▪"]:
-        if in_list:
-          cleaned.append("")
-          in_list = False
-        continue
+        lines = cleaned_text.split("\n")
+        new_lines = []
+        for line in lines:
+            s = line.strip()
 
-      s = re.sub(r"^[\*\-•o▪]\s*(?=\$\$|\$)", "", s)
-      s = re.sub(r"^[\*\-•o▪]\s*(\d+\.\s+)", r"\1", s)
-      s = re.sub(r"^[\*\-•o▪]\s*(#{1,4}\s+)", r"\1", s)
-      s = re.sub(r"^[\*\-•o▪]\s*(\*\*[A-D]\.\*\*|[A-D]\.\s+)", r"\1", s)
+            if ("Tóm tắt" in s or s.startswith("Tóm tắt")) and " - " in s:
+                parts = s.split(" - ")
+                new_lines.append(parts[0].strip())
+                new_lines.append("")
+                for p in parts[1:]:
+                    if p.strip():
+                        new_lines.append(f"* {p.strip()}")
+                new_lines.append("")
+                continue
 
-      if re.match(r"^[\*\-•]\s+", s):
-        if not in_list:
-          cleaned.append("")
-          in_list = True
-        bullet_body = re.sub(r"^[\*\-•]\s+", "", s)
-        cleaned.append(f"* {bullet_body}")
-        continue
-      else:
-        if in_list:
-          cleaned.append("")
-          in_list = False
+            s = re.sub(r"^(\d+\.\s+[^:]+:)\s*-\s+", r"\1\n\n* ", s)
+            s = re.sub(r"^(#{1,4}\s+[^:]+:)\s*-\s+", r"\1\n\n* ", s)
 
-      if re.match(
-          r"^(\*\*Câu\s+\d+[:\.]\*\*|Câu\s+\d+[:\.]|[A-D]\.\s+|\d+\.\s+|#{1,4}\s+)",
-          s,
-      ):
-        cleaned.append("")
-        cleaned.append(s)
-        cleaned.append("")
-      elif s.startswith("$$"):
-        cleaned.append("")
-        cleaned.append(s)
-        cleaned.append("")
-      else:
-        cleaned.append(s)
+            if s.count(" - ") >= 2 and not s.startswith("$$"):
+                parts = s.split(" - ")
+                new_lines.append(parts[0].strip())
+                for p in parts[1:]:
+                    if p.strip():
+                        new_lines.append(f"* {p.strip()}")
+                continue
 
-    res = "\n".join(cleaned)
-    res = re.sub(r"\n{3,}", "\n\n", res)
-    return res
+            new_lines.append(s)
+
+        cleaned = []
+        in_table = False
+        in_list = False
+
+        for s in new_lines:
+            if s.startswith("|") and s.endswith("|"):
+                cleaned.append(s)
+                in_table = True
+                continue
+            else:
+                if in_table:
+                    cleaned.append("")
+                    in_table = False
+
+            if not s or s in ["*", "-", "•", "**", "--", "o", "▪"]:
+                if in_list:
+                    cleaned.append("")
+                    in_list = False
+                continue
+
+            s = re.sub(r"^[\*\-•o▪]\s*(?=\$\$|\$)", "", s)
+            s = re.sub(r"^[\*\-•o▪]\s*(\d+\.\s+)", r"\1", s)
+            s = re.sub(r"^[\*\-•o▪]\s*(#{1,4}\s+)", r"\1", s)
+            s = re.sub(r"^[\*\-•o▪]\s*(\*\*[A-D]\.\*\*|[A-D]\.\s+)", r"\1", s)
+
+            if re.match(r"^[\*\-•]\s+", s):
+                if not in_list:
+                    cleaned.append("")
+                    in_list = True
+                bullet_body = re.sub(r"^[\*\-•]\s+", "", s)
+                cleaned.append(f"* {bullet_body}")
+                continue
+            else:
+                if in_list:
+                    cleaned.append("")
+                    in_list = False
+
+            if re.match(r"^(\*\*Câu\s+\d+[:\.]\*\*|Câu\s+\d+[:\.]|[A-D]\.\s+|\d+\.\s+|#{1,4}\s+)", s):
+                cleaned.append("")
+                cleaned.append(s)
+                cleaned.append("")
+            elif s.startswith("$$"):
+                cleaned.append("")
+                cleaned.append(s)
+                cleaned.append("")
+            else:
+                cleaned.append(s)
+
+        res = "\n".join(cleaned)
+        res = re.sub(r"\n{3,}", "\n\n", res)
+        return res
 
   # Hàm chuyển đổi riêng cho Web: Biến ### thành <h3> để không bao giờ bị hiện chữ ###
-  def render_markdown_to_web_html(text: str) -> str:
-    import re
-
-    web_text = format_clean_markdown_for_docx(text)
-    web_text = re.sub(
-        r"^###\s+(.+)$",
-        r'<h3 style="color:#0B3A66; font-weight:800; margin-top:16px;'
-        r' margin-bottom:8px;">\1</h3>',
-        web_text,
-        flags=re.MULTILINE,
-    )
-    web_text = re.sub(
-        r"^##\s+(.+)$",
-        r'<h2 style="color:#0B3A66; font-weight:800; margin-top:20px;'
-        r' margin-bottom:10px;">\1</h2>',
-        web_text,
-        flags=re.MULTILINE,
-    )
-    web_text = re.sub(
-        r"^#\s+(.+)$",
-        r'<h1 style="color:#0B3A66; font-weight:800; margin-top:24px;'
-        r' margin-bottom:12px;">\1</h1>',
-        web_text,
-        flags=re.MULTILINE,
-    )
-    return web_text
+    def render_markdown_to_web_html(text: str) -> str:
+        import re
+        web_text = format_clean_markdown_for_docx(text)
+        web_text = re.sub(r"^###\s+(.+)$", r'<h3 style="color:#0B3A66; font-weight:800; margin-top:16px; margin-bottom:8px;">\1</h3>', web_text, flags=re.MULTILINE)
+        web_text = re.sub(r"^##\s+(.+)$", r'<h2 style="color:#0B3A66; font-weight:800; margin-top:20px; margin-bottom:10px;">\1</h2>', web_text, flags=re.MULTILINE)
+        web_text = re.sub(r"^#\s+(.+)$", r'<h1 style="color:#0B3A66; font-weight:800; margin-top:24px; margin-bottom:12px;">\1</h1>', web_text, flags=re.MULTILINE)
+        return web_text
 
   # Hàm xuất file Word (.docx) chứa công thức Equation và dãn dòng 1.2
-  def generate_word_docx_with_equations(md_text: str) -> Optional[bytes]:
-    import os
-    import tempfile
+    def generate_word_docx_with_equations(md_text: str) -> Optional[bytes]:
+        import os
+        import tempfile
+        try:
+            import pypandoc
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+                tmp_docx = tmp.name
 
-    try:
-      import pypandoc
+            ready_md = format_clean_markdown_for_docx(md_text)
 
-      with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
-        tmp_docx = tmp.name
+            pypandoc.convert_text(
+                ready_md,
+                "docx",
+                format="markdown+tex_math_dollars",
+                outputfile=tmp_docx,
+            )
 
-      ready_md = format_clean_markdown_for_docx(md_text)
+            try:
+                from docx import Document
+                from docx.enum.table import WD_TABLE_ALIGNMENT
+                from docx.oxml.ns import qn
+                from docx.shared import Cm, Pt
 
-      pypandoc.convert_text(
-          ready_md,
-          "docx",
-          format="markdown+tex_math_dollars",
-          outputfile=tmp_docx,
-      )
+                doc = Document(tmp_docx)
+                for s in doc.sections:
+                    s.top_margin = Cm(2.0)
+                    s.bottom_margin = Cm(2.0)
+                    s.left_margin = Cm(2.0)
+                    s.right_margin = Cm(2.0)
 
-      try:
-        from docx import Document
-        from docx.enum.table import WD_TABLE_ALIGNMENT
-        from docx.oxml.ns import qn
-        from docx.shared import Cm, Pt
+                style = doc.styles["Normal"]
+                style.font.name = "Times New Roman"
+                style.font.size = Pt(13)
 
-        doc = Document(tmp_docx)
-        for s in doc.sections:
-          s.top_margin = Cm(2.0)
-          s.bottom_margin = Cm(2.0)
-          s.left_margin = Cm(2.0)
-          s.right_margin = Cm(2.0)
+                for p in doc.paragraphs:
+                    p.paragraph_format.line_spacing = 1.2
+                    p.paragraph_format.space_after = Pt(2)
+                    p.paragraph_format.space_before = Pt(0)
+                    for r in p.runs:
+                        r.font.name = "Times New Roman"
+                        r.font.size = Pt(13)
+                        r._element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
 
-        style = doc.styles["Normal"]
-        style.font.name = "Times New Roman"
-        style.font.size = Pt(13)
+                for t in doc.tables:
+                    t.alignment = WD_TABLE_ALIGNMENT.CENTER
+                    for row in t.rows:
+                        for cell in row.cells:
+                            for cp in cell.paragraphs:
+                                cp.paragraph_format.line_spacing = 1.15
+                                for cr in cp.runs:
+                                    cr.font.name = "Times New Roman"
+                                    cr.font.size = Pt(12)
 
-        for p in doc.paragraphs:
-          p.paragraph_format.line_spacing = 1.2
-          p.paragraph_format.space_after = Pt(2)
-          p.paragraph_format.space_before = Pt(0)
-          for r in p.runs:
-            r.font.name = "Times New Roman"
-            r.font.size = Pt(13)
-            r._element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
+                doc.save(tmp_docx)
+            except Exception:
+                pass
 
-        for t in doc.tables:
-          t.alignment = WD_TABLE_ALIGNMENT.CENTER
-          for row in t.rows:
-            for cell in row.cells:
-              for cp in cell.paragraphs:
-                cp.paragraph_format.line_spacing = 1.15
-                for cr in cp.runs:
-                  cr.font.name = "Times New Roman"
-                  cr.font.size = Pt(12)
+            with open(tmp_docx, "rb") as f:
+                data = f.read()
+            os.remove(tmp_docx)
+            return data
+        except Exception:
+            return None
 
-        doc.save(tmp_docx)
-      except Exception:
-        pass
-
-      with open(tmp_docx, "rb") as f:
-        data = f.read()
-      os.remove(tmp_docx)
-      return data
-    except Exception:
-      return None
-
-  if "ai_solution_text" not in st.session_state:
-    st.session_state["ai_solution_text"] = ""
-
-  with st.expander("🔑 Cấu hình danh sách API Key dự phòng", expanded=False):
-    custom_api_key = st.text_input(
-        "Nhập API Key thủ công (nếu cần dán key tạm thời):",
-        type="password",
-        placeholder="AIzaSy...",
-        key="custom_gemini_api_key",
-    )
-    st.caption(
-        "💡 Hệ thống sẽ tự động quét toàn bộ danh sách key trong Secrets (hoặc"
-        " ô nhập này). Nếu Key 1 hết lượt (429), app sẽ tự động nhảy sang Key"
-        " 2, Key 3... để tiếp tục xử lý."
-    )
-
-  c1, c2 = st.columns(2)
-  with c1:
-    txt_input = st.text_area(
-        "Nhập hoặc dán văn bản đề bài:",
-        value=(
-            "Một nghiên cứu đánh giá một chương trình can thiệp kiểm soát đái"
-            " tháo đường. Sau can thiệp, nhóm can thiệp có n1 = 40 đối tượng,"
-            " x̄1 = 6.8% và s1 = 0.9%; nhóm chứng có n2 = 40 đối tượng, x̄2 ="
-            " 7.4% và s2 = 1%. Nhà nghiên cứu muốn ước lượng hiệu trung bình"
-            " bằng KTC 95%."
-        ),
-        height=140,
-    )
-  with c2:
-    st.markdown("**Ảnh chụp đề bài:**")
-    pasted_image = None
-    if has_paste:
-      paste_res = paste_image_button(
-          label="📋 Bấm vào đây để Dán ảnh từ Clipboard (Ctrl + V)",
-          text_color="#ffffff",
-          background_color="#0B3A66",
-          hover_background_color="#1E40AF",
-          key="btn_paste_ai_image_fix",
-      )
-      if paste_res.image_data is not None:
-        pasted_image = paste_res.image_data
-    else:
-      st.info(
-          "💡 Cần có 'streamlit-paste-button' trong requirements.txt để bật nút"
-          " dán ảnh."
-      )
-
-    img_file = st.file_uploader(
-        "Hoặc tải ảnh từ máy tính (PNG, JPG):",
-        type=["png", "jpg", "jpeg"],
-        key="uploader_ai_img",
-    )
-
-    final_image = None
-    if pasted_image is not None:
-      final_image = pasted_image
-      st.image(
-          final_image,
-          caption="Đã nhận ảnh dán từ Clipboard",
-          use_container_width=True,
-      )
-    elif img_file is not None:
-      final_image = Image.open(img_file)
-      st.image(
-          final_image,
-          caption="Đã nhận ảnh tải lên từ máy tính",
-          use_container_width=True,
-      )
-
-  c_cfg1, c_cfg2, c_cfg3 = st.columns([1.5, 1, 1])
-  with c_cfg1:
-    action_mode = st.radio(
-        "Yêu cầu xử lý:",
-        [
-            "Giải chi tiết bài toán",
-            "Tạo câu hỏi trắc nghiệm A, B, C, D",
-            "Cả giải chi tiết và tạo trắc nghiệm",
-        ],
-        horizontal=False,
-    )
-  with c_cfg2:
-    if action_mode == "Giải chi tiết bài toán":
-      st.caption("ℹ️ Chế độ chỉ giải bài tập, không tạo trắc nghiệm.")
-      num_questions = 0
-    else:
-      num_questions = st.number_input(
-          "Số câu trắc nghiệm:", min_value=1, max_value=20, value=4, step=1
-      )
-  with c_cfg3:
-    model_choice = st.selectbox(
-        "Mô hình AI:",
-        ["gemini-3-flash-preview", "gemini-3.8-flash"],
-        index=0,
-    )
-    target_model_name = model_choice.split()[0]
-
-  c_btn1, c_btn2 = st.columns([2, 1])
-  with c_btn1:
-    btn_run = st.button(
-        "🚀 Bắt đầu phân tích với AI", type="primary", use_container_width=True
-    )
-  with c_btn2:
-    if st.session_state["ai_solution_text"]:
-      if st.button("🗑️ Làm bài mới / Xóa", use_container_width=True):
+    if "ai_solution_text" not in st.session_state:
         st.session_state["ai_solution_text"] = ""
-        st.rerun()
 
-  # Xử lý khi nhấn nút bắt đầu
-  if btn_run:
-    all_keys = get_all_configured_api_keys(custom_api_key)
+    c1, c2 = st.columns(2)
+    with c1:
+        txt_input = st.text_area(
+            "Nhập hoặc dán văn bản đề bài:",
+            value="Một nghiên cứu đánh giá một chương trình can thiệp kiểm soát đái tháo đường. Sau can thiệp, nhóm can thiệp có n1 = 40 đối tượng, x̄1 = 6.8% và s1 = 0.9%; nhóm chứng có n2 = 40 đối tượng, x̄2 = 7.4% và s2 = 1%. Nhà nghiên cứu muốn ước lượng hiệu trung bình bằng KTC 95%.",
+            height=140,
+        )
+    with c2:
+        st.markdown("**Ảnh chụp đề bài:**")
+        pasted_image = None
+        if has_paste:
+            paste_res = paste_image_button(
+                label="📋 Bấm vào đây để Dán ảnh từ Clipboard (Ctrl + V)",
+                text_color="#ffffff",
+                background_color="#0B3A66",
+                hover_background_color="#1E40AF",
+                key="btn_paste_ai_image_fix",
+            )
+            if paste_res.image_data is not None:
+                pasted_image = paste_res.image_data
 
-    if not txt_input.strip() and final_image is None:
-      st.warning("Vui lòng cung cấp văn bản hoặc hình ảnh đề bài.")
-    elif not all_keys:
-      st.error(
-          "Chưa cấu hình API Key nào trong Streamlit Secrets hoặc ô nhập dự"
-          " phòng."
-      )
-    else:
-      core_rules = """
+        img_file = st.file_uploader(
+            "Hoặc tải ảnh từ máy tính (PNG, JPG):",
+            type=["png", "jpg", "jpeg"],
+            key="uploader_ai_img",
+        )
+
+        final_image = None
+        if pasted_image is not None:
+            final_image = pasted_image
+            st.image(
+                final_image,
+                caption="Đã nhận ảnh dán từ Clipboard",
+                use_container_width=True,
+            )
+        elif img_file is not None:
+            final_image = Image.open(img_file)
+            st.image(
+                final_image,
+                caption="Đã nhận ảnh tải lên từ máy tính",
+                use_container_width=True,
+            )
+
+    c_cfg1, c_cfg2, c_cfg3 = st.columns([1.5, 1, 1])
+    with c_cfg1:
+        action_mode = st.radio(
+            "Yêu cầu xử lý:",
+            [
+                "Giải chi tiết bài toán",
+                "Tạo câu hỏi trắc nghiệm A, B, C, D",
+                "Cả giải chi tiết và tạo trắc nghiệm",
+            ],
+            horizontal=False,
+        )
+    with c_cfg2:
+        if action_mode == "Giải chi tiết bài toán":
+            st.caption("ℹ️ Chế độ chỉ giải bài tập, không tạo trắc nghiệm.")
+            num_questions = 0
+        else:
+            num_questions = st.number_input(
+                "Số câu trắc nghiệm:", min_value=1, max_value=20, value=4, step=1
+            )
+    with c_cfg3:
+        model_choice = st.selectbox(
+            "Mô hình AI:",
+            ["gemini-3-flash-preview", "gemini-3.8-flash"],
+            index=0,
+        )
+        target_model_name = model_choice.split()[0]
+
+    c_btn1, c_btn2 = st.columns([2, 1])
+    with c_btn1:
+        btn_run = st.button(
+            "🚀 Bắt đầu phân tích với AI", type="primary", use_container_width=True
+        )
+    with c_btn2:
+        if st.session_state["ai_solution_text"]:
+            if st.button("🗑️ Làm bài mới / Xóa", use_container_width=True):
+                st.session_state["ai_solution_text"] = ""
+                st.rerun()
+
+  # Xử lý khi nhấn nút
+    if btn_run:
+        all_keys = get_all_configured_api_keys()
+
+        if not txt_input.strip() and final_image is None:
+            st.warning("Vui lòng cung cấp văn bản hoặc hình ảnh đề bài.")
+        elif not all_keys:
+            st.error("Chưa cấu hình GEMINI_API_KEY hoặc GEMINI_API_KEYS trong Streamlit Secrets.")
+        else:
+            core_rules = """
 Bạn là chuyên gia Thống kê Y học và giảng viên bộ môn Xác suất Thống kê Y Dược.
 Nhiệm vụ: Giải bài toán theo đúng các quy chuẩn sau đây.
 
@@ -3508,8 +3439,8 @@ CÁC NGUYÊN TẮC BẮT BUỘC TUÂN THỦ:
    - Khoảng tin cậy KTC (nếu có) bắt buộc đặt trong ngoặc vuông: [cận dưới; cận trên] (ngăn cách bằng dấu chấm phẩy ';').
 """
 
-      if action_mode == "Giải chi tiết bài toán":
-        mode_prompt = """
+            if action_mode == "Giải chi tiết bài toán":
+                mode_prompt = """
 CHẾ ĐỘ YÊU CẦU: CHỈ GIẢI CHI TIẾT BÀI TOÁN.
 TUYỆT ĐỐI KHÔNG TẠO CÂU HỎI TRẮC NGHIỆM, KHÔNG CÓ PHẦN 2.
 
@@ -3520,8 +3451,8 @@ Cấu trúc trình bày:
 - Các bước tính toán: Trình bày chuỗi công thức 3 vế trực diện, chính xác.
 - Kết luận: Nêu đáp số và ý nghĩa thực tế/lâm sàng.
 """
-      elif action_mode == "Tạo câu hỏi trắc nghiệm A, B, C, D":
-        mode_prompt = f"""
+            elif action_mode == "Tạo câu hỏi trắc nghiệm A, B, C, D":
+                mode_prompt = f"""
 CHẾ ĐỘ YÊU CẦU: CHỈ TẠO BỘ CÂU HỎI TRẮC NGHIỆM ĐỘC LẬP.
 TUYỆT ĐỐI KHÔNG GIẢI BÀI TOÁN, KHÔNG CÓ PHẦN BÀI GIẢI CHI TIẾT.
 
@@ -3543,8 +3474,8 @@ Cấu trúc trình bày:
 
   D. [Phương án sai]
 """
-      else:
-        mode_prompt = f"""
+            else:
+                mode_prompt = f"""
 CHẾ ĐỘ YÊU CẦU: CẢ GIẢI CHI TIẾT VÀ TẠO CÂU HỎI TRẮC NGHIỆM.
 
 ### PHẦN 1: BÀI GIẢI CHI TIẾT
@@ -3571,124 +3502,108 @@ CHẾ ĐỘ YÊU CẦU: CẢ GIẢI CHI TIẾT VÀ TẠO CÂU HỎI TRẮC NGHI�
   D. [Phương án sai]
 """
 
-      prompt = core_rules + "\n" + mode_prompt
+            prompt = core_rules + "\n" + mode_prompt
 
-      parts = [prompt]
-      if txt_input.strip():
-        parts.append(f"ĐỀ BÀI:\n{txt_input}")
-      if final_image is not None:
-        img_to_send = final_image.copy()
-        if max(img_to_send.size) > 1000:
-          img_to_send.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
-        parts.append(img_to_send)
+            parts = [prompt]
+            if txt_input.strip():
+                parts.append(f"ĐỀ BÀI:\n{txt_input}")
+            if final_image is not None:
+                img_to_send = final_image.copy()
+                if max(img_to_send.size) > 1000:
+                    img_to_send.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
+                parts.append(img_to_send)
 
-      # VÒNG LẶP TỰ ĐỘNG THỬ TỪNG KEY THEO THỨ TỰ
-      success = False
-      last_err = ""
-      status_box = st.empty()
+            status_box = st.empty()
+            success = False
 
-      for idx, api_key in enumerate(all_keys):
-        try:
-          genai.configure(api_key=api_key)
-          try:
-            model = genai.GenerativeModel(target_model_name)
-          except Exception:
-            model = genai.GenerativeModel("gemini-3-flash-preview")
+            # Vòng lặp xoay vòng các API Key ngầm
+            for idx, api_key in enumerate(all_keys):
+                try:
+                    genai.configure(api_key=api_key)
+                    try:
+                        model = genai.GenerativeModel(target_model_name)
+                    except Exception:
+                        model = genai.GenerativeModel("gemini-3-flash-preview")
 
-          # Cấu hình phản hồi tức thì
-          try:
-            fast_config = {
-                "temperature": 0.1,
-                "thinking_config": {"thinking_budget": 0},
-            }
-            response = model.generate_content(
-                parts, stream=True, generation_config=fast_config
-            )
-          except Exception:
-            response = model.generate_content(
-                parts, stream=True, generation_config={"temperature": 0.1}
-            )
+                    try:
+                        fast_config = {
+                            "temperature": 0.1,
+                            "thinking_config": {"thinking_budget": 0},
+                        }
+                        response = model.generate_content(
+                            parts, stream=True, generation_config=fast_config
+                        )
+                    except Exception:
+                        response = model.generate_content(
+                            parts, stream=True, generation_config={"temperature": 0.1}
+                        )
 
-          status_box.empty()
-          st.markdown("---")
-          st.markdown("### 📋 Kết quả phân tích từ AI:")
+                    status_box.empty()
+                    st.markdown("---")
+                    st.markdown("### 📋 Kết quả phân tích từ AI:")
 
-          raw_text = ""
-          placeholder = st.empty()
-          for chunk in response:
-            if chunk.text:
-              raw_text += chunk.text
-              formatted_web = render_markdown_to_web_html(raw_text)
-              placeholder.markdown(
-                  f'<div class="ai-doc-view">{formatted_web}</div>',
-                  unsafe_allow_html=True,
-              )
+                    raw_text = ""
+                    placeholder = st.empty()
+                    for chunk in response:
+                        if chunk.text:
+                            raw_text += chunk.text
+                            formatted_web = render_markdown_to_web_html(raw_text)
+                            placeholder.markdown(
+                                f'<div class="ai-doc-view">{formatted_web}</div>',
+                                unsafe_allow_html=True,
+                            )
 
-          st.session_state["ai_solution_text"] = format_clean_markdown_for_docx(
-              raw_text
-          )
-          success = True
-          break  # Gọi thành công -> dừng vòng lặp
+                    st.session_state["ai_solution_text"] = format_clean_markdown_for_docx(raw_text)
+                    success = True
+                    break
 
-        except Exception as e:
-          err_str = str(e)
-          last_err = err_str
-          # Nếu gặp lỗi Quota 429 -> tự động chuyển sang Key tiếp theo
-          if "429" in err_str or "quota" in err_str.lower():
-            if idx + 1 < len(all_keys):
-              status_box.warning(
-                  f"⚠️ Key số {idx + 1} đã hết hạn mức (429). Hệ thống đang tự"
-                  f" động chuyển sang Key số {idx + 2}..."
-              )
-              continue
-            else:
-              status_box.error(
-                  "⚠️ Tất cả các API Key bạn cung cấp đều đã hết hạn mức hôm"
-                  " nay (20 lượt/ngày/key)!"
-              )
-              break
-          else:
-            status_box.error(f"Lỗi: {e}")
-            break
+                except Exception as e:
+                    err_str = str(e)
+                    if "429" in err_str or "quota" in err_str.lower():
+                        if idx + 1 < len(all_keys):
+                            status_box.info(f"🔄 Đang tự động chuyển sang Key dự phòng số {idx + 2}...")
+                            continue
+                        else:
+                            status_box.error(
+                                "⚠️ Tất cả các API Key hiện có đều đã dùng hết hạn mức hôm nay (20 lượt/ngày/project)!\n\n"
+                                "👉 Hãy vào https://aistudio.google.com/apikey, bấm **Create API key** và chọn **Create API key in new project** rồi dán vào Secrets để tiếp tục."
+                            )
+                            break
+                    else:
+                        status_box.error(f"Lỗi: {e}")
+                        break
 
   # HIỂN THỊ KẾT QUẢ ĐÃ LƯU & CÁC NÚT TẢI VỀ
-  if st.session_state["ai_solution_text"]:
-    if not btn_run:
-      st.markdown("---")
-      st.markdown("### 📋 Kết quả phân tích từ AI:")
-      formatted_web = render_markdown_to_web_html(
-          st.session_state["ai_solution_text"]
-      )
-      st.markdown(
-          f'<div class="ai-doc-view">{formatted_web}</div>',
-          unsafe_allow_html=True,
-      )
+    if st.session_state["ai_solution_text"]:
+        if not btn_run:
+            st.markdown("---")
+            st.markdown("### 📋 Kết quả phân tích từ AI:")
+            formatted_web = render_markdown_to_web_html(st.session_state["ai_solution_text"])
+            st.markdown(
+                f'<div class="ai-doc-view">{formatted_web}</div>',
+                unsafe_allow_html=True,
+            )
 
-    st.write("")
-    col_dl1, col_dl2 = st.columns(2)
-    with col_dl1:
-      docx_bytes = generate_word_docx_with_equations(
-          st.session_state["ai_solution_text"]
-      )
-      if docx_bytes:
-        st.download_button(
-            "📥 Tải tài liệu Word chuẩn Equation (.docx)",
-            data=docx_bytes,
-            file_name="Ket_qua_Thong_ke.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True,
-        )
-      else:
-        st.info(
-            "💡 Cần có 'pypandoc-binary' và 'python-docx' trong requirements.txt"
-            " để tải file Word Equation."
-        )
+        st.write("")
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            docx_bytes = generate_word_docx_with_equations(st.session_state["ai_solution_text"])
+            if docx_bytes:
+                st.download_button(
+                    "📥 Tải tài liệu Word chuẩn Equation (.docx)",
+                    data=docx_bytes,
+                    file_name="Ket_qua_Thong_ke.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True,
+                )
+            else:
+                st.info("💡 Cần có 'pypandoc-binary' và 'python-docx' trong requirements.txt để tải file Word Equation.")
 
-    with col_dl2:
-      st.download_button(
-          "📄 Tải dạng văn bản thuần (.txt)",
-          data=st.session_state["ai_solution_text"],
-          file_name="Ket_qua_Thong_ke.txt",
-          mime="text/plain",
-          use_container_width=True,
-      )
+        with col_dl2:
+            st.download_button(
+                "📄 Tải dạng văn bản thuần (.txt)",
+                data=st.session_state["ai_solution_text"],
+                file_name="Ket_qua_Thong_ke.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
