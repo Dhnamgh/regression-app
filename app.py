@@ -3073,7 +3073,7 @@ elif section == "Tính xác suất":
 
 
 # -----------------------------
-# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (BÀI GIẢI ĐẦY ĐỦ SƯ PHẠM, WORD SẠCH 100% BULLET, KTC NGOẶC VUÔNG)
+# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (BẢNG 2x2/rxc, BỎ LỜI CHÀO, ĐỒNG BỘ KTC 95%, WORD EQUATION)
 # -----------------------------
 elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
   st.markdown(
@@ -3099,6 +3099,21 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
         border: 2px solid #cbd5e1 !important;
         border-radius: 12px !important;
         box-shadow: 0 4px 6px -1px rgba(0,0,0,0.07) !important;
+    }
+    .ai-doc-view table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+        margin: 15px 0 !important;
+    }
+    .ai-doc-view th, .ai-doc-view td {
+        border: 1px solid #94a3b8 !important;
+        padding: 8px 12px !important;
+        text-align: center !important;
+        font-family: 'Times New Roman', Times, serif !important;
+    }
+    .ai-doc-view th {
+        background-color: #f1f5f9 !important;
+        font-weight: bold !important;
     }
     .ai-doc-view h1, .ai-doc-view h2, .ai-doc-view h3, .ai-doc-view h4 {
         font-family: 'Times New Roman', Times, serif !important;
@@ -3129,36 +3144,50 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
   except ImportError:
     has_paste = False
 
-  # Hàm xử lý chuỗi: Khử sạch dấu bullet rác, không bao giờ để bullet trước công thức hay tiêu đề
+  # Hàm dọn dẹp văn bản: Cắt bỏ 100% lời chào hỏi đầu bài, chuẩn hóa bảng và danh sách
   def format_clean_markdown_for_docx(text: str) -> str:
     import re
 
-    lines = text.split("\n")
+    # 1. Bắt buộc cắt bỏ tất cả lời chào, mở bài lan man trước tiêu đề PHẦN 1
+    idx_p1 = re.search(r"(#{1,4}\s*PHẦN\s*1|PHẦN\s*1\s*:)", text, re.IGNORECASE)
+    if idx_p1:
+      cleaned_text = text[idx_p1.start() :]
+    else:
+      cleaned_text = text
+
+    lines = cleaned_text.split("\n")
     cleaned = []
+    in_table = False
 
     for line in lines:
       s = line.strip()
 
-      # 1. Bỏ qua các dòng trống chỉ chứa bullet rác hoặc dấu hoa thị rác
+      # Bảo lưu nguyên vẹn bảng biểu Markdown
+      if s.startswith("|") and s.endswith("|"):
+        cleaned.append(s)
+        in_table = True
+        continue
+      else:
+        if in_table:
+          cleaned.append("")
+          in_table = False
+
+      # Bỏ qua các dòng trống rác chứa ký tự đơn lẻ
       if not s or s in ["*", "-", "•", "**", "--", "o", "▪"]:
         cleaned.append("")
         continue
 
-      # 2. Xóa sạch bullet nếu nó nằm trước công thức toán ($$ hoặc $)
+      # Khử bullet đặt sai vị trí trước công thức, tiêu đề, hoặc phương án A-D
       s = re.sub(r"^[\*\-•o▪]\s*(?=\$\$|\$)", "", s)
-
-      # 3. Xóa bullet nếu nó nằm trước tiêu đề hoặc mục đánh số (1. 2. 3...)
       s = re.sub(r"^[\*\-•o▪]\s*(\d+\.\s+)", r"\1", s)
       s = re.sub(r"^[\*\-•o▪]\s*(#{1,4}\s+)", r"\1", s)
-
-      # 4. Xóa bullet nếu nó nằm trước phương án trắc nghiệm A., B., C., D.
       s = re.sub(r"^[\*\-•o▪]\s*([A-D]\.\s+)", r"\1", s)
 
-      # 5. Nếu là danh sách bullet thực sự (- hoặc *), ép về "- " không thụt lề để tránh sinh ra sub-bullet lung tung
+      # Chuẩn hóa gạch đầu dòng danh sách thực thụ
       if re.match(r"^[\*\-•]\s+", s):
         s = re.sub(r"^[\*\-•]\s+", "- ", s)
 
-      # 6. Tách dòng rõ ràng cho từng khối nội dung
+      # Tách đoạn rõ ràng cho câu hỏi và phương án A, B, C, D
       if re.match(r"^(Câu\s+\d+[:\.]|[A-D]\.\s+|\d+\.\s+|#{1,4}\s+)", s):
         cleaned.append("")
         cleaned.append(s)
@@ -3171,11 +3200,10 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
         cleaned.append(s)
 
     res = "\n".join(cleaned)
-    # Loại bỏ các khoảng trống liên tiếp quá 2 dòng
     res = re.sub(r"\n{3,}", "\n\n", res)
     return res
 
-  # Hàm xuất file Word (.docx) chứa công thức Word Equation chuẩn
+  # Hàm xuất file Word (.docx) chứa công thức Equation và Bảng biểu chuẩn
   def generate_word_docx_with_equations(md_text: str) -> Optional[bytes]:
     import os
     import tempfile
@@ -3188,7 +3216,7 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
 
       ready_md = format_clean_markdown_for_docx(md_text)
 
-      # Pandoc biên dịch LaTeX $...$ và $$...$$ sang Word Equation OMML nguyên bản
+      # Pandoc biên dịch Markdown + LaTeX $...$ + Bảng biểu sang Word Equation & Table chuẩn
       pypandoc.convert_text(
           ready_md,
           "docx",
@@ -3196,9 +3224,10 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
           outputfile=tmp_docx,
       )
 
-      # Căn lề chuẩn 2cm và phông Times New Roman 13pt
+      # Định dạng phông Times New Roman 13pt, căn lề 2cm, viền bảng
       try:
         from docx import Document
+        from docx.enum.table import WD_TABLE_ALIGNMENT
         from docx.oxml.ns import qn
         from docx.shared import Cm, Pt
 
@@ -3219,6 +3248,17 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
             r.font.name = "Times New Roman"
             r.font.size = Pt(13)
             r._element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
+
+        # Căn chỉnh bảng ở giữa trang
+        for t in doc.tables:
+          t.alignment = WD_TABLE_ALIGNMENT.CENTER
+          for row in t.rows:
+            for cell in row.cells:
+              for cp in cell.paragraphs:
+                for cr in cp.runs:
+                  cr.font.name = "Times New Roman"
+                  cr.font.size = Pt(12)
+
         doc.save(tmp_docx)
       except Exception:
         pass
@@ -3336,45 +3376,45 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
 
         prompt = f"""
 Bạn là chuyên gia Thống kê Y học và giảng viên bộ môn Xác suất Thống kê Y Dược.
-Nhiệm vụ: Giải bài toán và tạo bộ câu hỏi trắc nghiệm chi tiết, chuẩn mực theo đề bài dưới đây.
+Nhiệm vụ: Giải bài toán và tạo bộ câu hỏi trắc nghiệm chi tiết theo đề bài dưới đây.
 
-YÊU CẦU TRÌNH BÀY VÀ CẤU TRÚC (BẮT BUỘC TUÂN THỦ ĐỂ XUẤT WORD CHUẨN XÁC):
-1. VỀ TRÌNH BÀY CÔNG THỨC TOÁN HỌC:
+QUY TẮC MỞ ĐẦU VÀ TRÌNH BÀY (BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT):
+1. BẮT ĐẦU NGAY LẬP TỨC bằng dòng tiêu đề: "### PHẦN 1: BÀI GIẢI CHI TIẾT".
+   TUYỆT ĐỐI KHÔNG viết bất kỳ lời chào hỏi, mở đầu, giới thiệu danh xưng ("Chào bạn...", "Với tư cách là...", "Dưới đây là...").
+2. BẢNG DỮ LIỆU LIÊN ĐỊNH (BẮT BUỘC NẾU CÓ THỂ LẬP ĐƯỢC):
+   - Nếu bài toán liên quan đến dữ liệu định tính (bảng 2x2, rxc, so sánh tỷ lệ, OR, RR, Chi-square, Fisher, test chẩn đoán nhạy/đặc hiệu), BẮT BUỘC lập BẢNG MA TRẬN LIÊN ĐỊNH bằng cú pháp Markdown table đầy đủ (gồm các ô a, b, c, d, tổng hàng, tổng cột, tổng mẫu N) ngay sau phần tóm tắt đề bài.
+3. QUY CHUẨN CÔNG THỨC TOÁN HỌC:
    - Các công thức toán đặt trong $$...$$ ở DÒNG RIÊNG BIỆT (dạng display equation).
-   - TUYỆT ĐỐI KHÔNG đặt dấu gạch đầu dòng '-' hay '*' trước các công thức toán $$, không lùi lề dòng công thức.
-   - Công thức trình bày chuẩn mực theo dạng chuỗi 3 vế: Công thức chữ = Thay số = Kết quả.
-   - KHOẢNG TIN CẬY (KTC) BẮT BUỘC ĐẶT TRONG CẶP NGOẶC VUÔNG: [cận dưới; cận trên] (ngăn cách bằng dấu chấm phẩy).
-   Ví dụ:
-   $$KTC 95\\% = e^{{\\ln(OR) \\pm 1.96 \\times SE}} = e^{{\\ln(18) \\pm 1.96 \\times 0.4314}} = [7.728; \\; 41.926]$$
+   - TUYỆT ĐỐI KHÔNG đặt dấu bullet '-' hay '*' trước công thức toán $$.
+   - Công thức viết dạng chuỗi 3 vế: Công thức chữ = Thay số = Kết quả.
+   - KHOẢNG TIN CẬY (KTC) BẮT BUỘC ĐẶT TRONG CẶP NGOẶC VUÔNG: [cận dưới; cận trên] (phân cách bằng dấu chấm phẩy ';').
+   - Mặc định tính KTC ở mức 95% (Z = 1.96) trừ khi đề bài yêu cầu mức khác.
 
-2. NỘI DUNG PHẦN 1: GIẢI BÀI TOÁN CHI TIẾT (ĐẦY ĐỦ CÁC BƯỚC, KHÔNG ĐƯỢC CẮT XÉN):
-   - Tóm tắt đề bài và xác định phương pháp thống kê phù hợp.
-   - 1. Giả thuyết thống kê:
-     - $H_0$: ... (Ý nghĩa lâm sàng)
-     - $H_1$: ... (Ý nghĩa lâm sàng)
-   - 2. Tính toán các chỉ số thống kê:
-     Tính toán đầy đủ từng chỉ số (Hiệu trung bình/OR/RR, sai số chuẩn SE, giá trị thống kê kiểm định t hoặc Z, bậc tự do df, tra bảng p-value). Trình bày dạng chuỗi công thức rõ ràng.
-   - 3. Khoảng tin cậy 95% (KTC 95%):
-     Trình bày chuỗi công thức dẫn thẳng ra kết quả [cận dưới; cận trên].
-   - 4. Kết luận kiểm định & Kết luận lâm sàng y học chi tiết.
+CHẾ ĐỘ XỬ LÝ: "{action_mode}"
+- NẾU CÓ PHẦN 1 (BÀI GIẢI CHI TIẾT):
+  + Tóm tắt đề bài & Bảng liên định (nếu là biến định tính/2x2/rxc).
+  + 1. Giả thuyết thống kê:
+    - $H_0$: ...
+    - $H_1$: ...
+  + 2. Tính toán các chỉ số thống kê (chuỗi công thức đầy đủ).
+  + 3. Khoảng tin cậy KTC 95%: chuỗi công thức dẫn thẳng ra kết quả [cận dưới; cận trên].
+  + 4. Kết luận kiểm định & Ý nghĩa lâm sàng y học.
 
-3. NỘI DUNG PHẦN 2: BỘ CÂU HỎI TRẮC NGHIỆM ĐỘC LẬP:
-   - Soạn đúng {num_questions} câu hỏi trắc nghiệm phục vụ ngân hàng đề thi.
-   - TỰ ĐỦ DỮ LIỆU: BẮT BUỘC lặp lại tóm tắt đầy đủ các số liệu đề bài trong phần dẫn của TỪNG CÂU HỎI (n1, x̄1, s1, n2, x̄2, s2,... hoặc các tỷ lệ, bảng số liệu). Tuyệt đối không dùng cụm từ "trong nghiên cứu trên", "theo câu trước".
-   - PHƯƠNG ÁN A LUÔN LUÔN LÀ ĐÁP ÁN ĐÚNG. Các phương án B, C, D là các phương án sai.
-   - TUYỆT ĐỐI KHÔNG ghi dòng "Đáp án đúng" và TUYỆT ĐỐI KHÔNG ghi dòng "Giải thích".
-   - Mỗi phương án A, B, C, D nằm riêng biệt trên một dòng, KHÔNG có dấu bullet phía trước:
-     Câu [X]: [Câu dẫn đầy đủ số liệu đề bài] [Nội dung câu hỏi]?
+- NẾU CÓ PHẦN 2 (BỘ CÂU HỎI TRẮC NGHIỆM ĐỘC LẬP):
+  + Soạn đúng {num_questions} câu hỏi trắc nghiệm độc lập hoàn toàn.
+  + TỰ ĐỦ DỮ LIỆU: BẮT BUỘC lặp lại tóm tắt đầy đủ các số liệu đề bài trong phần dẫn của TỪNG CÂU HỎI. Không viết "theo nghiên cứu trên", "theo câu 1".
+  + ĐÁP ÁN: PHƯƠNG ÁN A LUÔN LUÔN LÀ ĐÁP ÁN ĐÚNG. B, C, D là các phương án sai.
+  + TUYỆT ĐỐI KHÔNG ghi dòng "Đáp án đúng" và TUYỆT ĐỐI KHÔNG ghi dòng "Giải thích".
+  + Mỗi phương án A, B, C, D nằm riêng biệt trên một dòng, KHÔNG có dấu bullet phía trước:
+    Câu [X]: [Câu dẫn đầy đủ số liệu đề bài] [Nội dung câu hỏi]?
 
-     A. [Phương án đúng]
+    A. [Phương án đúng]
 
-     B. [Phương án sai]
+    B. [Phương án sai]
 
-     C. [Phương án sai]
+    C. [Phương án sai]
 
-     D. [Phương án sai]
-
-CHẾ ĐỘ XỬ LÝ ĐƯỢC CHỌN: "{action_mode}".
+    D. [Phương án sai]
 """
         parts = [prompt]
         if txt_input.strip():
