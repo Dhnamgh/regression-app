@@ -3073,7 +3073,7 @@ elif section == "Tính xác suất":
 
 
 # -----------------------------
-# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (BẢNG 2x2/rxc, BỎ LỜI CHÀO, ĐỒNG BỘ KTC 95%, WORD EQUATION)
+# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (CHUỖI 3 VẾ GỌN GÀNG, KTC NGOẶC VUÔNG, WORD EQUATION)
 # -----------------------------
 elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
   st.markdown(
@@ -3249,7 +3249,6 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
             r.font.size = Pt(13)
             r._element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
 
-        # Căn chỉnh bảng ở giữa trang
         for t in doc.tables:
           t.alignment = WD_TABLE_ALIGNMENT.CENTER
           for row in t.rows:
@@ -3376,29 +3375,38 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
 
         prompt = f"""
 Bạn là chuyên gia Thống kê Y học và giảng viên bộ môn Xác suất Thống kê Y Dược.
-Nhiệm vụ: Giải bài toán và tạo bộ câu hỏi trắc nghiệm chi tiết theo đề bài dưới đây.
+Nhiệm vụ: Giải bài toán và tạo bộ câu hỏi trắc nghiệm theo đúng chuẩn mực sư phạm.
 
-QUY TẮC MỞ ĐẦU VÀ TRÌNH BÀY (BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT):
-1. BẮT ĐẦU NGAY LẬP TỨC bằng dòng tiêu đề: "### PHẦN 1: BÀI GIẢI CHI TIẾT".
-   TUYỆT ĐỐI KHÔNG viết bất kỳ lời chào hỏi, mở đầu, giới thiệu danh xưng ("Chào bạn...", "Với tư cách là...", "Dưới đây là...").
-2. BẢNG DỮ LIỆU LIÊN ĐỊNH (BẮT BUỘC NẾU CÓ THỂ LẬP ĐƯỢC):
-   - Nếu bài toán liên quan đến dữ liệu định tính (bảng 2x2, rxc, so sánh tỷ lệ, OR, RR, Chi-square, Fisher, test chẩn đoán nhạy/đặc hiệu), BẮT BUỘC lập BẢNG MA TRẬN LIÊN ĐỊNH bằng cú pháp Markdown table đầy đủ (gồm các ô a, b, c, d, tổng hàng, tổng cột, tổng mẫu N) ngay sau phần tóm tắt đề bài.
-3. QUY CHUẨN CÔNG THỨC TOÁN HỌC:
-   - Các công thức toán đặt trong $$...$$ ở DÒNG RIÊNG BIỆT (dạng display equation).
-   - TUYỆT ĐỐI KHÔNG đặt dấu bullet '-' hay '*' trước công thức toán $$.
-   - Công thức viết dạng chuỗi 3 vế: Công thức chữ = Thay số = Kết quả.
-   - KHOẢNG TIN CẬY (KTC) BẮT BUỘC ĐẶT TRONG CẶP NGOẶC VUÔNG: [cận dưới; cận trên] (phân cách bằng dấu chấm phẩy ';').
-   - Mặc định tính KTC ở mức 95% (Z = 1.96) trừ khi đề bài yêu cầu mức khác.
+CÁC NGUYÊN TẮC BẮT BUỘC TUÂN THỦ:
+1. BẮT ĐẦU NGAY LẬP TỨC: Dòng đầu tiên của câu trả lời PHẢI LÀ "### PHẦN 1: BÀI GIẢI CHI TIẾT".
+   TUYỆT ĐỐI KHÔNG có bất kỳ lời chào hỏi, giới thiệu hay dẫn dắt nào.
+2. BẢNG DỮ LIỆU LIÊN ĐỊNH: Nếu là biến định tính (2x2, rxc, so sánh tỷ lệ, OR, RR, chẩn đoán...), BẮT BUỘC vẽ bảng Markdown table có đầy đủ ô quan sát, tổng hàng, tổng cột ngay sau phần tóm tắt đề bài.
+3. QUY TẮC CÔNG THỨC CHUỖI 3 VẾ (QUAN TRỌNG NHẤT):
+   - Mọi chỉ số tính toán PHẢI ĐƯỢC VIẾT DƯỚI DẠNG CHUỖI 3 VẾ GỌN GÀNG TRÊN 1 DÒNG DUY NHẤT:
+     $$Tên = Công\\ thức\\ chữ = Ráp\\ số = Đáp\\ số$$
+   - TUYỆT ĐỐI KHÔNG chia nhỏ thành các bước phụ rườm rà (CẤM viết: "Logarit tự nhiên là...", "Cận dưới ln(OR) là...", "Mũ hóa cận dưới là...", "Tính riêng tử số, mẫu số...").
+   - KHOẢNG TIN CẬY (KTC) BẮT BUỘC VIẾT DẠNG CHUỖI VÀ KẾT THÚC BẰNG CẶP NGOẶC VUÔNG: [cận dưới; cận trên] (ngăn cách bằng dấu chấm phẩy ';').
+   
+   VÍ DỤ MẪU CHUẨN XÁC:
+   * Nếu là bài toán OR/RR:
+     $$OR = \\frac{{a \\times d}}{{b \\times c}} = \\frac{{40 \\times 90}}{{20 \\times 10}} = 18$$
+     $$SE_{{\\ln(OR)}} = \\sqrt{{\\frac{{1}}{{a}} + \\frac{{1}}{{b}} + \\frac{{1}}{{c}} + \\frac{{1}}{{d}}}} = \\sqrt{{\\frac{{1}}{{40}} + \\frac{{1}}{{20}} + \\frac{{1}}{{10}} + \\frac{{1}}{{90}}}} = 0.4314$$
+     $$Z = \\frac{{\\ln(OR)}}{{SE_{{\\ln(OR)}}}} = \\frac{{\\ln(18)}}{{0.4314}} = 6.700 \\implies p < 0.001$$
+     $$KTC 95\\% = e^{{\\ln(OR) \\pm 1.96 \\times SE_{{\\ln(OR)}}}} = e^{{\\ln(18) \\pm 1.96 \\times 0.4314}} = [7.728; \\; 41.926]$$
+
+   * Nếu là bài toán hiệu 2 trung bình:
+     $$s_p = \\sqrt{{\\frac{{(n_1-1)s_1^2 + (n_2-1)s_2^2}}{{n_1+n_2-2}}}} = \\sqrt{{\\frac{{(40-1)0.9^2 + (40-1)1.0^2}}{{40+40-2}}}} = 0.9513$$
+     $$SE = s_p \\sqrt{{\\frac{{1}}{{n_1}} + \\frac{{1}}{{n_2}}}} = 0.9513 \\sqrt{{\\frac{{1}}{{40}} + \\frac{{1}}{{40}}}} = 0.2127$$
+     $$t = \\frac{{\\bar{{x}}_1 - \\bar{{x}}_2}}{{SE}} = \\frac{{6.8 - 7.4}}{{0.2127}} = -2.821$$
+     $$KTC 95\\% = (\\bar{{x}}_1 - \\bar{{x}}_2) \\pm t_{{\\alpha/2, df}} \\times SE = (6.8 - 7.4) \\pm 1.991 \\times 0.2127 = [-1.024; \\; -0.176]$$
 
 CHẾ ĐỘ XỬ LÝ: "{action_mode}"
 - NẾU CÓ PHẦN 1 (BÀI GIẢI CHI TIẾT):
-  + Tóm tắt đề bài & Bảng liên định (nếu là biến định tính/2x2/rxc).
-  + 1. Giả thuyết thống kê:
-    - $H_0$: ...
-    - $H_1$: ...
-  + 2. Tính toán các chỉ số thống kê (chuỗi công thức đầy đủ).
-  + 3. Khoảng tin cậy KTC 95%: chuỗi công thức dẫn thẳng ra kết quả [cận dưới; cận trên].
-  + 4. Kết luận kiểm định & Ý nghĩa lâm sàng y học.
+  + Tóm tắt đề bài & Bảng liên định (nếu có).
+  + 1. Giả thuyết thống kê ($H_0$, $H_1$).
+  + 2. Tính toán các chỉ số (chỉ viết chuỗi 3 vế, không viết lời giải thích vụn vặt).
+  + 3. Khoảng tin cậy KTC 95% (viết chuỗi 3 vế dẫn ra ngoặc vuông [cận dưới; cận trên]).
+  + 4. Kết luận thống kê và ý nghĩa lâm sàng.
 
 - NẾU CÓ PHẦN 2 (BỘ CÂU HỎI TRẮC NGHIỆM ĐỘC LẬP):
   + Soạn đúng {num_questions} câu hỏi trắc nghiệm độc lập hoàn toàn.
