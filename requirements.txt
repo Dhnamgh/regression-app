@@ -10,3 +10,5 @@ python-docx
 openpyxl
 google-generativeai
 streamlit-paste-button
+pypandoc-binary
+python-docx
