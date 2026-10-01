@@ -3073,7 +3073,7 @@ elif section == "Tính xác suất":
 
 
 # -----------------------------
-# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (XOAY VÒNG KEY NGẦM, XÓA KHUNG THỪA, WORD EQUATION CHUẨN)
+# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (FIX BẢNG BIỂU WORD CHUẨN, XOAY VÒNG KEY, WORD EQUATION)
 # -----------------------------
 elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
     st.markdown("## 🤖 AI Trợ lý: Giải bài toán Thống kê Y sinh & Tạo trắc nghiệm")
@@ -3166,16 +3166,21 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
                 ordered.append(k)
         return ordered
 
-    # Hàm xử lý chuỗi: Bóc tách bullet rác, in đậm Câu hỏi và dọn sạch Markdown cho Word
+    # Hàm xử lý chuỗi: Sửa triệt để lỗi bảng Markdown cho Word, bullet và in đậm câu hỏi
     def format_clean_markdown_for_docx(text: str) -> str:
         import re
 
+        # 1. Bắt buộc cắt bỏ toàn bộ lời chào/mở bài trước PHẦN 1 hoặc BÀI GIẢI
         idx_p1 = re.search(r"(#{1,4}\s*(PHẦN\s*1|BÀI\s*GIẢI|BỘ\s*CÂU\s*HỎI)|(PHẦN\s*1|BÀI\s*GIẢI|BỘ\s*CÂU\s*HỎI)\s*:)", text, re.IGNORECASE)
         if idx_p1:
             cleaned_text = text[idx_p1.start():]
         else:
             cleaned_text = text
 
+        # 2. TÁCH DÒNG NẾU TIÊU ĐỀ BẢNG BỊ DÍNH LIỀN VỚI HÀNG ĐẦU TIÊN CỦA BẢNG
+        cleaned_text = re.sub(r'([^\n|]+)\s*(\|[^\n]+\|)', r'\1\n\n\2', cleaned_text)
+
+        # 3. Tự động in đậm "Câu 1:", "Câu 2:" nếu AI chưa in đậm
         cleaned_text = re.sub(r"(?<!\*\*)(Câu\s+\d+[:\.])(?!\*\*)", r"**\1**", cleaned_text)
 
         lines = cleaned_text.split("\n")
@@ -3196,7 +3201,7 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
             s = re.sub(r"^(\d+\.\s+[^:]+:)\s*-\s+", r"\1\n\n* ", s)
             s = re.sub(r"^(#{1,4}\s+[^:]+:)\s*-\s+", r"\1\n\n* ", s)
 
-            if s.count(" - ") >= 2 and not s.startswith("$$"):
+            if s.count(" - ") >= 2 and not s.startswith("$$") and not s.startswith("|"):
                 parts = s.split(" - ")
                 new_lines.append(parts[0].strip())
                 for p in parts[1:]:
@@ -3206,17 +3211,23 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
 
             new_lines.append(s)
 
+        # 4. Bảo đảm bảng Pipe Table luôn có dòng trống trước và sau để Pandoc render chuẩn
         cleaned = []
         in_table = False
         in_list = False
 
         for s in new_lines:
             if s.startswith("|") and s.endswith("|"):
+                if not in_table:
+                    # BẮT BUỘC chèn dòng trống trước hàng đầu tiên của bảng
+                    if cleaned and cleaned[-1] != "":
+                        cleaned.append("")
+                    in_table = True
                 cleaned.append(s)
-                in_table = True
                 continue
             else:
                 if in_table:
+                    # BẮT BUỘC chèn dòng trống sau hàng cuối cùng của bảng
                     cleaned.append("")
                     in_table = False
 
@@ -3254,11 +3265,14 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
             else:
                 cleaned.append(s)
 
+        if in_table:
+            cleaned.append("")
+
         res = "\n".join(cleaned)
         res = re.sub(r"\n{3,}", "\n\n", res)
         return res
 
-  # Hàm chuyển đổi riêng cho Web: Biến ### thành <h3> để không bao giờ bị hiện chữ ###
+    # Hàm chuyển đổi riêng cho Web: Biến ### thành <h3> để không bao giờ bị hiện chữ ###
     def render_markdown_to_web_html(text: str) -> str:
         import re
         web_text = format_clean_markdown_for_docx(text)
@@ -3267,7 +3281,7 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
         web_text = re.sub(r"^#\s+(.+)$", r'<h1 style="color:#0B3A66; font-weight:800; margin-top:24px; margin-bottom:12px;">\1</h1>', web_text, flags=re.MULTILINE)
         return web_text
 
-  # Hàm xuất file Word (.docx) chứa công thức Equation và dãn dòng 1.2
+    # Hàm xuất file Word (.docx) chứa công thức Equation, Bảng biểu chuẩn Table Grid và dãn dòng 1.2
     def generate_word_docx_with_equations(md_text: str) -> Optional[bytes]:
         import os
         import tempfile
@@ -3311,12 +3325,19 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
                         r.font.size = Pt(13)
                         r._element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
 
+                # Định dạng bảng biểu chuẩn: kẻ viền đen, căn giữa và phông chữ 12pt
                 for t in doc.tables:
+                    try:
+                        t.style = 'Table Grid'
+                    except Exception:
+                        pass
                     t.alignment = WD_TABLE_ALIGNMENT.CENTER
                     for row in t.rows:
                         for cell in row.cells:
                             for cp in cell.paragraphs:
                                 cp.paragraph_format.line_spacing = 1.15
+                                cp.paragraph_format.space_after = Pt(2)
+                                cp.paragraph_format.space_before = Pt(2)
                                 for cr in cp.runs:
                                     cr.font.name = "Times New Roman"
                                     cr.font.size = Pt(12)
@@ -3416,7 +3437,7 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
                 st.session_state["ai_solution_text"] = ""
                 st.rerun()
 
-  # Xử lý khi nhấn nút
+    # Xử lý khi nhấn nút
     if btn_run:
         all_keys = get_all_configured_api_keys()
 
@@ -3432,7 +3453,7 @@ Nhiệm vụ: Giải bài toán theo đúng các quy chuẩn sau đây.
 CÁC NGUYÊN TẮC BẮT BUỘC TUÂN THỦ:
 1. KHÔNG LỜI CHÀO HỎI: Bắt đầu câu trả lời ngay lập tức bằng tiêu đề Markdown (###). Tuyệt đối không chào hỏi, không giới thiệu danh xưng.
 2. TÓM TẮT ĐỀ BÀI: Dưới mục "Tóm tắt đề bài:", xuống dòng và đặt dấu '* ' ở đầu mỗi dòng liệt kê để tạo bullet tròn đen.
-3. BẢNG LIÊN ĐỊNH: Nếu là dữ liệu bảng 2x2/rxc/OR/RR/so sánh tỷ lệ, bắt buộc vẽ bảng Markdown table đầy đủ (ô quan sát, tổng hàng, tổng cột).
+3. BẢNG LIÊN ĐỊNH / BẢNG DỮ LIỆU: BẮT BUỘC phải để một dòng trống trước và sau bảng Markdown. Bảng phải có đầy đủ các cột và các hàng (ô quan sát, tổng hàng, tổng cột).
 4. CÔNG THỨC TOÁN DẠNG CHUỖI 3 VẾ GỌN GÀNG TRÊN 1 DÒNG DUY NHẤT:
    - Đặt trong $$...$$ ở dòng riêng biệt: $$Tên = Công\\ thức\\ chữ = Ráp\\ số = Đáp\\ số$$
    - Không chia nhỏ các bước tính toán phụ vụn vặt.
@@ -3516,7 +3537,6 @@ CHẾ ĐỘ YÊU CẦU: CẢ GIẢI CHI TIẾT VÀ TẠO CÂU HỎI TRẮC NGHI�
             status_box = st.empty()
             success = False
 
-            # Vòng lặp xoay vòng các API Key ngầm
             for idx, api_key in enumerate(all_keys):
                 try:
                     genai.configure(api_key=api_key)
@@ -3573,7 +3593,7 @@ CHẾ ĐỘ YÊU CẦU: CẢ GIẢI CHI TIẾT VÀ TẠO CÂU HỎI TRẮC NGHI�
                         status_box.error(f"Lỗi: {e}")
                         break
 
-  # HIỂN THỊ KẾT QUẢ ĐÃ LƯU & CÁC NÚT TẢI VỀ
+    # HIỂN THỊ KẾT QUẢ ĐÃ LƯU & CÁC NÚT TẢI VỀ
     if st.session_state["ai_solution_text"]:
         if not btn_run:
             st.markdown("---")
