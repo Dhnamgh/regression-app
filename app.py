@@ -3073,7 +3073,7 @@ elif section == "Tính xác suất":
 
 
 # -----------------------------
-# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (CÔNG THỨC CHUỖI RÚT GỌN, KTC NGOẶC VUÔNG & WORD CHUẨN BULLET)
+# MÔ-ĐUN: AI TRỢ LÝ THÔNG MINH (BÀI GIẢI ĐẦY ĐỦ SƯ PHẠM, WORD SẠCH 100% BULLET, KTC NGOẶC VUÔNG)
 # -----------------------------
 elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
   st.markdown(
@@ -3104,7 +3104,7 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
         font-family: 'Times New Roman', Times, serif !important;
         color: #0B3A66 !important;
         font-weight: 800 !important;
-        margin-top: 15px !important;
+        margin-top: 16px !important;
     }
     .ai-doc-view p, .ai-doc-view li, .ai-doc-view span {
         font-family: 'Times New Roman', Times, serif !important;
@@ -3129,33 +3129,53 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
   except ImportError:
     has_paste = False
 
-  # Hàm chuẩn hóa ngắt dòng: khử triệt để dấu '*' rác, tạo bullet chuẩn và tách dòng phương án A, B, C, D
-  def format_quiz_layout(text: str) -> str:
+  # Hàm xử lý chuỗi: Khử sạch dấu bullet rác, không bao giờ để bullet trước công thức hay tiêu đề
+  def format_clean_markdown_for_docx(text: str) -> str:
     import re
 
-    formatted = text
+    lines = text.split("\n")
+    cleaned = []
 
-    # 1. Chuyển đổi các dấu bullet '*' hoặc '•' bị dính dòng thành gạch đầu dòng '-' chuẩn Markdown
-    formatted = re.sub(r"(?<!\n)\s*[\*•]\s+", r"\n\n- ", formatted)
-    formatted = re.sub(r"\n[\*•]\s+", r"\n\n- ", formatted)
+    for line in lines:
+      s = line.strip()
 
-    # 2. Đảm bảo trước và sau danh sách gạch đầu dòng '-' luôn có dòng trống \n\n để Word tạo bullet chuẩn
-    formatted = re.sub(r"(?<!\n)\n(-\s+)", r"\n\n\1", formatted)
+      # 1. Bỏ qua các dòng trống chỉ chứa bullet rác hoặc dấu hoa thị rác
+      if not s or s in ["*", "-", "•", "**", "--", "o", "▪"]:
+        cleaned.append("")
+        continue
 
-    # 3. Đảm bảo trước các tiêu đề ### và mục đánh số 1. 2. 3. luôn cách dòng
-    formatted = re.sub(r"(?<!\n)\n(#{1,4}\s+)", r"\n\n\1", formatted)
-    formatted = re.sub(r"(#{1,4}[^\n]+)\n(?!\n)", r"\1\n\n", formatted)
-    formatted = re.sub(r"(?<!\n)\n(\d+\.\s+)", r"\n\n\1", formatted)
+      # 2. Xóa sạch bullet nếu nó nằm trước công thức toán ($$ hoặc $)
+      s = re.sub(r"^[\*\-•o▪]\s*(?=\$\$|\$)", "", s)
 
-    # 4. Tách câu hỏi trắc nghiệm và từng phương án A, B, C, D riêng biệt
-    formatted = re.sub(r"(?<!\n)\n(Câu\s+\d+[:\.])", r"\n\n\1", formatted)
-    formatted = re.sub(r"(\?|\.)\s*(A\.\s+)", r"\1\n\n\2", formatted)
-    formatted = re.sub(r"(?<!\n)\s+([B-D]\.\s+)", r"\n\n\1", formatted)
-    formatted = re.sub(r"(?<!\n)\n([A-D]\.\s+)", r"\n\n\1", formatted)
+      # 3. Xóa bullet nếu nó nằm trước tiêu đề hoặc mục đánh số (1. 2. 3...)
+      s = re.sub(r"^[\*\-•o▪]\s*(\d+\.\s+)", r"\1", s)
+      s = re.sub(r"^[\*\-•o▪]\s*(#{1,4}\s+)", r"\1", s)
 
-    return formatted
+      # 4. Xóa bullet nếu nó nằm trước phương án trắc nghiệm A., B., C., D.
+      s = re.sub(r"^[\*\-•o▪]\s*([A-D]\.\s+)", r"\1", s)
 
-  # Hàm tạo file Word (.docx) chứa công thức Equation chuẩn giáo trình
+      # 5. Nếu là danh sách bullet thực sự (- hoặc *), ép về "- " không thụt lề để tránh sinh ra sub-bullet lung tung
+      if re.match(r"^[\*\-•]\s+", s):
+        s = re.sub(r"^[\*\-•]\s+", "- ", s)
+
+      # 6. Tách dòng rõ ràng cho từng khối nội dung
+      if re.match(r"^(Câu\s+\d+[:\.]|[A-D]\.\s+|\d+\.\s+|#{1,4}\s+)", s):
+        cleaned.append("")
+        cleaned.append(s)
+        cleaned.append("")
+      elif s.startswith("$$"):
+        cleaned.append("")
+        cleaned.append(s)
+        cleaned.append("")
+      else:
+        cleaned.append(s)
+
+    res = "\n".join(cleaned)
+    # Loại bỏ các khoảng trống liên tiếp quá 2 dòng
+    res = re.sub(r"\n{3,}", "\n\n", res)
+    return res
+
+  # Hàm xuất file Word (.docx) chứa công thức Word Equation chuẩn
   def generate_word_docx_with_equations(md_text: str) -> Optional[bytes]:
     import os
     import tempfile
@@ -3166,10 +3186,9 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
       with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
         tmp_docx = tmp.name
 
-      # Chuẩn hóa ngắt đoạn trước khi đưa vào Pandoc
-      ready_md = format_quiz_layout(md_text)
+      ready_md = format_clean_markdown_for_docx(md_text)
 
-      # Pandoc biên dịch Markdown + LaTeX $...$ sang Word Equation OMML
+      # Pandoc biên dịch LaTeX $...$ và $$...$$ sang Word Equation OMML nguyên bản
       pypandoc.convert_text(
           ready_md,
           "docx",
@@ -3177,7 +3196,7 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
           outputfile=tmp_docx,
       )
 
-      # Định dạng toàn bộ văn bản sang Times New Roman 13pt, căn lề 2cm
+      # Căn lề chuẩn 2cm và phông Times New Roman 13pt
       try:
         from docx import Document
         from docx.oxml.ns import qn
@@ -3211,7 +3230,6 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
     except Exception:
       return None
 
-  # Khởi tạo bộ nhớ đệm
   if "ai_solution_text" not in st.session_state:
     st.session_state["ai_solution_text"] = ""
 
@@ -3318,45 +3336,45 @@ elif section == "AI Trợ lý" and sub == "Giải toán & Trắc nghiệm":
 
         prompt = f"""
 Bạn là chuyên gia Thống kê Y học và giảng viên bộ môn Xác suất Thống kê Y Dược.
-Nhiệm vụ: Giải bài toán và tạo bộ câu hỏi trắc nghiệm theo đề bài dưới đây.
+Nhiệm vụ: Giải bài toán và tạo bộ câu hỏi trắc nghiệm chi tiết, chuẩn mực theo đề bài dưới đây.
 
-YÊU CẦU QUAN TRỌNG VỀ ĐỊNH DẠNG VÀ CÁCH TRÌNH BÀY CÔNG THỨC:
-1. Trả lời trực tiếp, nhanh chóng, súc tích và chuẩn xác. TUYỆT ĐỐI KHÔNG viết lời chào hỏi hay mở bài rườm rà.
-2. TUYỆT ĐỐI KHÔNG dùng dấu hoa thị '*' ở đầu dòng làm gạch đầu dòng. Sử dụng dấu gạch ngang '- ' trên từng dòng riêng biệt có cách dòng rõ ràng để Word tạo bullet chuẩn.
-3. QUY CHUẨN TRÌNH BÀY CÔNG THỨC (THEO ĐÚNG HÌNH MẪU GIÁO TRÌNH):
-   - Trình bày công thức theo dạng chuỗi 3 vế gọn gàng: [Công thức chữ] = [Thay số vào] = [Kết quả]
-   - TUYỆT ĐỐI KHÔNG giải thích lắt nhắt các phép tính số học trung gian (không tính riêng tử số, mẫu số).
-   - KHOẢNG TIN CẬY (KTC) BẮT BUỘC ĐỂ TRONG CẶP NGOẶC VUÔNG: [cận dưới; cận trên] (ngăn cách bằng dấu chấm phẩy).
-   Ví dụ mẫu chuẩn xác:
-   $$s_p = \\sqrt{{\\frac{{(n_1-1)s_1^2 + (n_2-1)s_2^2}}{{n_1+n_2-2}}}} = \\sqrt{{\\frac{{(40-1)0.9^2 + (40-1)1.0^2}}{{40+40-2}}}} = 0.9513$$
-   $$SE = s_p \\sqrt{{\\frac{{1}}{{n_1}} + \\frac{{1}}{{n_2}}}} = 0.9513 \\sqrt{{\\frac{{1}}{{40}} + \\frac{{1}}{{40}}}} = 0.2127$$
-   $$t = \\frac{{\\bar{{x}}_1 - \\bar{{x}}_2}}{{SE}} = \\frac{{6.8 - 7.4}}{{0.2127}} = -2.821$$
-   $$KTC 95\\% = (\\bar{{x}}_1 - \\bar{{x}}_2) \\pm t_{{\\alpha/2, df}} \\times SE = (6.8 - 7.4) \\pm 1.991 \\times 0.2127 = [-1.024; -0.176]$$
+YÊU CẦU TRÌNH BÀY VÀ CẤU TRÚC (BẮT BUỘC TUÂN THỦ ĐỂ XUẤT WORD CHUẨN XÁC):
+1. VỀ TRÌNH BÀY CÔNG THỨC TOÁN HỌC:
+   - Các công thức toán đặt trong $$...$$ ở DÒNG RIÊNG BIỆT (dạng display equation).
+   - TUYỆT ĐỐI KHÔNG đặt dấu gạch đầu dòng '-' hay '*' trước các công thức toán $$, không lùi lề dòng công thức.
+   - Công thức trình bày chuẩn mực theo dạng chuỗi 3 vế: Công thức chữ = Thay số = Kết quả.
+   - KHOẢNG TIN CẬY (KTC) BẮT BUỘC ĐẶT TRONG CẶP NGOẶC VUÔNG: [cận dưới; cận trên] (ngăn cách bằng dấu chấm phẩy).
+   Ví dụ:
+   $$KTC 95\\% = e^{{\\ln(OR) \\pm 1.96 \\times SE}} = e^{{\\ln(18) \\pm 1.96 \\times 0.4314}} = [7.728; \\; 41.926]$$
 
-CHẾ ĐỘ XỬ LÝ: "{action_mode}"
-- NẾU CÓ PHẦN 1 (BÀI GIẢI CHI TIẾT):
-  + 1. Giả thuyết thống kê:
-    - $H_0: \\mu_1 = \\mu_2$ (Không có sự khác biệt...)
-    - $H_1: \\mu_1 \\neq \\mu_2$ (Có sự khác biệt...)
-  + 2. Tính toán các chỉ số: Trình bày chuỗi công thức rút gọn như trên (Hiệu trung bình, sp, SE, t, df, tra bảng t_crit, p-value).
-  + 3. Khoảng tin cậy: Trình bày chuỗi công thức rút gọn dẫn thẳng ra kết quả [cận dưới; cận trên].
-  + 4. Kết luận: Bác bỏ/Chấp nhận H0 và kết luận lâm sàng y học.
+2. NỘI DUNG PHẦN 1: GIẢI BÀI TOÁN CHI TIẾT (ĐẦY ĐỦ CÁC BƯỚC, KHÔNG ĐƯỢC CẮT XÉN):
+   - Tóm tắt đề bài và xác định phương pháp thống kê phù hợp.
+   - 1. Giả thuyết thống kê:
+     - $H_0$: ... (Ý nghĩa lâm sàng)
+     - $H_1$: ... (Ý nghĩa lâm sàng)
+   - 2. Tính toán các chỉ số thống kê:
+     Tính toán đầy đủ từng chỉ số (Hiệu trung bình/OR/RR, sai số chuẩn SE, giá trị thống kê kiểm định t hoặc Z, bậc tự do df, tra bảng p-value). Trình bày dạng chuỗi công thức rõ ràng.
+   - 3. Khoảng tin cậy 95% (KTC 95%):
+     Trình bày chuỗi công thức dẫn thẳng ra kết quả [cận dưới; cận trên].
+   - 4. Kết luận kiểm định & Kết luận lâm sàng y học chi tiết.
 
-- NẾU CÓ PHẦN 2 (CÂU HỎI TRẮC NGHIỆM):
-  + Soạn đúng {num_questions} câu hỏi trắc nghiệm độc lập hoàn toàn để phần mềm xáo trộn đề thi.
-  + TỰ ĐỦ DỮ LIỆU: Trong phần dẫn của TỪNG CÂU HỎI, BẮT BUỘC lặp lại tóm tắt đầy đủ các số liệu đề bài (n1, x̄1, s1, n2, x̄2, s2,...). TUYỆT ĐỐI KHÔNG viết "trong nghiên cứu trên", "theo câu 1...".
-  + ĐÁP ÁN: PHƯƠNG ÁN A LUÔN LUÔN LÀ ĐÁP ÁN ĐÚNG. B, C, D là các phương án sai.
-  + TUYỆT ĐỐI KHÔNG ghi dòng "Đáp án đúng" và TUYỆT ĐỐI KHÔNG ghi dòng "Giải thích".
-  + ĐỊNH DẠNG MỖI PHƯƠNG ÁN TRÊN MỘT DÒNG RIÊNG BIỆT:
-    Câu [X]: [Câu dẫn đầy đủ số liệu đề bài] [Nội dung câu hỏi]?
+3. NỘI DUNG PHẦN 2: BỘ CÂU HỎI TRẮC NGHIỆM ĐỘC LẬP:
+   - Soạn đúng {num_questions} câu hỏi trắc nghiệm phục vụ ngân hàng đề thi.
+   - TỰ ĐỦ DỮ LIỆU: BẮT BUỘC lặp lại tóm tắt đầy đủ các số liệu đề bài trong phần dẫn của TỪNG CÂU HỎI (n1, x̄1, s1, n2, x̄2, s2,... hoặc các tỷ lệ, bảng số liệu). Tuyệt đối không dùng cụm từ "trong nghiên cứu trên", "theo câu trước".
+   - PHƯƠNG ÁN A LUÔN LUÔN LÀ ĐÁP ÁN ĐÚNG. Các phương án B, C, D là các phương án sai.
+   - TUYỆT ĐỐI KHÔNG ghi dòng "Đáp án đúng" và TUYỆT ĐỐI KHÔNG ghi dòng "Giải thích".
+   - Mỗi phương án A, B, C, D nằm riêng biệt trên một dòng, KHÔNG có dấu bullet phía trước:
+     Câu [X]: [Câu dẫn đầy đủ số liệu đề bài] [Nội dung câu hỏi]?
 
-    A. [Phương án đúng]
+     A. [Phương án đúng]
 
-    B. [Phương án sai]
+     B. [Phương án sai]
 
-    C. [Phương án sai]
+     C. [Phương án sai]
 
-    D. [Phương án sai]
+     D. [Phương án sai]
+
+CHẾ ĐỘ XỬ LÝ ĐƯỢC CHỌN: "{action_mode}".
 """
         parts = [prompt]
         if txt_input.strip():
@@ -3379,13 +3397,15 @@ CHẾ ĐỘ XỬ LÝ: "{action_mode}"
         for chunk in response:
           if chunk.text:
             raw_text += chunk.text
-            formatted_display = format_quiz_layout(raw_text)
+            formatted_display = format_clean_markdown_for_docx(raw_text)
             placeholder.markdown(
                 f'<div class="ai-doc-view">{formatted_display}</div>',
                 unsafe_allow_html=True,
             )
 
-        st.session_state["ai_solution_text"] = format_quiz_layout(raw_text)
+        st.session_state["ai_solution_text"] = format_clean_markdown_for_docx(
+            raw_text
+        )
 
       except Exception as e:
         st.error(f"Lỗi: {e}")
