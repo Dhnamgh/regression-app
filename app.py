@@ -2267,56 +2267,634 @@ elif section == "Quantitative Tests":
                         download_table_block(t_f, "ttest_paired_results", "Paired Samples Test")
 
     elif sub == "Nonparametric Tests":
+        import re
+        from scipy import stats
+
+        # Hàm định dạng số chuẩn: nguyên hiện nguyên; mặc định 3 số thập phân; nếu 3 số bằng 0 thì lấy 4-5 số
+        def _fmt_np_val(val):
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                return ""
+            if isinstance(val, (int, np.integer)):
+                return str(int(val))
+            if isinstance(val, (float, np.floating)):
+                v = float(val)
+                if abs(v - round(v)) < 1e-9:
+                    return str(int(round(v)))
+                if abs(round(v, 3)) > 0:
+                    return f"{v:.3f}"
+                if v == 0.0:
+                    return "0"
+                if abs(round(v, 4)) > 0:
+                    return f"{v:.4f}"
+                if abs(round(v, 5)) > 0:
+                    return f"{v:.5f}"
+                return "< 0.00001"
+            return str(val)
+
+        def _fmt_np_df(df_in: pd.DataFrame) -> pd.DataFrame:
+            df_out = df_in.copy()
+            for col in df_out.columns:
+                df_out[col] = df_out[col].apply(_fmt_np_val)
+            return df_out
+
+        def _fmt_p_text(p_val: float) -> str:
+            s = _fmt_np_val(p_val)
+            return f"p {s}" if s.startswith("<") else f"p = {s}"
+
+        # Hàm tách 1 dãy số (hỗ trợ khoảng trắng, dấu phẩy ',', chấm phẩy ';', xuống dòng)
+        def _np_parse_1d(text: str) -> np.ndarray:
+            if not text or not str(text).strip():
+                return np.array([], dtype=float)
+            s = str(text).strip()
+            if ";" in s:
+                tokens = re.split(r"[;\s\n\t]+", s)
+                vals = []
+                for tok in tokens:
+                    tok = tok.strip().replace(",", ".")
+                    if tok:
+                        try:
+                            vals.append(float(tok))
+                        except ValueError:
+                            pass
+                return np.array(vals, dtype=float)
+            if "," in s:
+                if "." in s:
+                    s = s.replace(",", " ")
+                else:
+                    parts_ws = re.split(r"[\s\n\t]+", s)
+                    if len(parts_ws) > 1 and all(re.match(r"^[-+]?\d+,\d+$", t) for t in parts_ws if t):
+                        s = s.replace(",", ".")
+                    elif len(parts_ws) == 1 and re.match(r"^[-+]?\d+,\d+$", parts_ws[0]):
+                        s = s.replace(",", ".")
+                    else:
+                        s = s.replace(",", " ")
+            tokens = re.split(r"[\s\n\t]+", s)
+            vals = []
+            for tok in tokens:
+                tok = tok.strip()
+                if tok:
+                    try:
+                        vals.append(float(tok))
+                    except ValueError:
+                        pass
+            return np.array(vals, dtype=float)
+
+        # Hàm tách nhiều cột từ Excel (Tab) hoặc ';', ',', khoảng trắng; tự nhận diện dòng tiêu đề chữ
+        def _np_parse_multicol(text: str, listwise: bool = False):
+            if not text or not str(text).strip():
+                return [], []
+            raw_lines = [ln for ln in str(text).splitlines() if ln.strip()]
+            if not raw_lines:
+                return [], []
+
+            def split_row(ln: str):
+                if "\t" in ln:
+                    return [p.strip() for p in ln.split("\t")]
+                elif ";" in ln:
+                    return [p.strip() for p in ln.split(";")]
+                elif "," in ln:
+                    p_c = [p.strip() for p in ln.split(",")]
+                    if len(p_c) >= 2:
+                        return p_c
+                return [p.strip() for p in re.split(r"\s+", ln.strip()) if p.strip()]
+
+            rows_tokens = [split_row(ln) for ln in raw_lines]
+            max_cols = max(len(r) for r in rows_tokens)
+            if max_cols < 2:
+                return [], []
+
+            first_row = rows_tokens[0]
+            numeric_in_first = 0
+            for tok in first_row:
+                if tok != "":
+                    try:
+                        float(tok.replace(",", "."))
+                        numeric_in_first += 1
+                    except ValueError:
+                        pass
+            has_header = (numeric_in_first == 0)
+
+            if has_header:
+                headers = [first_row[j] if j < len(first_row) and first_row[j] else f"Group {j+1}" for j in range(max_cols)]
+                data_rows = rows_tokens[1:]
+            else:
+                headers = [f"Group {j+1}" for j in range(max_cols)]
+                data_rows = rows_tokens
+
+            cols = [[] for _ in range(max_cols)]
+            for r in data_rows:
+                parsed_row = []
+                for j in range(max_cols):
+                    tok = r[j].replace(",", ".") if j < len(r) else ""
+                    if tok == "":
+                        parsed_row.append(None)
+                    else:
+                        try:
+                            parsed_row.append(float(tok))
+                        except ValueError:
+                            parsed_row.append(None)
+                if listwise:
+                    if all(v is not None for v in parsed_row):
+                        for j in range(max_cols):
+                            cols[j].append(parsed_row[j])
+                else:
+                    for j in range(max_cols):
+                        if parsed_row[j] is not None:
+                            cols[j].append(parsed_row[j])
+
+            return headers, [np.array(c, dtype=float) for c in cols]
+
+        # Bảng thống kê mô tả phi tham số (Median & IQR)
+        def _np_desc_table(named_arrays: list, label_col: str = "Group") -> pd.DataFrame:
+            rows = []
+            for name, arr in named_arrays:
+                clean = np.asarray(arr, dtype=float)
+                clean = clean[~np.isnan(clean)]
+                if len(clean) == 0:
+                    continue
+                q25, med, q75 = np.percentile(clean, [25, 50, 75])
+                rows.append({
+                    label_col: name,
+                    "N": len(clean),
+                    "Median": float(med),
+                    "Q1 (25th)": float(q25),
+                    "Q3 (75th)": float(q75),
+                    "IQR (Q3 - Q1)": float(q75 - q25),
+                    "Min": float(np.min(clean)),
+                    "Max": float(np.max(clean))
+                })
+            return _fmt_np_df(pd.DataFrame(rows))
+
+        # Hàm chạy & hiển thị kết quả từng loại kiểm định phi tham số
+        def _run_mann_whitney(name1: str, s1: np.ndarray, name2: str, s2: np.ndarray):
+            n1, n2 = len(s1), len(s2)
+            N = n1 + n2
+            u_stat, p_u = stats.mannwhitneyu(s1, s2, alternative="two-sided")
+            combined = np.concatenate([s1, s2])
+            ranks = stats.rankdata(combined)
+            r1, r2 = ranks[:n1], ranks[n1:]
+            sum_r1, sum_r2 = float(np.sum(r1)), float(np.sum(r2))
+            w_stat = min(sum_r1, sum_r2)
+
+            _, counts = np.unique(combined, return_counts=True)
+            tie_corr = float(np.sum(counts**3 - counts))
+            var_u = (n1 * n2 / 12.0) * ((N + 1) - tie_corr / (N * (N - 1))) if N > 1 else 0.0
+            sd_u = np.sqrt(var_u) if var_u > 0 else 0.0
+            z_u = float((u_stat - (n1 * n2 / 2.0)) / sd_u) if sd_u > 0 else 0.0
+
+            desc_tbl = _np_desc_table([(name1, s1), (name2, s2)], "Group")
+            ranks_tbl = _fmt_np_df(pd.DataFrame([
+                {"Group": name1, "N": n1, "Mean Rank": float(np.mean(r1)), "Sum of Ranks": sum_r1},
+                {"Group": name2, "N": n2, "Mean Rank": float(np.mean(r2)), "Sum of Ranks": sum_r2}
+            ]))
+            test_tbl = _fmt_np_df(pd.DataFrame([{
+                "Mann-Whitney U": float(u_stat),
+                "Wilcoxon W": float(w_stat),
+                "Z": z_u,
+                "Asymp. Sig. (2-tailed)": float(p_u)
+            }]))
+
+            show_table(desc_tbl, "Descriptive Statistics (Median & IQR)")
+            download_table_block(desc_tbl, "mann_whitney_desc", "Descriptive Statistics")
+            show_table(ranks_tbl, "Ranks")
+            download_table_block(ranks_tbl, "mann_whitney_ranks", "Ranks")
+            show_table(test_tbl, "Test Statistics (Mann-Whitney U)")
+            download_table_block(test_tbl, "mann_whitney_results", "Mann-Whitney U Test")
+
+            q1_1, med_1, q3_1 = np.percentile(s1, [25, 50, 75])
+            q1_2, med_2, q3_2 = np.percentile(s2, [25, 50, 75])
+            p_str = _fmt_p_text(float(p_u))
+            summary_stats = (
+                f"Trung vị (KTPV) của {name1} là {_fmt_np_val(med_1)} ({_fmt_np_val(q1_1)} – {_fmt_np_val(q3_1)}) "
+                f"so với {name2} là {_fmt_np_val(med_2)} ({_fmt_np_val(q1_2)} – {_fmt_np_val(q3_2)})."
+            )
+            if p_u < 0.05:
+                st.success(f"**Kết luận:** Sự khác biệt giữa hai nhóm có ý nghĩa thống kê (kiểm định Mann-Whitney U, {p_str}). {summary_stats}")
+            else:
+                st.info(f"**Kết luận:** Sự khác biệt giữa hai nhóm không có ý nghĩa thống kê (kiểm định Mann-Whitney U, {p_str}). {summary_stats}")
+
+        def _run_kruskal_wallis(groups_list: list):
+            arrays = [arr for _, arr in groups_list]
+            names = [nm for nm, _ in groups_list]
+            kw_h, p_kw = stats.kruskal(*arrays)
+            df_kw = len(arrays) - 1
+
+            combined = np.concatenate(arrays)
+            all_ranks = stats.rankdata(combined)
+            rank_rows = []
+            idx_start = 0
+            for nm, arr in groups_list:
+                n_g = len(arr)
+                g_ranks = all_ranks[idx_start: idx_start + n_g]
+                idx_start += n_g
+                rank_rows.append({"Group": nm, "N": n_g, "Mean Rank": float(np.mean(g_ranks))})
+
+            desc_tbl = _np_desc_table(groups_list, "Group")
+            ranks_tbl = _fmt_np_df(pd.DataFrame(rank_rows))
+            test_tbl = _fmt_np_df(pd.DataFrame([{
+                "Kruskal-Wallis H": float(kw_h),
+                "df": df_kw,
+                "Asymp. Sig.": float(p_kw)
+            }]))
+
+            show_table(desc_tbl, "Descriptive Statistics (Median & IQR)")
+            download_table_block(desc_tbl, "kruskal_desc", "Descriptive Statistics")
+            show_table(ranks_tbl, "Ranks")
+            download_table_block(ranks_tbl, "kruskal_ranks", "Ranks")
+            show_table(test_tbl, "Test Statistics (Kruskal-Wallis)")
+            download_table_block(test_tbl, "kruskal_results", "Kruskal-Wallis Test")
+
+            p_str = _fmt_p_text(float(p_kw))
+            if p_kw < 0.05:
+                st.success(f"**Kết luận:** Sự khác biệt giữa các nhóm ({', '.join(names)}) có ý nghĩa thống kê (kiểm định Kruskal-Wallis, H = {_fmt_np_val(kw_h)}, df = {df_kw}, {p_str}).")
+            else:
+                st.info(f"**Kết luận:** Sự khác biệt giữa các nhóm ({', '.join(names)}) không có ý nghĩa thống kê (kiểm định Kruskal-Wallis, H = {_fmt_np_val(kw_h)}, df = {df_kw}, {p_str}).")
+
+        def _run_wilcoxon_paired(arr_d: np.ndarray, arr_pre: np.ndarray = None, arr_post: np.ndarray = None,
+                                 label_pre: str = "Before", label_post: str = "After", label_d: str = "d = After - Before"):
+            n_tot = len(arr_d)
+            nz_mask = (arr_d != 0)
+            nz_d = arr_d[nz_mask]
+            n_nz = len(nz_d)
+            ties_n = int(np.sum(~nz_mask))
+
+            if n_nz == 0:
+                z_w = 0.0
+                p_w = 1.0
+                neg_n, pos_n = 0, 0
+                neg_mean, neg_sum = 0.0, 0.0
+                pos_mean, pos_sum = 0.0, 0.0
+            else:
+                abs_ranks = stats.rankdata(np.abs(nz_d))
+                neg_r = abs_ranks[nz_d < 0]
+                pos_r = abs_ranks[nz_d > 0]
+                neg_n, pos_n = len(neg_r), len(pos_r)
+                neg_sum = float(np.sum(neg_r)) if neg_n > 0 else 0.0
+                pos_sum = float(np.sum(pos_r)) if pos_n > 0 else 0.0
+                neg_mean = float(np.mean(neg_r)) if neg_n > 0 else 0.0
+                pos_mean = float(np.mean(pos_r)) if pos_n > 0 else 0.0
+
+                w_res = stats.wilcoxon(nz_d, alternative="two-sided")
+                p_w = float(w_res.pvalue)
+
+                _, t_counts = np.unique(np.abs(nz_d), return_counts=True)
+                t_corr = float(np.sum(t_counts**3 - t_counts))
+                var_w = (n_nz * (n_nz + 1) * (2 * n_nz + 1) - 0.5 * t_corr) / 24.0
+                sd_w = np.sqrt(var_w) if var_w > 0 else 0.0
+                mean_w = n_nz * (n_nz + 1) / 4.0
+                z_abs = abs(min(neg_sum, pos_sum) - mean_w) / sd_w if sd_w > 0 else 0.0
+                z_w = -z_abs if pos_sum < neg_sum else z_abs
+
+            desc_items = []
+            if arr_pre is not None and arr_post is not None and len(arr_pre) == n_tot:
+                desc_items.extend([(label_pre, arr_pre), (label_post, arr_post)])
+            desc_items.append((label_d, arr_d))
+            desc_tbl = _np_desc_table(desc_items, "Variable")
+
+            ranks_tbl = _fmt_np_df(pd.DataFrame([
+                {"Rank Group": f"Negative Ranks ({label_post} < {label_pre})", "N": neg_n, "Mean Rank": neg_mean, "Sum of Ranks": neg_sum},
+                {"Rank Group": f"Positive Ranks ({label_post} > {label_pre})", "N": pos_n, "Mean Rank": pos_mean, "Sum of Ranks": pos_sum},
+                {"Rank Group": f"Ties ({label_post} = {label_pre})", "N": ties_n, "Mean Rank": "", "Sum of Ranks": ""},
+                {"Rank Group": "Total", "N": n_tot, "Mean Rank": "", "Sum of Ranks": ""}
+            ]))
+
+            test_tbl = _fmt_np_df(pd.DataFrame([{
+                "Z": float(z_w),
+                "Asymp. Sig. (2-tailed)": float(p_w)
+            }]))
+
+            show_table(desc_tbl, "Descriptive Statistics (Median & IQR)")
+            download_table_block(desc_tbl, "wilcoxon_desc", "Descriptive Statistics")
+            show_table(ranks_tbl, "Ranks")
+            download_table_block(ranks_tbl, "wilcoxon_ranks", "Ranks")
+            show_table(test_tbl, "Test Statistics (Wilcoxon Signed-Rank)")
+            download_table_block(test_tbl, "wilcoxon_results", "Wilcoxon Signed-Rank Test")
+
+            p_str = _fmt_p_text(float(p_w))
+            q1_d, med_d, q3_d = np.percentile(arr_d, [25, 50, 75])
+            diff_note = f"Trung vị (KTPV) của chênh lệch {label_d} là {_fmt_np_val(med_d)} ({_fmt_np_val(q1_d)} – {_fmt_np_val(q3_d)})."
+            if p_w < 0.05:
+                st.success(f"**Kết luận:** Sự khác biệt giữa hai thời điểm Trước và Sau có ý nghĩa thống kê (kiểm định Wilcoxon Signed-Rank, Z = {_fmt_np_val(z_w)}, {p_str}). {diff_note}")
+            else:
+                st.info(f"**Kết luận:** Sự khác biệt giữa hai thời điểm Trước và Sau không có ý nghĩa thống kê (kiểm định Wilcoxon Signed-Rank, Z = {_fmt_np_val(z_w)}, {p_str}). {diff_note}")
+
+        def _run_friedman(cond_list: list):
+            arrays = [arr for _, arr in cond_list]
+            names = [nm for nm, _ in cond_list]
+            n_subj = len(arrays[0])
+            k_cond = len(arrays)
+            fr_stat, p_fr = stats.friedmanchisquare(*arrays)
+            df_fr = k_cond - 1
+
+            mat = np.column_stack(arrays)
+            row_ranks = np.apply_along_axis(stats.rankdata, 1, mat)
+            mean_ranks = np.mean(row_ranks, axis=0)
+
+            desc_tbl = _np_desc_table(cond_list, "Condition / Time")
+            ranks_tbl = _fmt_np_df(pd.DataFrame([
+                {"Condition / Time": names[j], "Mean Rank": float(mean_ranks[j])}
+                for j in range(k_cond)
+            ]))
+            test_tbl = _fmt_np_df(pd.DataFrame([{
+                "N": n_subj,
+                "Chi-Square": float(fr_stat),
+                "df": df_fr,
+                "Asymp. Sig.": float(p_fr)
+            }]))
+
+            show_table(desc_tbl, "Descriptive Statistics (Median & IQR)")
+            download_table_block(desc_tbl, "friedman_desc", "Descriptive Statistics")
+            show_table(ranks_tbl, "Ranks")
+            download_table_block(ranks_tbl, "friedman_ranks", "Ranks")
+            show_table(test_tbl, "Test Statistics (Friedman)")
+            download_table_block(test_tbl, "friedman_results", "Friedman Test")
+
+            p_str = _fmt_p_text(float(p_fr))
+            if p_fr < 0.05:
+                st.success(f"**Kết luận:** Sự khác biệt giữa các thời điểm/điều kiện ({', '.join(names)}) có ý nghĩa thống kê (kiểm định Friedman, χ² = {_fmt_np_val(fr_stat)}, df = {df_fr}, {p_str}).")
+            else:
+                st.info(f"**Kết luận:** Sự khác biệt giữa các thời điểm/điều kiện ({', '.join(names)}) không có ý nghĩa thống kê (kiểm định Friedman, χ² = {_fmt_np_val(fr_stat)}, df = {df_fr}, {p_str}).")
+
         st.markdown("## Quantitative Tests — Nonparametric Tests")
-        _show_template_downloads("nonparam")
-        up = st.file_uploader("Upload nonparametric data (XLSX/CSV)", type=["xlsx", "csv"], key="nonparam_upload")
-        if up is not None:
-            df = load_uploaded_file(up)
-            st.dataframe(df.head(30), use_container_width=True)
-            numeric_cols = numeric_candidate_cols(df)
-            test_type = st.radio("Test", ["Mann-Whitney U", "Wilcoxon signed-rank (paired)", "Kruskal-Wallis", "Friedman"])
-            if test_type == "Mann-Whitney U":
-                v_col = st.selectbox("Test variable", numeric_cols)
-                g_col = st.selectbox("Grouping variable", categorical_candidate_cols(df, exclude=[v_col]))
-                g1, g2 = level_selector(df, g_col, "mw_test")
-                if st.button("Run Mann-Whitney U", type="primary", use_container_width=True):
-                    x1 = pd.to_numeric(df.loc[df[g_col].astype(str) == g1, v_col], errors="coerce").dropna().values
-                    x2 = pd.to_numeric(df.loc[df[g_col].astype(str) == g2, v_col], errors="coerce").dropna().values
-                    stat, p = stats.mannwhitneyu(x1, x2, alternative="two-sided")
-                    out = nonparam_result_table("Mann-Whitney U Test", stat, p)
-                    show_table(out, "Test Statistics")
-                    download_table_block(out, "mann_whitney_u", "Mann-Whitney U Test")
-            elif test_type == "Wilcoxon signed-rank (paired)":
-                c1, c2 = st.columns(2)
-                with c1: col1 = st.selectbox("Variable 1", numeric_cols)
-                with c2: col2 = st.selectbox("Variable 2", [c for c in numeric_cols if c != col1])
-                if st.button("Run Wilcoxon Test", type="primary", use_container_width=True):
-                    d = paired_numeric_data(df, col1, col2)
-                    stat, p = stats.wilcoxon(d[col1].values, d[col2].values, zero_method="wilcox", alternative="two-sided")
-                    out = nonparam_result_table("Wilcoxon Signed-Rank Test", stat, p)
-                    show_table(out, "Test Statistics")
-                    download_table_block(out, "wilcoxon_paired", "Wilcoxon Test")
-            elif test_type == "Kruskal-Wallis":
-                v_col = st.selectbox("Test variable", numeric_cols)
-                g_col = st.selectbox("Grouping variable", categorical_candidate_cols(df, exclude=[v_col]))
-                if st.button("Run Kruskal-Wallis", type="primary", use_container_width=True):
-                    d = long_numeric_group_data(df, v_col, g_col)
-                    groups = [v[v_col].astype(float).values for _, v in d.groupby(g_col)]
-                    stat, p = stats.kruskal(*groups)
-                    out = nonparam_result_table("Kruskal-Wallis Test", stat, p)
-                    show_table(out, "Test Statistics")
-                    download_table_block(out, "kruskal_wallis", "Kruskal-Wallis")
-            elif test_type == "Friedman":
-                sub_col = selectbox_default("Subject ID", list(df.columns), default_subject_col(df))
-                val_col = selectbox_default("Test variable", numeric_cols, default_numeric_col(df))
-                win_col = selectbox_default("Within-subject factor", categorical_candidate_cols(df, exclude=[sub_col, val_col]))
-                if st.button("Run Friedman Test", type="primary", use_container_width=True):
-                    d = df[[sub_col, win_col, val_col]].dropna()
-                    wide = d.pivot_table(index=sub_col, columns=win_col, values=val_col, aggfunc="mean").dropna()
-                    stat, p = stats.friedmanchisquare(*[wide[c].values for c in wide.columns])
-                    out = nonparam_result_table("Friedman Test", stat, p)
-                    show_table(out, "Test Statistics")
-                    download_table_block(out, "friedman_test", "Friedman Test")
+        np_source = st.radio(
+            "Nguồn dữ liệu:",
+            ["Dán / Nhập dữ liệu trực tiếp", "Tải file dữ liệu (XLSX/CSV)"],
+            horizontal=True,
+            key="nonparam_input_source"
+        )
+
+        # ======================================================================
+        # CHẾ ĐỘ 1: DÁN / NHẬP DỮ LIỆU TRỰC TIẾP
+        # ======================================================================
+        if np_source == "Dán / Nhập dữ liệu trực tiếp":
+            np_test_paste = st.radio(
+                "Chọn kiểm định phi tham số:",
+                [
+                    "Mann-Whitney U (2 mẫu độc lập)",
+                    "Kruskal-Wallis (≥ 2 mẫu độc lập)",
+                    "Wilcoxon Signed-Rank (Ghép cặp)",
+                    "Friedman (Đo lường lặp lại)"
+                ],
+                horizontal=True,
+                key="nonparam_paste_type"
+            )
+
+            # 1. MANN-WHITNEY U
+            if np_test_paste == "Mann-Whitney U (2 mẫu độc lập)":
+                mw_mode = st.radio(
+                    "Cách nhập dữ liệu:",
+                    [
+                        "Dán 2 ô riêng biệt (Mẫu 1 & Mẫu 2)",
+                        "Dán 2 cột tương ứng từ Excel vào 1 ô"
+                    ],
+                    horizontal=True,
+                    key="mw_paste_mode"
+                )
+                if mw_mode == "Dán 2 ô riêng biệt (Mẫu 1 & Mẫu 2)":
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        txt_mw1 = st.text_area("Dữ liệu Mẫu 1 (cách nhau khoảng trắng, ';', ','):", height=120, key="mw_g1")
+                    with c2:
+                        txt_mw2 = st.text_area("Dữ liệu Mẫu 2 (cách nhau khoảng trắng, ';', ','):", height=120, key="mw_g2")
+                    s1, s2 = _np_parse_1d(txt_mw1), _np_parse_1d(txt_mw2)
+                    nm1, nm2 = "Sample 1", "Sample 2"
+                else:
+                    txt_mw_2col = st.text_area("Dán 2 cột từ Excel (Cột 1: Mẫu 1, Cột 2: Mẫu 2):", height=140, key="mw_2col")
+                    hdrs, cols = _np_parse_multicol(txt_mw_2col, listwise=False)
+                    s1 = cols[0] if len(cols) >= 1 else np.array([])
+                    s2 = cols[1] if len(cols) >= 2 else np.array([])
+                    nm1 = hdrs[0] if len(hdrs) >= 1 else "Sample 1"
+                    nm2 = hdrs[1] if len(hdrs) >= 2 else "Sample 2"
+
+                if st.button("Run Mann-Whitney U Test", type="primary", use_container_width=True, key="btn_paste_mw"):
+                    if len(s1) < 2 or len(s2) < 2:
+                        st.warning("Vui lòng nhập ít nhất 2 giá trị hợp lệ cho mỗi mẫu.")
+                    else:
+                        _run_mann_whitney(nm1, s1, nm2, s2)
+
+            # 2. KRUSKAL-WALLIS
+            elif np_test_paste == "Kruskal-Wallis (≥ 2 mẫu độc lập)":
+                kw_mode = st.radio(
+                    "Cách nhập dữ liệu:",
+                    [
+                        "Dán nhiều cột từ Excel vào 1 ô (mỗi cột là 1 nhóm)",
+                        "Dán từng ô riêng biệt cho mỗi nhóm"
+                    ],
+                    horizontal=True,
+                    key="kw_paste_mode"
+                )
+                groups_kw = []
+                if kw_mode == "Dán nhiều cột từ Excel vào 1 ô (mỗi cột là 1 nhóm)":
+                    txt_kw_multi = st.text_area(
+                        "Dán dữ liệu nhiều cột từ Excel (mỗi cột là một nhóm độc lập, cho phép cỡ mẫu không bằng nhau):",
+                        height=150,
+                        key="kw_multicol_txt"
+                    )
+                    hdrs, cols = _np_parse_multicol(txt_kw_multi, listwise=False)
+                    groups_kw = [(hdrs[j], cols[j]) for j in range(len(cols)) if len(cols[j]) > 0]
+                else:
+                    k_groups = st.number_input("Số nhóm độc lập (k):", min_value=2, max_value=10, value=3, step=1, key="kw_k_num")
+                    cols_ui = st.columns(min(int(k_groups), 4))
+                    for j in range(int(k_groups)):
+                        with cols_ui[j % len(cols_ui)]:
+                            txt_g = st.text_area(f"Nhóm {j+1}:", height=110, key=f"kw_box_{j}")
+                            arr_g = _np_parse_1d(txt_g)
+                            if len(arr_g) > 0:
+                                groups_kw.append((f"Group {j+1}", arr_g))
+
+                if st.button("Run Kruskal-Wallis Test", type="primary", use_container_width=True, key="btn_paste_kw"):
+                    if len(groups_kw) < 2 or any(len(arr) < 1 for _, arr in groups_kw):
+                        st.warning("Vui lòng nhập dữ liệu hợp lệ cho ít nhất 2 nhóm.")
+                    else:
+                        _run_kruskal_wallis(groups_kw)
+
+            # 3. WILCOXON SIGNED-RANK (GHÉP CẶP)
+            elif np_test_paste == "Wilcoxon Signed-Rank (Ghép cặp)":
+                wx_mode = st.radio(
+                    "Cách nhập dữ liệu ghép cặp:",
+                    [
+                        "Dán 2 cột Trước, Sau (chép từ 2 cột Excel dán vào 1 ô)",
+                        "Dán 2 ô riêng biệt (Trước & Sau)",
+                        "Dán dãy hiệu số chênh lệch d (d = Sau - Trước)"
+                    ],
+                    horizontal=True,
+                    key="wx_paste_mode"
+                )
+                arr_pre, arr_post, arr_d = None, None, None
+                lbl_pre, lbl_post = "Before", "After"
+
+                if wx_mode == "Dán 2 cột Trước, Sau (chép từ 2 cột Excel dán vào 1 ô)":
+                    txt_wx_2col = st.text_area("Dán 2 cột từ Excel (Cột 1: Trước, Cột 2: Sau):", height=140, key="wx_2col")
+                    hdrs, cols = _np_parse_multicol(txt_wx_2col, listwise=True)
+                    arr_pre = cols[0] if len(cols) >= 1 else np.array([])
+                    arr_post = cols[1] if len(cols) >= 2 else np.array([])
+                    if len(hdrs) >= 2 and hdrs[0] != "Group 1":
+                        lbl_pre, lbl_post = hdrs[0], hdrs[1]
+                elif wx_mode == "Dán 2 ô riêng biệt (Trước & Sau)":
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        txt_wx_pre = st.text_area("Dữ liệu Trước (Before):", height=120, key="wx_pre")
+                    with c2:
+                        txt_wx_post = st.text_area("Dữ liệu Sau (After):", height=120, key="wx_post")
+                    arr_pre = _np_parse_1d(txt_wx_pre)
+                    arr_post = _np_parse_1d(txt_wx_post)
+                else:
+                    txt_wx_d = st.text_area(
+                        "Dán dãy hiệu số d = Sau - Trước (cách nhau khoảng trắng, dấu chấm phẩy ';' hoặc dấu phẩy ','):",
+                        height=120,
+                        key="wx_d"
+                    )
+                    arr_d = _np_parse_1d(txt_wx_d)
+
+                if st.button("Run Wilcoxon Signed-Rank Test", type="primary", use_container_width=True, key="btn_paste_wx"):
+                    if wx_mode != "Dán dãy hiệu số chênh lệch d (d = Sau - Trước)":
+                        if len(arr_pre) != len(arr_post):
+                            st.error(f"Số lượng quan sát không khớp: Cột Trước có {len(arr_pre)} số, Cột Sau có {len(arr_post)} số.")
+                        elif len(arr_pre) < 2:
+                            st.warning("Vui lòng nhập ít nhất 2 cặp dữ liệu hợp lệ.")
+                        else:
+                            arr_d = arr_post - arr_pre
+                            _run_wilcoxon_paired(arr_d, arr_pre, arr_post, lbl_pre, lbl_post, f"d = {lbl_post} - {lbl_pre}")
+                    else:
+                        if arr_d is None or len(arr_d) < 2:
+                            st.warning("Vui lòng nhập ít nhất 2 giá trị hiệu số d hợp lệ.")
+                        else:
+                            _run_wilcoxon_paired(arr_d, None, None, "Before", "After", "d = After - Before")
+
+            # 4. FRIEDMAN (ĐO LƯỜNG LẶP LẠI)
+            else:
+                fr_mode = st.radio(
+                    "Cách nhập dữ liệu đo lường lặp lại:",
+                    [
+                        "Dán nhiều cột từ Excel vào 1 ô (mỗi cột là 1 thời điểm/điều kiện)",
+                        "Dán từng ô riêng biệt cho mỗi thời điểm (T1, T2, T3...)"
+                    ],
+                    horizontal=True,
+                    key="fr_paste_mode"
+                )
+                conds_fr = []
+                if fr_mode == "Dán nhiều cột từ Excel vào 1 ô (mỗi cột là 1 thời điểm/điều kiện)":
+                    txt_fr_multi = st.text_area(
+                        "Dán bảng dữ liệu từ Excel (mỗi hàng là 1 đối tượng, mỗi cột là 1 thời điểm T1, T2, T3...):",
+                        height=150,
+                        key="fr_multicol_txt"
+                    )
+                    hdrs, cols = _np_parse_multicol(txt_fr_multi, listwise=True)
+                    if hdrs and hdrs[0] == "Group 1":
+                        hdrs = [f"T{j+1}" for j in range(len(cols))]
+                    conds_fr = [(hdrs[j], cols[j]) for j in range(len(cols)) if len(cols[j]) > 0]
+                else:
+                    k_times = st.number_input("Số thời điểm / điều kiện đo (k):", min_value=2, max_value=10, value=3, step=1, key="fr_k_num")
+                    cols_ui = st.columns(min(int(k_times), 4))
+                    raw_arrs = []
+                    for j in range(int(k_times)):
+                        with cols_ui[j % len(cols_ui)]:
+                            txt_t = st.text_area(f"Thời điểm T{j+1}:", height=110, key=f"fr_box_{j}")
+                            raw_arrs.append((f"T{j+1}", _np_parse_1d(txt_t)))
+                    if all(len(a) > 0 for _, a in raw_arrs):
+                        lengths = [len(a) for _, a in raw_arrs]
+                        if len(set(lengths)) > 1:
+                            st.error(f"Số lượng đối tượng ở các thời điểm không bằng nhau: {lengths}.")
+                        else:
+                            conds_fr = raw_arrs
+
+                if st.button("Run Friedman Test", type="primary", use_container_width=True, key="btn_paste_fr"):
+                    if len(conds_fr) < 2 or len(conds_fr[0][1]) < 2:
+                        st.warning("Vui lòng nhập ít nhất 2 thời điểm và tối thiểu 2 đối tượng đầy đủ số liệu.")
+                    else:
+                        _run_friedman(conds_fr)
+
+        # ======================================================================
+        # CHẾ ĐỘ 2: TẢI FILE DỮ LIỆU (GIỮ NGUYÊN CHỨC NĂNG CŨ + ĐỊNH DẠNG CHUẨN)
+        # ======================================================================
+        else:
+            _show_template_downloads("nonparam")
+            up = st.file_uploader("Upload nonparametric data (XLSX/CSV)", type=["xlsx", "csv"], key="nonparam_upload")
+            if up is not None:
+                df = load_uploaded_file(up)
+                st.dataframe(df.head(30), use_container_width=True)
+                numeric_cols = numeric_candidate_cols(df)
+                np_test_up = st.radio(
+                    "Test type",
+                    [
+                        "Mann-Whitney U test (2 independent groups)",
+                        "Kruskal-Wallis test (k independent groups)",
+                        "Wilcoxon signed-rank test (Paired samples)",
+                        "Friedman test (Repeated measures)"
+                    ],
+                    key="nonparam_up_type"
+                )
+                if np_test_up == "Mann-Whitney U test (2 independent groups)":
+                    v_col = st.selectbox("Test variable", numeric_cols, key="np_up_mw_v")
+                    g_col = st.selectbox("Grouping variable", categorical_candidate_cols(df, exclude=[v_col]), key="np_up_mw_g")
+                    g1, g2 = level_selector(df, g_col, "ind_mw")
+                    if st.button("Run Mann-Whitney U Test", type="primary", use_container_width=True, key="btn_up_mw"):
+                        s1 = numeric_series_from_df(df[df[g_col].astype(str) == str(g1)], v_col).values
+                        s2 = numeric_series_from_df(df[df[g_col].astype(str) == str(g2)], v_col).values
+                        if len(s1) < 2 or len(s2) < 2:
+                            st.warning("Mỗi nhóm cần ít nhất 2 quan sát hợp lệ.")
+                        else:
+                            _run_mann_whitney(str(g1), s1, str(g2), s2)
+
+                elif np_test_up == "Kruskal-Wallis test (k independent groups)":
+                    v_col = st.selectbox("Test variable", numeric_cols, key="np_up_kw_v")
+                    g_col = st.selectbox("Grouping variable", categorical_candidate_cols(df, exclude=[v_col]), key="np_up_kw_g")
+                    if st.button("Run Kruskal-Wallis Test", type="primary", use_container_width=True, key="btn_up_kw"):
+                        groups_up = []
+                        for lvl, grp_df in df.groupby(g_col, dropna=True):
+                            arr_g = numeric_series_from_df(grp_df, v_col).values
+                            if len(arr_g) > 0:
+                                groups_up.append((str(lvl), arr_g))
+                        if len(groups_up) < 2:
+                            st.warning("Cần ít nhất 2 nhóm có dữ liệu hợp lệ.")
+                        else:
+                            _run_kruskal_wallis(groups_up)
+
+                elif np_test_up == "Wilcoxon signed-rank test (Paired samples)":
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        col1 = st.selectbox("Variable 1 (Before)", numeric_cols, key="np_up_wx_c1")
+                    with c2:
+                        col2 = st.selectbox("Variable 2 (After)", [c for c in numeric_cols if c != col1], key="np_up_wx_c2")
+                    if st.button("Run Wilcoxon Signed-Rank Test", type="primary", use_container_width=True, key="btn_up_wx"):
+                        d = paired_numeric_data(df, col1, col2)
+                        if len(d) < 2:
+                            st.warning("Cần ít nhất 2 cặp dữ liệu hợp lệ.")
+                        else:
+                            arr1 = d[col1].values
+                            arr2 = d[col2].values
+                            _run_wilcoxon_paired(arr2 - arr1, arr1, arr2, str(col1), str(col2), f"d = {col2} - {col1}")
+
+                else:
+                    fmt_fr = st.radio("Data layout", ["Wide format (columns = time points)", "Long format (subject, time, value)"], horizontal=True, key="np_up_fr_fmt")
+                    if fmt_fr == "Wide format (columns = time points)":
+                        sel_cols = st.multiselect("Select time/condition columns (≥ 2)", numeric_cols, default=numeric_cols[:min(3, len(numeric_cols))], key="np_up_fr_cols")
+                        if st.button("Run Friedman Test", type="primary", use_container_width=True, key="btn_up_fr_wide"):
+                            if len(sel_cols) < 2:
+                                st.warning("Vui lòng chọn ít nhất 2 cột thời điểm.")
+                            else:
+                                sub_df = df[sel_cols].apply(pd.to_numeric, errors="coerce").dropna()
+                                if len(sub_df) < 2:
+                                    st.warning("Cần ít nhất 2 đối tượng có đủ số liệu ở tất cả các cột.")
+                                else:
+                                    conds_up = [(str(c), sub_df[c].values) for c in sel_cols]
+                                    _run_friedman(conds_up)
+                    else:
+                        all_cols = list(df.columns)
+                        c1, c2, c3 = st.columns(3)
+                        with c1:
+                            s_col = st.selectbox("Subject ID", all_cols, index=0, key="np_up_fr_s")
+                        with c2:
+                            t_col = st.selectbox("Time / Condition", [c for c in all_cols if c != s_col], index=0, key="np_up_fr_t")
+                        with c3:
+                            v_col = st.selectbox("Value", numeric_cols, key="np_up_fr_v")
+                        if st.button("Run Friedman Test", type="primary", use_container_width=True, key="btn_up_fr_long"):
+                            piv = df.pivot_table(index=s_col, columns=t_col, values=v_col, aggfunc="first").dropna()
+                            if piv.shape[1] < 2 or piv.shape[0] < 2:
+                                st.warning("Dữ liệu sau khi chuyển đổi cần ít nhất 2 thời điểm và 2 đối tượng hợp lệ.")
+                            else:
+                                conds_up = [(str(c), piv[c].values) for c in piv.columns]
+                                _run_friedman(conds_up)
 
     elif sub == "ANOVA":
         st.markdown("## Quantitative Tests — ANOVA")
