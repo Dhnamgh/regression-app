@@ -2934,7 +2934,7 @@ elif section == "Quantitative Tests":
             return f"p {s}" if s.startswith("<") else f"p = {s}"
 
         # ----------------------------------------------------------------------
-        # 2. HÀM PHÂN GIẢI DỮ LIỆU DÁN (1 DÃY SỐ HOẶC NHIỀU CỘT EXCEL)
+        # 2. CÁC HÀM PHÂN GIẢI DỮ LIỆU DÁN (1 CHIỀU, NHIỀU CỘT, 2 YẾU TỐ)
         # ----------------------------------------------------------------------
         def _av_parse_1d(text: str) -> np.ndarray:
             if not text or not str(text).strip():
@@ -3037,16 +3037,115 @@ elif section == "Quantitative Tests":
 
             return headers, [np.array(c, dtype=float) for c in cols]
 
+        def _av_parse_twoway_3cols(text: str):
+            """Tách dữ liệu 3 cột từ Excel: Factor A | Factor B | Value"""
+            if not text or not str(text).strip():
+                return None, "Factor A", "Factor B", "Value"
+            lines = [ln for ln in str(text).splitlines() if ln.strip()]
+            if not lines:
+                return None, "Factor A", "Factor B", "Value"
+
+            def split_r(ln):
+                if "\t" in ln:
+                    return [p.strip() for p in ln.split("\t")]
+                elif ";" in ln:
+                    return [p.strip() for p in ln.split(";")]
+                elif "," in ln:
+                    p_c = [p.strip() for p in ln.split(",")]
+                    if len(p_c) >= 3:
+                        return p_c
+                return [p.strip() for p in re.split(r"\s+", ln.strip()) if p.strip()]
+
+            rows = [r for r in (split_r(ln) for ln in lines) if len(r) >= 3]
+            if not rows:
+                return None, "Factor A", "Factor B", "Value"
+
+            first = rows[0]
+            has_header = False
+            try:
+                float(first[2].replace(",", "."))
+            except ValueError:
+                has_header = True
+
+            if has_header:
+                fa_name = first[0] if first[0] else "Factor A"
+                fb_name = first[1] if first[1] else "Factor B"
+                v_name = first[2] if first[2] else "Value"
+                data_rows = rows[1:]
+            else:
+                fa_name, fb_name, v_name = "Factor A", "Factor B", "Value"
+                data_rows = rows
+
+            records = []
+            for r in data_rows:
+                try:
+                    val = float(r[2].replace(",", "."))
+                    if r[0] != "" and r[1] != "":
+                        records.append({fa_name: r[0], fb_name: r[1], v_name: val})
+                except ValueError:
+                    continue
+
+            if not records:
+                return None, fa_name, fb_name, v_name
+            return pd.DataFrame(records), fa_name, fb_name, v_name
+
+        def _av_parse_twoway_crosstab(text: str, fb_label: str = "Factor B"):
+            """Tách dữ liệu bảng chéo 2 chiều từ Excel: Cột 1 = Factor A, các cột sau = mức của Factor B"""
+            if not text or not str(text).strip():
+                return None, "Factor A", fb_label, "Value"
+            lines = [ln for ln in str(text).splitlines() if ln.strip()]
+            if len(lines) < 2:
+                return None, "Factor A", fb_label, "Value"
+
+            def split_tab(ln):
+                if "\t" in ln:
+                    return [p.strip() for p in ln.split("\t")]
+                elif ";" in ln:
+                    return [p.strip() for p in ln.split(";")]
+                return [p.strip() for p in re.split(r"\s{2,}", ln.strip())]
+
+            header_parts = split_tab(lines[0])
+            if len(header_parts) < 3:
+                return None, "Factor A", fb_label, "Value"
+
+            fa_name = header_parts[0] if header_parts[0] else "Factor A"
+            b_levels = [h if h else f"B{j}" for j, h in enumerate(header_parts[1:], start=1)]
+
+            records = []
+            last_a = None
+            for ln in lines[1:]:
+                parts = split_tab(ln)
+                if len(parts) < 2:
+                    continue
+                a_val = parts[0] if parts[0] != "" else last_a
+                if a_val is None:
+                    continue
+                last_a = a_val
+                for j, b_lvl in enumerate(b_levels):
+                    if j + 1 < len(parts) and parts[j + 1] != "":
+                        cell_str = parts[j + 1]
+                        nums = re.findall(r"[-+]?\d*(?:[.,]\d+)?", cell_str)
+                        for num_s in nums:
+                            if num_s and num_s not in ["-", "+", ".", ","]:
+                                try:
+                                    v = float(num_s.replace(",", "."))
+                                    records.append({fa_name: a_val, fb_label: b_lvl, "Value": v})
+                                except ValueError:
+                                    pass
+
+            if not records:
+                return None, fa_name, fb_label, "Value"
+            return pd.DataFrame(records), fa_name, fb_label, "Value"
+
         # ----------------------------------------------------------------------
-        # 3. CÁC HÀM TÍNH TOÁN & KIỂM TRA ĐIỀU KIỆN CHO ONE-WAY ANOVA
+        # 3. PIPELINE ONE-WAY ANOVA + KIỂM TRA ĐIỀU KIỆN + PHÉP KIỂM THAY THẾ
         # ----------------------------------------------------------------------
         def _run_oneway_anova_pipeline(groups_list: list):
-            # groups_list: [(name, 1d_array), ...]
             names = [nm for nm, _ in groups_list]
             arrays = [arr for _, arr in groups_list]
             k = len(arrays)
 
-            # A. Bảng Thống kê mô tả (Parametric + Nonparametric)
+            # A. Bảng Thống kê mô tả
             desc_rows = []
             for nm, arr in groups_list:
                 n_g = len(arr)
@@ -3069,7 +3168,7 @@ elif section == "Quantitative Tests":
             show_table(desc_tbl, "Descriptives")
             download_table_block(desc_tbl, "anova_descriptives", "Descriptives")
 
-            # B. KIỂM TRA ĐIỀU KIỆN 1: PHÂN PHỐI CHUẨN (SHAPIRO-WILK)
+            # B. Điều kiện 1: Phân phối chuẩn (Shapiro-Wilk)
             norm_rows = []
             all_normal = True
             non_normal_groups = []
@@ -3111,7 +3210,7 @@ elif section == "Quantitative Tests":
             show_table(norm_tbl, "Điều kiện 1: Kiểm định phân phối chuẩn (Tests of Normality - Shapiro-Wilk)")
             download_table_block(norm_tbl, "anova_normality", "Tests of Normality")
 
-            # C. KIỂM TRA ĐIỀU KIỆN 2: PHƯƠNG SAI ĐỒNG NHẤT (LEVENE'S TEST)
+            # C. Điều kiện 2: Phương sai đồng nhất (Levene)
             f_lev, p_lev = stats.levene(*arrays)
             df1_lev = k - 1
             df2_lev = sum(len(a) for a in arrays) - k
@@ -3127,7 +3226,7 @@ elif section == "Quantitative Tests":
             show_table(lev_tbl, "Điều kiện 2: Kiểm định phương sai đồng nhất (Test of Homogeneity of Variances - Levene)")
             download_table_block(lev_tbl, "anova_levene", "Test of Homogeneity of Variances")
 
-            # D. LỰA CHỌN VÀ CHẠY PHÉP KIỂM ĐỊNH PHÙ HỢP DỰA TRÊN 2 ĐIỀU KIỆN
+            # D. Tính toán ANOVA chuẩn
             all_data = np.concatenate(arrays)
             N_tot = len(all_data)
             grand_mean = float(np.mean(all_data))
@@ -3149,16 +3248,13 @@ elif section == "Quantitative Tests":
                 {"Source": "Total", "Sum of Squares": ss_total, "df": df_total, "Mean Square": "", "F": "", "Sig.": "", "Eta-squared (η²)": ""}
             ]))
 
-            # ------------------------------------------------------------------
-            # NHÁNH 1: THỎA CẢ 2 ĐIỀU KIỆN (CHUẨN & PHƯƠNG SAI ĐỒNG NHẤT) -> ANOVA CHUẨN
-            # ------------------------------------------------------------------
+            # Nhánh 1: Thỏa 2 điều kiện -> One-way ANOVA chuẩn
             if all_normal and equal_var:
                 st.info("✅ **Đánh giá điều kiện:** Dữ liệu các nhóm đều tuân theo phân phối chuẩn (Shapiro-Wilk p > 0.05) và phương sai đồng nhất (Levene p ≥ 0.05) → **Sử dụng phép kiểm One-way ANOVA chuẩn (Fisher's F)**.")
                 show_table(anova_tbl, "ANOVA (One-Way)")
                 download_table_block(anova_tbl, "oneway_anova_results", "One-Way ANOVA")
 
                 if p_anova < 0.05 and k >= 3:
-                    # Post-hoc Tukey HSD
                     ph_rows = []
                     for i in range(k):
                         for j in range(i + 1, k):
@@ -3193,13 +3289,9 @@ elif section == "Quantitative Tests":
                 else:
                     st.info(f"**Kết luận:** Sự khác biệt về giá trị trung bình giữa các nhóm ({', '.join(names)}) không có ý nghĩa thống kê (kiểm định One-way ANOVA, F({df_between}, {df_within}) = {_fmt_av_val(f_anova)}, {p_str}).")
 
-            # ------------------------------------------------------------------
-            # NHÁNH 2: DỮ LIỆU CHUẨN NHƯNG PHƯƠNG SAI KHÔNG ĐỒNG NHẤT -> WELCH'S ANOVA
-            # ------------------------------------------------------------------
+            # Nhánh 2: Chuẩn nhưng phương sai không đồng nhất -> Welch's ANOVA
             elif all_normal and not equal_var:
                 st.warning(f"⚠️ **Đánh giá điều kiện:** Dữ liệu các nhóm có phân phối chuẩn nhưng **vi phạm điều kiện phương sai đồng nhất** (Levene {_fmt_av_p(float(p_lev))} < 0.05) → **Sử dụng phép kiểm thay thế Welch's ANOVA**.")
-
-                # Tính Welch's ANOVA
                 ns = np.array([len(a) for a in arrays], dtype=float)
                 means = np.array([np.mean(a) for a in arrays], dtype=float)
                 vars_ = np.array([np.var(a, ddof=1) for a in arrays], dtype=float)
@@ -3222,11 +3314,10 @@ elif section == "Quantitative Tests":
                 show_table(welch_tbl, "Robust Tests of Equality of Means (Welch's ANOVA — Phép kiểm thay thế)")
                 download_table_block(welch_tbl, "welch_anova_results", "Welch ANOVA")
 
-                with st.expander("Xem bảng One-way ANOVA tham chiếu (không hiệu chỉnh phương sai)"):
+                with st.expander("Xem bảng One-way ANOVA tham chiếu"):
                     show_table(anova_tbl, "ANOVA (Reference)")
 
                 if p_welch < 0.05 and k >= 3:
-                    # Games-Howell Post-hoc
                     gh_rows = []
                     for i in range(k):
                         for j in range(i + 1, k):
@@ -3263,9 +3354,7 @@ elif section == "Quantitative Tests":
                 else:
                     st.info(f"**Kết luận:** Sự khác biệt về giá trị trung bình giữa các nhóm ({', '.join(names)}) không có ý nghĩa thống kê (kiểm định thay thế Welch's ANOVA do phương sai không đồng nhất, F({_fmt_av_val(df1_w)}, {_fmt_av_val(df2_w)}) = {_fmt_av_val(f_welch)}, {p_str}).")
 
-            # ------------------------------------------------------------------
-            # NHÁNH 3: DỮ LIỆU KHÔNG PHÂN PHỐI CHUẨN -> KRUSKAL-WALLIS TEST
-            # ------------------------------------------------------------------
+            # Nhánh 3: Không phân phối chuẩn -> Kruskal-Wallis
             else:
                 reason_txt = f"nhóm không đạt phân phối chuẩn: {', '.join(non_normal_groups)}" if non_normal_groups else f"cỡ mẫu nhóm nhỏ (< 3): {', '.join(too_small_groups)}"
                 st.warning(f"⚠️ **Đánh giá điều kiện:** Vi phạm điều kiện phân phối chuẩn ({reason_txt}) → **Chuyển sang phép kiểm phi tham số thay thế Kruskal-Wallis H**.")
@@ -3298,7 +3387,6 @@ elif section == "Quantitative Tests":
                     show_table(anova_tbl, "ANOVA (Reference)")
 
                 if float(p_kw) < 0.05 and k >= 3:
-                    # Post-hoc Mann-Whitney U với hiệu chỉnh Bonferroni
                     n_pairs = k * (k - 1) / 2
                     pw_rows = []
                     for i in range(k):
@@ -3323,16 +3411,14 @@ elif section == "Quantitative Tests":
                     st.info(f"**Kết luận:** Sự khác biệt giữa các nhóm ({', '.join(names)}) không có ý nghĩa thống kê (kiểm định phi tham số thay thế Kruskal-Wallis do dữ liệu không phân phối chuẩn, H = {_fmt_av_val(float(kw_h))}, df = {df_kw}, {p_str}).")
 
         # ----------------------------------------------------------------------
-        # 4. HÀM TÍNH TOÁN & KIỂM TRA ĐIỀU KIỆN CHO REPEATED-MEASURES ANOVA
+        # 4. PIPELINE REPEATED-MEASURES ANOVA + KIỂM TRA ĐIỀU KIỆN + THAY THẾ
         # ----------------------------------------------------------------------
         def _run_rm_anova_pipeline(cond_list: list):
-            # cond_list: [(name, 1d_array_of_same_length_n), ...]
             names = [nm for nm, _ in cond_list]
             arrays = [arr for _, arr in cond_list]
             mat = np.column_stack(arrays)
             n_subj, k_cond = mat.shape
 
-            # A. Thống kê mô tả các thời điểm
             desc_rows = []
             for nm, arr in cond_list:
                 m_c = float(np.mean(arr))
@@ -3351,7 +3437,6 @@ elif section == "Quantitative Tests":
             show_table(desc_tbl, "Descriptive Statistics")
             download_table_block(desc_tbl, "rm_anova_desc", "Descriptive Statistics")
 
-            # B. KIỂM TRA ĐIỀU KIỆN 1: PHÂN PHỐI CHUẨN (SHAPIRO-WILK) CHO TỪNG THỜI ĐIỂM
             norm_rows = []
             all_normal = True
             non_normal_conds = []
@@ -3378,7 +3463,6 @@ elif section == "Quantitative Tests":
             show_table(norm_tbl, "Điều kiện 1: Kiểm định phân phối chuẩn (Tests of Normality - Shapiro-Wilk)")
             download_table_block(norm_tbl, "rm_anova_normality", "Tests of Normality")
 
-            # C. KIỂM TRA ĐIỀU KIỆN 2: TÍNH CẦU CỦA PHƯƠNG SAI SAI BIỆT (MAUCHLY'S TEST OF SPHERICITY)
             grand_mean = float(np.mean(mat))
             subj_means = np.mean(mat, axis=1, keepdims=True)
             cond_means = np.mean(mat, axis=0, keepdims=True)
@@ -3396,7 +3480,6 @@ elif section == "Quantitative Tests":
             p_rm = float(1.0 - stats.f.cdf(f_rm, df_cond, df_err)) if ms_err > 0 else 1.0
             eta_p2 = ss_cond / (ss_cond + ss_err) if (ss_cond + ss_err) > 0 else 0.0
 
-            # Tính Greenhouse-Geisser Epsilon & Mauchly's W
             S = np.cov(mat, rowvar=False, ddof=1)
             S_dc = S - np.mean(S, axis=1, keepdims=True) - np.mean(S, axis=0, keepdims=True) + np.mean(S)
             tr_S_dc = float(np.trace(S_dc))
@@ -3440,7 +3523,6 @@ elif section == "Quantitative Tests":
                 show_table(mauchly_tbl, "Điều kiện 2: Kiểm định tính cầu phương sai (Mauchly's Test of Sphericity)")
                 download_table_block(mauchly_tbl, "rm_anova_mauchly", "Mauchly Test of Sphericity")
 
-            # D. CHẠY PHÉP KIỂM ĐỊNH PHÙ HỢP
             if all_normal:
                 if sphericity_violated:
                     st.warning("⚠️ **Đánh giá điều kiện:** Dữ liệu các thời điểm phân phối chuẩn nhưng **vi phạm tính cầu phương sai (Mauchly p < 0.05)** → **Đọc kết quả hiệu chỉnh Greenhouse-Geisser**.")
@@ -3485,7 +3567,6 @@ elif section == "Quantitative Tests":
                 method_lbl = "Repeated-Measures ANOVA hiệu chỉnh Greenhouse-Geisser" if sphericity_violated else "Repeated-Measures ANOVA"
 
                 if active_p < 0.05 and k_cond >= 3:
-                    # Pairwise paired t-tests với hiệu chỉnh Bonferroni
                     n_pairs = k_cond * (k_cond - 1) / 2
                     pw_rows = []
                     for i in range(k_cond):
@@ -3517,7 +3598,6 @@ elif section == "Quantitative Tests":
                     st.info(f"**Kết luận:** Sự khác biệt giữa các thời điểm/điều kiện ({', '.join(names)}) không có ý nghĩa thống kê (kiểm định {method_lbl}, F({active_df1}, {active_df2}) = {_fmt_av_val(f_rm)}, {p_str}).")
 
             else:
-                # Vi phạm phân phối chuẩn -> Chuyển sang kiểm định phi tham số Friedman
                 reason_rm = f"thời điểm không đạt phân phối chuẩn: {', '.join(non_normal_conds)}" if non_normal_conds else "cỡ mẫu N < 3"
                 st.warning(f"⚠️ **Đánh giá điều kiện:** Vi phạm điều kiện phân phối chuẩn ({reason_rm}) → **Chuyển sang phép kiểm phi tham số thay thế Friedman Test**.")
 
@@ -3573,7 +3653,261 @@ elif section == "Quantitative Tests":
                     st.info(f"**Kết luận:** Sự khác biệt giữa các thời điểm/điều kiện ({', '.join(names)}) không có ý nghĩa thống kê (kiểm định phi tham số thay thế Friedman do dữ liệu không phân phối chuẩn, χ² = {_fmt_av_val(float(fr_stat))}, df = {df_fr}, {p_str}).")
 
         # ----------------------------------------------------------------------
-        # 5. GIAO DIỆN CHÍNH CỦA PHÂN HỆ ANOVA
+        # 5. PIPELINE TWO-WAY ANOVA + KIỂM TRA 2 ĐIỀU KIỆN + THAY THẾ SCHEIRER-RAY-HARE
+        # ----------------------------------------------------------------------
+        def _calc_twoway_type3(df_in: pd.DataFrame, fa_col: str, fb_col: str, v_col: str):
+            a_levels = sorted(df_in[fa_col].unique())
+            b_levels = sorted(df_in[fb_col].unique())
+            a_cnt = len(a_levels)
+            b_cnt = len(b_levels)
+            n_obs = len(df_in)
+            y = df_in[v_col].values
+            grand_mean = float(np.mean(y))
+            ss_total = float(np.sum((y - grand_mean) ** 2))
+
+            def effect_matrix(series, levels):
+                k = len(levels)
+                M = np.zeros((len(series), k - 1))
+                for idx, val in enumerate(series):
+                    pos = levels.index(val)
+                    if pos < k - 1:
+                        M[idx, pos] = 1.0
+                    else:
+                        M[idx, :] = -1.0
+                return M
+
+            Xa = effect_matrix(df_in[fa_col].tolist(), a_levels)
+            Xb = effect_matrix(df_in[fb_col].tolist(), b_levels)
+            Xab_cols = []
+            for i in range(Xa.shape[1]):
+                for j in range(Xb.shape[1]):
+                    Xab_cols.append((Xa[:, i] * Xb[:, j]).reshape(-1, 1))
+            Xab = np.hstack(Xab_cols) if Xab_cols else np.empty((n_obs, 0))
+            ones = np.ones((n_obs, 1))
+
+            def rss(X):
+                beta, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+                res = y - X @ beta
+                return float(np.sum(res ** 2)), res
+
+            X_full = np.hstack([ones, Xa, Xb, Xab])
+            rss_full, residuals = rss(X_full)
+
+            rss_no_a, _ = rss(np.hstack([ones, Xb, Xab]))
+            rss_no_b, _ = rss(np.hstack([ones, Xa, Xab]))
+            rss_no_ab, _ = rss(np.hstack([ones, Xa, Xb]))
+
+            ss_a = max(0.0, rss_no_a - rss_full)
+            ss_b = max(0.0, rss_no_b - rss_full)
+            ss_ab = max(0.0, rss_no_ab - rss_full)
+            ss_err = max(0.0, rss_full)
+
+            df_a = a_cnt - 1
+            df_b = b_cnt - 1
+            df_ab = df_a * df_b
+            df_err = n_obs - (a_cnt * b_cnt)
+
+            ms_a = ss_a / df_a if df_a > 0 else 0.0
+            ms_b = ss_b / df_b if df_b > 0 else 0.0
+            ms_ab = ss_ab / df_ab if df_ab > 0 else 0.0
+            ms_err = ss_err / df_err if df_err > 0 else 0.0
+
+            f_a = ms_a / ms_err if ms_err > 0 else 0.0
+            f_b = ms_b / ms_err if ms_err > 0 else 0.0
+            f_ab = ms_ab / ms_err if ms_err > 0 else 0.0
+
+            p_a = float(1.0 - stats.f.cdf(f_a, df_a, df_err)) if (df_a > 0 and df_err > 0) else 1.0
+            p_b = float(1.0 - stats.f.cdf(f_b, df_b, df_err)) if (df_b > 0 and df_err > 0) else 1.0
+            p_ab = float(1.0 - stats.f.cdf(f_ab, df_ab, df_err)) if (df_ab > 0 and df_err > 0) else 1.0
+
+            eta_a = ss_a / (ss_a + ss_err) if (ss_a + ss_err) > 0 else 0.0
+            eta_b = ss_b / (ss_b + ss_err) if (ss_b + ss_err) > 0 else 0.0
+            eta_ab = ss_ab / (ss_ab + ss_err) if (ss_ab + ss_err) > 0 else 0.0
+
+            return {
+                "ss_a": ss_a, "df_a": df_a, "ms_a": ms_a, "f_a": f_a, "p_a": p_a, "eta_a": eta_a,
+                "ss_b": ss_b, "df_b": df_b, "ms_b": ms_b, "f_b": f_b, "p_b": p_b, "eta_b": eta_b,
+                "ss_ab": ss_ab, "df_ab": df_ab, "ms_ab": ms_ab, "f_ab": f_ab, "p_ab": p_ab, "eta_ab": eta_ab,
+                "ss_err": ss_err, "df_err": df_err, "ms_err": ms_err,
+                "ss_tot": ss_total, "df_tot": n_obs - 1,
+                "residuals": residuals
+            }
+
+        def _run_twoway_anova_pipeline(df_raw: pd.DataFrame, fa_col: str, fb_col: str, v_col: str):
+            sub2 = df_raw[[fa_col, fb_col, v_col]].dropna().copy()
+            sub2[fa_col] = sub2[fa_col].astype(str).str.strip()
+            sub2[fb_col] = sub2[fb_col].astype(str).str.strip()
+            sub2[v_col] = pd.to_numeric(sub2[v_col], errors="coerce")
+            sub2 = sub2.dropna()
+
+            a_levels = sorted(sub2[fa_col].unique())
+            b_levels = sorted(sub2[fb_col].unique())
+            if len(a_levels) < 2 or len(b_levels) < 2:
+                st.warning("Mỗi yếu tố (Factor A và Factor B) cần có ít nhất 2 mức (nhóm) khác nhau.")
+                return
+            if len(sub2) <= len(a_levels) * len(b_levels):
+                st.warning("Số quan sát cần lớn hơn số ô tổ hợp (Factor A × Factor B) để tính sai số dư (Error df > 0).")
+                return
+
+            # A. Thống kê mô tả theo từng tổ hợp ô (Factor A × Factor B)
+            desc_rows = []
+            cell_arrays = []
+            for la in a_levels:
+                for lb in b_levels:
+                    vals = sub2[(sub2[fa_col] == la) & (sub2[fb_col] == lb)][v_col].values
+                    if len(vals) > 0:
+                        cell_arrays.append((f"{la} × {lb}", vals))
+                        q25, med, q75 = np.percentile(vals, [25, 50, 75])
+                        desc_rows.append({
+                            str(fa_col): la,
+                            str(fb_col): lb,
+                            "N": len(vals),
+                            "Mean": float(np.mean(vals)),
+                            "SD": float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0,
+                            "Median (IQR)": f"{_fmt_av_val(med)} ({_fmt_av_val(q25)}–{_fmt_av_val(q75)})"
+                        })
+            desc_2w = _fmt_av_df(pd.DataFrame(desc_rows))
+            show_table(desc_2w, "Descriptive Statistics (Theo từng tổ hợp Factor A × Factor B)")
+            download_table_block(desc_2w, "twoway_descriptives", "Descriptive Statistics")
+
+            # Tính Type III Two-Way ANOVA
+            tw_res = _calc_twoway_type3(sub2, fa_col, fb_col, v_col)
+            res_arr = tw_res["residuals"]
+
+            # B. KIỂM TRA ĐIỀU KIỆN 1: PHÂN PHỐI CHUẨN (SHAPIRO-WILK)
+            norm_rows = []
+            is_normal_2w = True
+            if len(res_arr) >= 3 and np.ptp(res_arr) > 0:
+                w_res, p_res = stats.shapiro(res_arr)
+                is_normal_2w = (float(p_res) > 0.05)
+                norm_rows.append({
+                    "Đối tượng kiểm định": "Phần dư mô hình (Model Residuals)",
+                    "Shapiro-Wilk Statistic": float(w_res),
+                    "df": len(res_arr),
+                    "Sig.": float(p_res),
+                    "Đánh giá": "Phân phối chuẩn (p > 0.05)" if is_normal_2w else "Không phân phối chuẩn (p ≤ 0.05)"
+                })
+            # Kiểm tra thêm từng ô tổ hợp nếu ô có N >= 3
+            for cell_lbl, vals in cell_arrays:
+                if len(vals) >= 3 and np.ptp(vals) > 0:
+                    w_c, p_c = stats.shapiro(vals)
+                    norm_rows.append({
+                        "Đối tượng kiểm định": f"Ô tổ hợp: {cell_lbl}",
+                        "Shapiro-Wilk Statistic": float(w_c),
+                        "df": len(vals),
+                        "Sig.": float(p_c),
+                        "Đánh giá": "Phân phối chuẩn (p > 0.05)" if p_c > 0.05 else "Không phân phối chuẩn (p ≤ 0.05)"
+                    })
+            if norm_rows:
+                norm_2w_tbl = _fmt_av_df(pd.DataFrame(norm_rows))
+                show_table(norm_2w_tbl, "Điều kiện 1: Kiểm định phân phối chuẩn (Tests of Normality - Shapiro-Wilk)")
+                download_table_block(norm_2w_tbl, "twoway_normality", "Tests of Normality")
+
+            # C. KIỂM TRA ĐIỀU KIỆN 2: PHƯƠNG SAI ĐỒNG NHẤT GIỮA CÁC Ô (LEVENE'S TEST)
+            valid_cells = [vals for _, vals in cell_arrays if len(vals) >= 2]
+            equal_var_2w = True
+            p_lev2 = 1.0
+            if len(valid_cells) >= 2:
+                f_lev2, p_lev2 = stats.levene(*valid_cells)
+                df1_l2 = len(valid_cells) - 1
+                df2_l2 = sum(len(v) for v in valid_cells) - len(valid_cells)
+                equal_var_2w = (float(p_lev2) >= 0.05)
+                lev_2w_tbl = _fmt_av_df(pd.DataFrame([{
+                    "Levene Statistic": float(f_lev2),
+                    "df1": df1_l2,
+                    "df2": df2_l2,
+                    "Sig.": float(p_lev2),
+                    "Đánh giá": "Phương sai đồng nhất (p ≥ 0.05)" if equal_var_2w else "Phương sai KHÔNG đồng nhất (p < 0.05)"
+                }]))
+                show_table(lev_2w_tbl, "Điều kiện 2: Kiểm định phương sai đồng nhất các ô tổ hợp (Levene's Test)")
+                download_table_block(lev_2w_tbl, "twoway_levene", "Test of Homogeneity of Variances")
+
+            # Bảng Two-Way ANOVA chuẩn (Type III)
+            anova_2w_tbl = _fmt_av_df(pd.DataFrame([
+                {"Source": str(fa_col), "Sum of Squares": tw_res["ss_a"], "df": tw_res["df_a"], "Mean Square": tw_res["ms_a"], "F": tw_res["f_a"], "Sig.": tw_res["p_a"], "Partial Eta Squared (ηp²)": tw_res["eta_a"]},
+                {"Source": str(fb_col), "Sum of Squares": tw_res["ss_b"], "df": tw_res["df_b"], "Mean Square": tw_res["ms_b"], "F": tw_res["f_b"], "Sig.": tw_res["p_b"], "Partial Eta Squared (ηp²)": tw_res["eta_b"]},
+                {"Source": f"{fa_col} * {fb_col}", "Sum of Squares": tw_res["ss_ab"], "df": tw_res["df_ab"], "Mean Square": tw_res["ms_ab"], "F": tw_res["f_ab"], "Sig.": tw_res["p_ab"], "Partial Eta Squared (ηp²)": tw_res["eta_ab"]},
+                {"Source": "Error", "Sum of Squares": tw_res["ss_err"], "df": tw_res["df_err"], "Mean Square": tw_res["ms_err"], "F": "", "Sig.": "", "Partial Eta Squared (ηp²)": ""},
+                {"Source": "Total", "Sum of Squares": tw_res["ss_tot"], "df": tw_res["df_tot"], "Mean Square": "", "F": "", "Sig.": "", "Partial Eta Squared (ηp²)": ""}
+            ]))
+
+            # D. CHỌN PHÉP KIỂM PHÙ HỢP DỰA TRÊN 2 ĐIỀU KIỆN
+            if is_normal_2w and equal_var_2w:
+                st.info("✅ **Đánh giá điều kiện:** Phần dư mô hình đạt phân phối chuẩn (Shapiro-Wilk p > 0.05) và phương sai các ô tổ hợp đồng nhất (Levene p ≥ 0.05) → **Sử dụng phép kiểm Two-way ANOVA chuẩn (Type III)**.")
+                show_table(anova_2w_tbl, "Tests of Between-Subjects Effects (Two-Way ANOVA)")
+                download_table_block(anova_2w_tbl, "twoway_anova_results", "Two-Way ANOVA")
+
+                # Kết luận chi tiết 3 tác động
+                c_a = f"- **Tác động chính của {fa_col}:** " + (
+                    f"Có ý nghĩa thống kê (F({tw_res['df_a']}, {tw_res['df_err']}) = {_fmt_av_val(tw_res['f_a'])}, {_fmt_av_p(tw_res['p_a'])}, ηp² = {_fmt_av_val(tw_res['eta_a'])})."
+                    if tw_res["p_a"] < 0.05 else
+                    f"Không có ý nghĩa thống kê (F({tw_res['df_a']}, {tw_res['df_err']}) = {_fmt_av_val(tw_res['f_a'])}, {_fmt_av_p(tw_res['p_a'])})."
+                )
+                c_b = f"- **Tác động chính của {fb_col}:** " + (
+                    f"Có ý nghĩa thống kê (F({tw_res['df_b']}, {tw_res['df_err']}) = {_fmt_av_val(tw_res['f_b'])}, {_fmt_av_p(tw_res['p_b'])}, ηp² = {_fmt_av_val(tw_res['eta_b'])})."
+                    if tw_res["p_b"] < 0.05 else
+                    f"Không có ý nghĩa thống kê (F({tw_res['df_b']}, {tw_res['df_err']}) = {_fmt_av_val(tw_res['f_b'])}, {_fmt_av_p(tw_res['p_b'])})."
+                )
+                c_ab = f"- **Tác động tương tác ({fa_col} × {fb_col}):** " + (
+                    f"Có ý nghĩa thống kê (F({tw_res['df_ab']}, {tw_res['df_err']}) = {_fmt_av_val(tw_res['f_ab'])}, {_fmt_av_p(tw_res['p_ab'])}, ηp² = {_fmt_av_val(tw_res['eta_ab'])})."
+                    if tw_res["p_ab"] < 0.05 else
+                    f"Không có ý nghĩa thống kê (F({tw_res['df_ab']}, {tw_res['df_err']}) = {_fmt_av_val(tw_res['f_ab'])}, {_fmt_av_p(tw_res['p_ab'])})."
+                )
+                st.success(f"**Kết luận phân tích phương sai 2 yếu tố (Two-way ANOVA):**\n\n{c_a}\n\n{c_b}\n\n{c_ab}")
+
+            else:
+                # Vi phạm điều kiện -> Phép kiểm phi tham số thay thế Scheirer-Ray-Hare Test
+                viol_reasons = []
+                if not is_normal_2w:
+                    viol_reasons.append("vi phạm phân phối chuẩn (Shapiro-Wilk p ≤ 0.05)")
+                if not equal_var_2w:
+                    viol_reasons.append(f"vi phạm phương sai đồng nhất (Levene {_fmt_av_p(float(p_lev2))} < 0.05)")
+                st.warning(f"⚠️ **Đánh giá điều kiện:** Dữ liệu {' và '.join(viol_reasons)} → **Chuyển sang phép kiểm phi tham số thay thế Scheirer-Ray-Hare Test (Two-way ANOVA trên hạng)**.")
+
+                sub_rank = sub2.copy()
+                sub_rank["__rank__"] = stats.rankdata(sub_rank[v_col].values)
+                rk_res = _calc_twoway_type3(sub_rank, fa_col, fb_col, "__rank__")
+                n_obs_r = len(sub_rank)
+                ms_tot_r = rk_res["ss_tot"] / (n_obs_r - 1) if n_obs_r > 1 else 1.0
+
+                h_a = rk_res["ss_a"] / ms_tot_r if ms_tot_r > 0 else 0.0
+                h_b = rk_res["ss_b"] / ms_tot_r if ms_tot_r > 0 else 0.0
+                h_ab = rk_res["ss_ab"] / ms_tot_r if ms_tot_r > 0 else 0.0
+
+                p_ha = float(1.0 - stats.chi2.cdf(h_a, rk_res["df_a"])) if rk_res["df_a"] > 0 else 1.0
+                p_hb = float(1.0 - stats.chi2.cdf(h_b, rk_res["df_b"])) if rk_res["df_b"] > 0 else 1.0
+                p_hab = float(1.0 - stats.chi2.cdf(h_ab, rk_res["df_ab"])) if rk_res["df_ab"] > 0 else 1.0
+
+                srh_tbl = _fmt_av_df(pd.DataFrame([
+                    {"Source": str(fa_col), "Sum of Squares (Ranks)": rk_res["ss_a"], "df": rk_res["df_a"], "H Statistic": h_a, "Sig. (Chi-Square)": p_ha},
+                    {"Source": str(fb_col), "Sum of Squares (Ranks)": rk_res["ss_b"], "df": rk_res["df_b"], "H Statistic": h_b, "Sig. (Chi-Square)": p_hb},
+                    {"Source": f"{fa_col} * {fb_col}", "Sum of Squares (Ranks)": rk_res["ss_ab"], "df": rk_res["df_ab"], "H Statistic": h_ab, "Sig. (Chi-Square)": p_hab}
+                ]))
+                show_table(srh_tbl, "Scheirer-Ray-Hare Test (Two-Way Nonparametric ANOVA — Phép kiểm thay thế)")
+                download_table_block(srh_tbl, "scheirer_ray_hare_results", "Scheirer-Ray-Hare Test")
+
+                with st.expander("Xem bảng Two-way ANOVA tham chiếu"):
+                    show_table(anova_2w_tbl, "Tests of Between-Subjects Effects (Reference)")
+
+                c_a = f"- **Tác động chính của {fa_col}:** " + (
+                    f"Có ý nghĩa thống kê (H = {_fmt_av_val(h_a)}, df = {rk_res['df_a']}, {_fmt_av_p(p_ha)})."
+                    if p_ha < 0.05 else
+                    f"Không có ý nghĩa thống kê (H = {_fmt_av_val(h_a)}, df = {rk_res['df_a']}, {_fmt_av_p(p_ha)})."
+                )
+                c_b = f"- **Tác động chính của {fb_col}:** " + (
+                    f"Có ý nghĩa thống kê (H = {_fmt_av_val(h_b)}, df = {rk_res['df_b']}, {_fmt_av_p(p_hb)})."
+                    if p_hb < 0.05 else
+                    f"Không có ý nghĩa thống kê (H = {_fmt_av_val(h_b)}, df = {rk_res['df_b']}, {_fmt_av_p(p_hb)})."
+                )
+                c_ab = f"- **Tác động tương tác ({fa_col} × {fb_col}):** " + (
+                    f"Có ý nghĩa thống kê (H = {_fmt_av_val(h_ab)}, df = {rk_res['df_ab']}, {_fmt_av_p(p_hab)})."
+                    if p_hab < 0.05 else
+                    f"Không có ý nghĩa thống kê (H = {_fmt_av_val(h_ab)}, df = {rk_res['df_ab']}, {_fmt_av_p(p_hab)})."
+                )
+                st.success(f"**Kết luận phân tích phi tham số 2 yếu tố (Scheirer-Ray-Hare Test):**\n\n{c_a}\n\n{c_b}\n\n{c_ab}")
+
+        # ----------------------------------------------------------------------
+        # 6. GIAO DIỆN CHÍNH CỦA PHÂN HỆ ANOVA
         # ----------------------------------------------------------------------
         st.markdown("## Quantitative Tests — ANOVA")
         av_source = st.radio(
@@ -3584,14 +3918,15 @@ elif section == "Quantitative Tests":
         )
 
         # ======================================================================
-        # CHẾ ĐỘ 1: DÁN / NHẬP DỮ LIỆU TRỰC TIẾP
+        # CHẾ ĐỘ 1: DÁN / NHẬP DỮ LIỆU TRỰC TIẾP (ĐẦY ĐỦ 1 YẾU TỐ, LẶP LẠI, 2 YẾU TỐ)
         # ======================================================================
         if av_source == "Dán / Nhập dữ liệu trực tiếp":
             av_type_paste = st.radio(
                 "Chọn dạng phân tích phương sai:",
                 [
                     "One-way ANOVA (Phân tích phương sai 1 yếu tố)",
-                    "Repeated-Measures ANOVA (Phân tích phương sai đo lường lặp lại)"
+                    "Repeated-Measures ANOVA (Phân tích phương sai đo lường lặp lại)",
+                    "Two-way ANOVA (Phân tích phương sai 2 yếu tố)"
                 ],
                 horizontal=True,
                 key="anova_paste_type"
@@ -3634,7 +3969,7 @@ elif section == "Quantitative Tests":
                         _run_oneway_anova_pipeline(groups_ow)
 
             # 2. REPEATED-MEASURES ANOVA
-            else:
+            elif av_type_paste == "Repeated-Measures ANOVA (Phân tích phương sai đo lường lặp lại)":
                 rm_mode = st.radio(
                     "Cách nhập dữ liệu đo lường lặp lại:",
                     [
@@ -3675,6 +4010,41 @@ elif section == "Quantitative Tests":
                         st.warning("Vui lòng nhập ít nhất 2 thời điểm và tối thiểu 2 đối tượng đầy đủ số liệu.")
                     else:
                         _run_rm_anova_pipeline(conds_rm)
+
+            # 3. TWO-WAY ANOVA
+            else:
+                tw_mode = st.radio(
+                    "Cách nhập dữ liệu 2 yếu tố:",
+                    [
+                        "Dán 3 cột từ Excel (Factor A | Factor B | Value)",
+                        "Dán bảng chéo 2 chiều từ Excel (Cột 1 = Factor A, các cột sau = mức Factor B)"
+                    ],
+                    horizontal=True,
+                    key="anova_tw_mode"
+                )
+                df_tw_parsed, fa_nm, fb_nm, v_nm = None, "Factor A", "Factor B", "Value"
+
+                if tw_mode == "Dán 3 cột từ Excel (Factor A | Factor B | Value)":
+                    txt_tw_3c = st.text_area(
+                        "Dán 3 cột từ Excel (Cột 1: Yếu tố A, Cột 2: Yếu tố B, Cột 3: Giá trị định lượng):",
+                        height=160,
+                        key="anova_tw_3c_txt"
+                    )
+                    df_tw_parsed, fa_nm, fb_nm, v_nm = _av_parse_twoway_3cols(txt_tw_3c)
+                else:
+                    fb_custom_name = st.text_input("Tên Yếu tố B (đại diện cho các cột):", value="Factor B", key="anova_tw_fb_name")
+                    txt_tw_ct = st.text_area(
+                        "Dán bảng chéo từ Excel (Dòng 1: Tên yếu tố A và tên các mức yếu tố B; các dòng sau là mức A và các giá trị):",
+                        height=160,
+                        key="anova_tw_ct_txt"
+                    )
+                    df_tw_parsed, fa_nm, fb_nm, v_nm = _av_parse_twoway_crosstab(txt_tw_ct, fb_label=fb_custom_name.strip() or "Factor B")
+
+                if st.button("Run Two-Way ANOVA", type="primary", use_container_width=True, key="btn_paste_tw_anova"):
+                    if df_tw_parsed is None or len(df_tw_parsed) < 4:
+                        st.warning("Vui lòng dán đầy đủ dữ liệu hợp lệ cho Two-way ANOVA (ít nhất 2 mức cho mỗi yếu tố).")
+                    else:
+                        _run_twoway_anova_pipeline(df_tw_parsed, fa_nm, fb_nm, v_nm)
 
         # ======================================================================
         # CHẾ ĐỘ 2: TẢI FILE DỮ LIỆU (GIỮ NGUYÊN TEMPLATE & ĐẦY ĐỦ KIỂM TRA ĐIỀU KIỆN)
@@ -3747,99 +4117,7 @@ elif section == "Quantitative Tests":
                     with c2:
                         fb_col = st.selectbox("Factor B", [c for c in cat_cols if c != fa_col], index=0, key="av_up_2w_b")
                     if st.button("Run Two-Way ANOVA", type="primary", use_container_width=True, key="btn_up_2w"):
-                        sub2 = df[[fa_col, fb_col, v_col]].dropna().copy()
-                        sub2[v_col] = pd.to_numeric(sub2[v_col], errors="coerce")
-                        sub2 = sub2.dropna()
-                        if len(sub2) < 4:
-                            st.warning("Không đủ dữ liệu hợp lệ cho Two-way ANOVA.")
-                        else:
-                            # Kiểm tra phân phối chuẩn phần dư & Levene theo tổ hợp ô (Factor A * Factor B)
-                            cell_groups = []
-                            residuals = []
-                            for (la, lb), grp in sub2.groupby([fa_col, fb_col]):
-                                vals = grp[v_col].values
-                                if len(vals) > 0:
-                                    cell_groups.append((f"{la} × {lb}", vals))
-                                    residuals.extend(vals - np.mean(vals))
-                            res_arr = np.array(residuals, dtype=float)
-                            if len(res_arr) >= 3 and np.ptp(res_arr) > 0:
-                                w_res, p_res = stats.shapiro(res_arr)
-                                norm_2w = _fmt_av_df(pd.DataFrame([{
-                                    "Variable": "Residuals",
-                                    "Shapiro-Wilk Statistic": float(w_res),
-                                    "df": len(res_arr),
-                                    "Sig.": float(p_res),
-                                    "Đánh giá": "Phân phối chuẩn (p > 0.05)" if p_res > 0.05 else "Không phân phối chuẩn (p ≤ 0.05)"
-                                }]))
-                                show_table(norm_2w, "Điều kiện 1: Kiểm định phân phối chuẩn phần dư (Shapiro-Wilk)")
-
-                            valid_cells = [arr for _, arr in cell_groups if len(arr) >= 2]
-                            if len(valid_cells) >= 2:
-                                f_l2, p_l2 = stats.levene(*valid_cells)
-                                lev_2w = _fmt_av_df(pd.DataFrame([{
-                                    "Levene Statistic": float(f_l2),
-                                    "Sig.": float(p_l2),
-                                    "Đánh giá": "Phương sai đồng nhất (p ≥ 0.05)" if p_l2 >= 0.05 else "Phương sai KHÔNG đồng nhất (p < 0.05)"
-                                }]))
-                                show_table(lev_2w, "Điều kiện 2: Kiểm định phương sai đồng nhất các ô (Levene)")
-
-                            # Tính Type I / Balanced Two-Way ANOVA bằng hồi quy OLS
-                            a_levels = sorted(sub2[fa_col].astype(str).unique())
-                            b_levels = sorted(sub2[fb_col].astype(str).unique())
-                            y = sub2[v_col].values
-                            n_obs = len(y)
-                            grand_m = float(np.mean(y))
-                            ss_tot = float(np.sum((y - grand_m) ** 2))
-
-                            # Thiết kế ma trận giả (dummy coding)
-                            Xa = pd.get_dummies(sub2[fa_col].astype(str), drop_first=True, dtype=float).values
-                            Xb = pd.get_dummies(sub2[fb_col].astype(str), drop_first=True, dtype=float).values
-                            Xab_list = []
-                            for ia in range(Xa.shape[1]):
-                                for ib in range(Xb.shape[1]):
-                                    Xab_list.append((Xa[:, ia] * Xb[:, ib]).reshape(-1, 1))
-                            Xab = np.hstack(Xab_list) if Xab_list else np.empty((n_obs, 0))
-                            ones = np.ones((n_obs, 1))
-
-                            def _ss_reg(X_mat):
-                                beta, _, _, _ = np.linalg.lstsq(X_mat, y, rcond=None)
-                                y_hat = X_mat @ beta
-                                return float(np.sum((y_hat - grand_m) ** 2))
-
-                            ss_a = _ss_reg(np.hstack([ones, Xa]))
-                            ss_ab_main = _ss_reg(np.hstack([ones, Xa, Xb]))
-                            ss_b = max(0.0, ss_ab_main - ss_a)
-                            ss_full = _ss_reg(np.hstack([ones, Xa, Xb, Xab])) if Xab.shape[1] > 0 else ss_ab_main
-                            ss_inter = max(0.0, ss_full - ss_ab_main)
-                            ss_err2 = max(0.0, ss_tot - ss_full)
-
-                            df_a = len(a_levels) - 1
-                            df_b = len(b_levels) - 1
-                            df_inter = df_a * df_b
-                            df_err2 = n_obs - len(a_levels) * len(b_levels)
-
-                            ms_a = ss_a / df_a if df_a > 0 else 0.0
-                            ms_b = ss_b / df_b if df_b > 0 else 0.0
-                            ms_inter = ss_inter / df_inter if df_inter > 0 else 0.0
-                            ms_err2 = ss_err2 / df_err2 if df_err2 > 0 else 0.0
-
-                            fa_stat = ms_a / ms_err2 if ms_err2 > 0 else 0.0
-                            fb_stat = ms_b / ms_err2 if ms_err2 > 0 else 0.0
-                            fi_stat = ms_inter / ms_err2 if ms_err2 > 0 else 0.0
-
-                            pa_val = float(1.0 - stats.f.cdf(fa_stat, df_a, df_err2)) if (df_a > 0 and df_err2 > 0) else 1.0
-                            pb_val = float(1.0 - stats.f.cdf(fb_stat, df_b, df_err2)) if (df_b > 0 and df_err2 > 0) else 1.0
-                            pi_val = float(1.0 - stats.f.cdf(fi_stat, df_inter, df_err2)) if (df_inter > 0 and df_err2 > 0) else 1.0
-
-                            res_2w = _fmt_av_df(pd.DataFrame([
-                                {"Source": str(fa_col), "Sum of Squares": ss_a, "df": df_a, "Mean Square": ms_a, "F": fa_stat, "Sig.": pa_val},
-                                {"Source": str(fb_col), "Sum of Squares": ss_b, "df": df_b, "Mean Square": ms_b, "F": fb_stat, "Sig.": pb_val},
-                                {"Source": f"{fa_col} * {fb_col}", "Sum of Squares": ss_inter, "df": df_inter, "Mean Square": ms_inter, "F": fi_stat, "Sig.": pi_val},
-                                {"Source": "Error", "Sum of Squares": ss_err2, "df": df_err2, "Mean Square": ms_err2, "F": "", "Sig.": ""},
-                                {"Source": "Total", "Sum of Squares": ss_tot, "df": n_obs - 1, "Mean Square": "", "F": "", "Sig.": ""}
-                            ]))
-                            show_table(res_2w, "Tests of Between-Subjects Effects (Two-Way ANOVA)")
-                            download_table_block(res_2w, "twoway_anova_results", "Two-Way ANOVA")
+                        _run_twoway_anova_pipeline(df, fa_col, fb_col, v_col)
 
 # -----------------------------
 # CONFIDENCE INTERVALS — PROPORTION
