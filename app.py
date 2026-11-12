@@ -1767,43 +1767,432 @@ elif section == "Quantitative Tests":
                 st.download_button("Template: Two-way ANOVA", data=df_to_excel_bytes({"anova_2w": tpl}), file_name="anova_twoway_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
     if sub == "t Tests":
+        import re
+        from scipy import stats
+
+        # Hàm định dạng số: số nguyên hiện nguyên; mặc định 3 chữ số thập phân; nếu 3 số bằng 0 thì lấy 4-5 số
+        def _fmt_t_val(val):
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                return ""
+            if isinstance(val, (int, np.integer)):
+                return str(int(val))
+            if isinstance(val, (float, np.floating)):
+                v = float(val)
+                if abs(v - round(v)) < 1e-9:
+                    return str(int(round(v)))
+                if abs(round(v, 3)) > 0:
+                    return f"{v:.3f}"
+                if v == 0.0:
+                    return "0"
+                if abs(round(v, 4)) > 0:
+                    return f"{v:.4f}"
+                if abs(round(v, 5)) > 0:
+                    return f"{v:.5f}"
+                return "< 0.00001"
+            return str(val)
+
+        def _fmt_t_df(df_in: pd.DataFrame) -> pd.DataFrame:
+            df_out = df_in.copy()
+            for col in df_out.columns:
+                df_out[col] = df_out[col].apply(_fmt_t_val)
+            return df_out
+
+        # Hàm tách 1 dãy số (hỗ trợ khoảng trắng, dấu phẩy ',', chấm phẩy ';', xuống dòng)
+        def _parse_1d_nums(text: str) -> np.ndarray:
+            if not text or not str(text).strip():
+                return np.array([], dtype=float)
+            s = str(text).strip()
+            if ";" in s:
+                tokens = re.split(r"[;\s\n\t]+", s)
+                vals = []
+                for tok in tokens:
+                    tok = tok.strip().replace(",", ".")
+                    if tok:
+                        try:
+                            vals.append(float(tok))
+                        except ValueError:
+                            pass
+                return np.array(vals, dtype=float)
+            if "," in s:
+                if "." in s:
+                    s = s.replace(",", " ")
+                else:
+                    parts_ws = re.split(r"[\s\n\t]+", s)
+                    if len(parts_ws) > 1 and all(re.match(r"^[-+]?\d+,\d+$", t) for t in parts_ws if t):
+                        s = s.replace(",", ".")
+                    elif len(parts_ws) == 1 and re.match(r"^[-+]?\d+,\d+$", parts_ws[0]):
+                        s = s.replace(",", ".")
+                    else:
+                        s = s.replace(",", " ")
+            tokens = re.split(r"[\s\n\t]+", s)
+            vals = []
+            for tok in tokens:
+                tok = tok.strip()
+                if tok:
+                    try:
+                        vals.append(float(tok))
+                    except ValueError:
+                        pass
+            return np.array(vals, dtype=float)
+
+        # Hàm tách 2 cột chép từ Excel (Tab) hoặc phân tách bằng ';', ',', khoảng trắng
+        def _parse_2cols_nums(text: str, paired: bool = False):
+            if not text or not str(text).strip():
+                return np.array([], dtype=float), np.array([], dtype=float)
+            c1, c2 = [], []
+            for line in str(text).splitlines():
+                if not line.strip():
+                    continue
+                if "\t" in line:
+                    parts = line.split("\t")
+                elif ";" in line:
+                    parts = line.split(";")
+                elif "," in line:
+                    p_c = line.split(",")
+                    parts = p_c if len(p_c) == 2 else re.split(r"\s+", line.strip())
+                else:
+                    parts = re.split(r"\s+", line.strip())
+
+                v1_str = parts[0].strip().replace(",", ".") if len(parts) >= 1 else ""
+                v2_str = parts[1].strip().replace(",", ".") if len(parts) >= 2 else ""
+                v1, v2 = None, None
+                try:
+                    if v1_str != "":
+                        v1 = float(v1_str)
+                except ValueError:
+                    pass
+                try:
+                    if v2_str != "":
+                        v2 = float(v2_str)
+                except ValueError:
+                    pass
+
+                if paired:
+                    if v1 is not None and v2 is not None:
+                        c1.append(v1)
+                        c2.append(v2)
+                else:
+                    if v1 is not None:
+                        c1.append(v1)
+                    if v2 is not None:
+                        c2.append(v2)
+            return np.array(c1, dtype=float), np.array(c2, dtype=float)
+
         st.markdown("## Quantitative Tests — t Tests")
-        _show_template_downloads("ttest")
-        up = st.file_uploader("Upload t-test data (XLSX/CSV)", type=["xlsx", "csv"], key="ttest_upload")
-        if up is not None:
-            df = load_uploaded_file(up)
-            st.dataframe(df.head(30), use_container_width=True)
-            numeric_cols = numeric_candidate_cols(df)
-            test_type = st.radio("Test type", ["One-sample t test", "Independent-samples t test", "Paired-samples t test"])
-            if test_type == "One-sample t test":
-                v_col = st.selectbox("Test variable", numeric_cols)
-                mu_val = st.number_input("Test value (mu)", value=0.0)
-                if st.button("Run One-Sample t Test", type="primary", use_container_width=True):
-                    arr = numeric_series_from_df(df, v_col).values
-                    res_t = one_sample_ttest_table(arr, mu_val)
-                    show_table(res_t, "One-Sample Test")
-                    download_table_block(res_t, "one_sample_ttest", "One-Sample t Test")
-            elif test_type == "Independent-samples t test":
-                v_col = st.selectbox("Test variable", numeric_cols)
-                g_col = st.selectbox("Grouping variable", categorical_candidate_cols(df, exclude=[v_col]))
-                g1, g2 = level_selector(df, g_col, "ind_ttest")
-                if st.button("Run Independent-Samples t Test", type="primary", use_container_width=True):
-                    d = df[df[g_col].astype(str).isin([g1, g2])].copy()
-                    groups, lev_tbl, t_tbl = independent_ttest_tables(d, v_col, g_col)
-                    show_table(descriptives_for_groups(groups), "Group Statistics")
-                    download_table_block(descriptives_for_groups(groups), "ttest_ind_desc", "Group Statistics")
-                    show_table(lev_tbl, "Test of Homogeneity of Variances")
-                    download_table_block(lev_tbl, "ttest_ind_levene", "Homogeneity of Variances")
-                    show_table(t_tbl, "Independent Samples Test")
-                    download_table_block(t_tbl, "ttest_ind_results", "Independent Samples Test")
+        input_source = st.radio(
+            "Nguồn dữ liệu:",
+            ["Dán / Nhập dữ liệu trực tiếp", "Tải file dữ liệu (XLSX/CSV)"],
+            horizontal=True,
+            key="ttest_input_source"
+        )
+
+        # ======================================================================
+        # CHẾ ĐỘ 1: DÁN / NHẬP DỮ LIỆU TRỰC TIẾP
+        # ======================================================================
+        if input_source == "Dán / Nhập dữ liệu trực tiếp":
+            test_type_paste = st.radio(
+                "Test type",
+                ["One-sample t test", "Paired-samples t test", "Independent-samples t test"],
+                horizontal=True,
+                key="ttest_paste_type"
+            )
+
+            # 1. ONE-SAMPLE T TEST
+            if test_type_paste == "One-sample t test":
+                txt_1s = st.text_area(
+                    "Dán dữ liệu mẫu (cách nhau bằng khoảng trắng, dấu chấm phẩy ';' hoặc dấu phẩy ','):",
+                    height=120,
+                    key="ttest_1s_paste"
+                )
+                mu_val = st.number_input("Giá trị cần kiểm định (Test value μ₀):", value=0.0, format="%.3f", key="ttest_1s_mu")
+
+                if st.button("Run One-Sample t Test", type="primary", use_container_width=True, key="btn_paste_1s"):
+                    arr = _parse_1d_nums(txt_1s)
+                    if len(arr) < 2:
+                        st.warning("Vui lòng nhập ít nhất 2 giá trị số hợp lệ.")
+                    else:
+                        n = len(arr)
+                        mean_v = float(np.mean(arr))
+                        sd_v = float(np.std(arr, ddof=1))
+                        se_v = sd_v / np.sqrt(n)
+                        diff_v = mean_v - mu_val
+                        df_v = n - 1
+                        t_v = diff_v / se_v if se_v > 0 else 0.0
+                        p_v = float(2 * (1 - stats.t.cdf(abs(t_v), df_v)))
+                        t_crit = float(stats.t.ppf(0.975, df_v))
+                        ci_low = diff_v - t_crit * se_v
+                        ci_high = diff_v + t_crit * se_v
+
+                        desc_tbl = _fmt_t_df(pd.DataFrame([{
+                            "N": n,
+                            "Mean": mean_v,
+                            "SD": sd_v,
+                            "SE Mean": se_v,
+                            "Test Value (μ₀)": mu_val
+                        }]))
+                        res_tbl = _fmt_t_df(pd.DataFrame([{
+                            "t": t_v,
+                            "df": df_v,
+                            "Sig. (2-tailed)": p_v,
+                            "Mean Difference": diff_v,
+                            "95% CI Lower": ci_low,
+                            "95% CI Upper": ci_high
+                        }]))
+                        show_table(desc_tbl, "One-Sample Statistics")
+                        download_table_block(desc_tbl, "one_sample_desc", "One-Sample Statistics")
+                        show_table(res_tbl, "One-Sample Test")
+                        download_table_block(res_tbl, "one_sample_ttest", "One-Sample t Test")
+
+            # 2. PAIRED-SAMPLES T TEST
+            elif test_type_paste == "Paired-samples t test":
+                pair_mode = st.radio(
+                    "Cách nhập dữ liệu ghép cặp:",
+                    [
+                        "Dán 2 cột Trước, Sau (chép từ 2 cột Excel dán vào 1 ô)",
+                        "Dán 2 ô riêng biệt (Trước & Sau)",
+                        "Dán dãy hiệu số chênh lệch d (theo cặp)"
+                    ],
+                    horizontal=True,
+                    key="ttest_pair_mode"
+                )
+
+                arr_pre, arr_post, arr_d = None, None, None
+                diff_label = "Before - After"
+
+                if pair_mode == "Dán 2 cột Trước, Sau (chép từ 2 cột Excel dán vào 1 ô)":
+                    txt_2col_pair = st.text_area(
+                        "Dán 2 cột từ Excel (Cột 1: Trước, Cột 2: Sau):",
+                        height=140,
+                        key="ttest_pair_2col"
+                    )
+                    arr_pre, arr_post = _parse_2cols_nums(txt_2col_pair, paired=True)
+                elif pair_mode == "Dán 2 ô riêng biệt (Trước & Sau)":
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        txt_pre = st.text_area("Dữ liệu Trước (Before):", height=120, key="ttest_pair_pre")
+                    with c2:
+                        txt_post = st.text_area("Dữ liệu Sau (After):", height=120, key="ttest_pair_post")
+                    arr_pre = _parse_1d_nums(txt_pre)
+                    arr_post = _parse_1d_nums(txt_post)
+                else:
+                    txt_d = st.text_area(
+                        "Dán dãy hiệu số d (cách nhau khoảng trắng, dấu chấm phẩy ';' hoặc dấu phẩy ','):",
+                        height=120,
+                        key="ttest_pair_d"
+                    )
+                    arr_d = _parse_1d_nums(txt_d)
+                    diff_label = "Difference (d)"
+
+                if st.button("Run Paired-Samples t Test", type="primary", use_container_width=True, key="btn_paste_pair"):
+                    valid = False
+                    if pair_mode != "Dán dãy hiệu số chênh lệch d (theo cặp)":
+                        if len(arr_pre) != len(arr_post):
+                            st.error(f"Số lượng quan sát không khớp: Cột Trước có {len(arr_pre)} số, Cột Sau có {len(arr_post)} số.")
+                        elif len(arr_pre) < 2:
+                            st.warning("Vui lòng nhập ít nhất 2 cặp dữ liệu hợp lệ.")
+                        else:
+                            arr_d = arr_pre - arr_post
+                            valid = True
+                    else:
+                        if arr_d is None or len(arr_d) < 2:
+                            st.warning("Vui lòng nhập ít nhất 2 giá trị hiệu số d hợp lệ.")
+                        else:
+                            valid = True
+
+                    if valid:
+                        n_p = len(arr_d)
+                        mean_d = float(np.mean(arr_d))
+                        sd_d = float(np.std(arr_d, ddof=1))
+                        se_d = sd_d / np.sqrt(n_p)
+                        df_p = n_p - 1
+                        t_p = mean_d / se_d if se_d > 0 else 0.0
+                        p_p = float(2 * (1 - stats.t.cdf(abs(t_p), df_p)))
+                        t_crit_p = float(stats.t.ppf(0.975, df_p))
+                        ci_low_p = mean_d - t_crit_p * se_d
+                        ci_high_p = mean_d + t_crit_p * se_d
+
+                        if arr_pre is not None and arr_post is not None and len(arr_pre) == n_p:
+                            desc_pair = _fmt_t_df(pd.DataFrame([
+                                {
+                                    "Variable": "Before",
+                                    "N": n_p,
+                                    "Mean": float(np.mean(arr_pre)),
+                                    "SD": float(np.std(arr_pre, ddof=1)),
+                                    "SE Mean": float(np.std(arr_pre, ddof=1) / np.sqrt(n_p))
+                                },
+                                {
+                                    "Variable": "After",
+                                    "N": n_p,
+                                    "Mean": float(np.mean(arr_post)),
+                                    "SD": float(np.std(arr_post, ddof=1)),
+                                    "SE Mean": float(np.std(arr_post, ddof=1) / np.sqrt(n_p))
+                                }
+                            ]))
+                            show_table(desc_pair, "Paired Samples Statistics")
+                            download_table_block(desc_pair, "ttest_paired_desc", "Paired Samples Statistics")
+
+                        res_pair = _fmt_t_df(pd.DataFrame([{
+                            "Pair": diff_label,
+                            "N": n_p,
+                            "Mean": mean_d,
+                            "SD": sd_d,
+                            "SE Mean": se_d,
+                            "95% CI Lower": ci_low_p,
+                            "95% CI Upper": ci_high_p,
+                            "t": t_p,
+                            "df": df_p,
+                            "Sig. (2-tailed)": p_p
+                        }]))
+                        show_table(res_pair, "Paired Samples Test")
+                        download_table_block(res_pair, "ttest_paired_results", "Paired Samples Test")
+
+            # 3. INDEPENDENT-SAMPLES T TEST
             else:
-                c1, c2 = st.columns(2)
-                with c1: col1 = st.selectbox("Variable 1 (Before)", numeric_cols)
-                with c2: col2 = st.selectbox("Variable 2 (After)", [c for c in numeric_cols if c != col1])
-                if st.button("Run Paired-Samples t Test", type="primary", use_container_width=True):
-                    d = paired_numeric_data(df, col1, col2)
-                    groups, t_tbl = paired_ttest_table(d, col1, col2)
-                    show_table(t_tbl, "Paired Samples Test")
+                ind_mode = st.radio(
+                    "Cách nhập dữ liệu 2 mẫu độc lập:",
+                    [
+                        "Dán 2 ô riêng biệt (Mẫu 1 & Mẫu 2)",
+                        "Dán 2 cột tương ứng từ Excel vào 1 ô"
+                    ],
+                    horizontal=True,
+                    key="ttest_ind_mode"
+                )
+
+                if ind_mode == "Dán 2 ô riêng biệt (Mẫu 1 & Mẫu 2)":
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        txt_g1 = st.text_area(
+                            "Dữ liệu Mẫu 1 (cách nhau khoảng trắng, ';', ','):",
+                            height=120,
+                            key="ttest_ind_g1"
+                        )
+                    with c2:
+                        txt_g2 = st.text_area(
+                            "Dữ liệu Mẫu 2 (cách nhau khoảng trắng, ';', ','):",
+                            height=120,
+                            key="ttest_ind_g2"
+                        )
+                    s1 = _parse_1d_nums(txt_g1)
+                    s2 = _parse_1d_nums(txt_g2)
+                else:
+                    txt_2col_ind = st.text_area(
+                        "Dán 2 cột tương ứng từ Excel (Cột 1: Mẫu 1, Cột 2: Mẫu 2):",
+                        height=140,
+                        key="ttest_ind_2col"
+                    )
+                    s1, s2 = _parse_2cols_nums(txt_2col_ind, paired=False)
+
+                if st.button("Run Independent-Samples t Test", type="primary", use_container_width=True, key="btn_paste_ind"):
+                    if len(s1) < 2 or len(s2) < 2:
+                        st.warning("Vui lòng nhập ít nhất 2 giá trị hợp lệ cho mỗi mẫu.")
+                    else:
+                        n1, n2 = len(s1), len(s2)
+                        m1, m2 = float(np.mean(s1)), float(np.mean(s2))
+                        sd1, sd2 = float(np.std(s1, ddof=1)), float(np.std(s2, ddof=1))
+                        se1, se2 = sd1 / np.sqrt(n1), sd2 / np.sqrt(n2)
+                        diff_m = m1 - m2
+
+                        f_lev, p_lev = stats.levene(s1, s2)
+
+                        # Equal variances assumed (Student)
+                        sp2 = ((n1 - 1) * sd1**2 + (n2 - 1) * sd2**2) / (n1 + n2 - 2)
+                        se_pool = float(np.sqrt(sp2 * (1 / n1 + 1 / n2)))
+                        df_eq = n1 + n2 - 2
+                        t_eq = diff_m / se_pool if se_pool > 0 else 0.0
+                        p_eq = float(2 * (1 - stats.t.cdf(abs(t_eq), df_eq)))
+                        tc_eq = float(stats.t.ppf(0.975, df_eq))
+                        ci_eq_l, ci_eq_u = diff_m - tc_eq * se_pool, diff_m + tc_eq * se_pool
+
+                        # Equal variances not assumed (Welch)
+                        se_welch = float(np.sqrt(sd1**2 / n1 + sd2**2 / n2))
+                        df_uneq = float((sd1**2 / n1 + sd2**2 / n2)**2 / ((sd1**2 / n1)**2 / (n1 - 1) + (sd2**2 / n2)**2 / (n2 - 1)))
+                        t_uneq = diff_m / se_welch if se_welch > 0 else 0.0
+                        p_uneq = float(2 * (1 - stats.t.cdf(abs(t_uneq), df_uneq)))
+                        tc_uneq = float(stats.t.ppf(0.975, df_uneq))
+                        ci_uneq_l, ci_uneq_u = diff_m - tc_uneq * se_welch, diff_m + tc_uneq * se_welch
+
+                        grp_tbl = _fmt_t_df(pd.DataFrame([
+                            {"Group": "Sample 1", "N": n1, "Mean": m1, "SD": sd1, "SE Mean": se1},
+                            {"Group": "Sample 2", "N": n2, "Mean": m2, "SD": sd2, "SE Mean": se2}
+                        ]))
+                        lev_tbl = _fmt_t_df(pd.DataFrame([
+                            {"Levene F": float(f_lev), "Sig.": float(p_lev)}
+                        ]))
+                        t_tbl = _fmt_t_df(pd.DataFrame([
+                            {
+                                "Assumption": "Equal variances assumed",
+                                "t": t_eq,
+                                "df": df_eq,
+                                "Sig. (2-tailed)": p_eq,
+                                "Mean Difference": diff_m,
+                                "SE Difference": se_pool,
+                                "95% CI Lower": ci_eq_l,
+                                "95% CI Upper": ci_eq_u
+                            },
+                            {
+                                "Assumption": "Equal variances not assumed",
+                                "t": t_uneq,
+                                "df": df_uneq,
+                                "Sig. (2-tailed)": p_uneq,
+                                "Mean Difference": diff_m,
+                                "SE Difference": se_welch,
+                                "95% CI Lower": ci_uneq_l,
+                                "95% CI Upper": ci_uneq_u
+                            }
+                        ]))
+
+                        show_table(grp_tbl, "Group Statistics")
+                        download_table_block(grp_tbl, "ttest_ind_desc", "Group Statistics")
+                        show_table(lev_tbl, "Test of Homogeneity of Variances")
+                        download_table_block(lev_tbl, "ttest_ind_levene", "Homogeneity of Variances")
+                        show_table(t_tbl, "Independent Samples Test")
+                        download_table_block(t_tbl, "ttest_ind_results", "Independent Samples Test")
+
+        # ======================================================================
+        # CHẾ ĐỘ 2: TẢI FILE DỮ LIỆU (GIỮ NGUYÊN CHỨC NĂNG CŨ)
+        # ======================================================================
+        else:
+            _show_template_downloads("ttest")
+            up = st.file_uploader("Upload t-test data (XLSX/CSV)", type=["xlsx", "csv"], key="ttest_upload")
+            if up is not None:
+                df = load_uploaded_file(up)
+                st.dataframe(df.head(30), use_container_width=True)
+                numeric_cols = numeric_candidate_cols(df)
+                test_type = st.radio("Test type", ["One-sample t test", "Independent-samples t test", "Paired-samples t test"])
+                if test_type == "One-sample t test":
+                    v_col = st.selectbox("Test variable", numeric_cols)
+                    mu_val = st.number_input("Test value (mu)", value=0.0)
+                    if st.button("Run One-Sample t Test", type="primary", use_container_width=True):
+                        arr = numeric_series_from_df(df, v_col).values
+                        res_t = _fmt_t_df(one_sample_ttest_table(arr, mu_val))
+                        show_table(res_t, "One-Sample Test")
+                        download_table_block(res_t, "one_sample_ttest", "One-Sample t Test")
+                elif test_type == "Independent-samples t test":
+                    v_col = st.selectbox("Test variable", numeric_cols)
+                    g_col = st.selectbox("Grouping variable", categorical_candidate_cols(df, exclude=[v_col]))
+                    g1, g2 = level_selector(df, g_col, "ind_ttest")
+                    if st.button("Run Independent-Samples t Test", type="primary", use_container_width=True):
+                        d = df[df[g_col].astype(str).isin([g1, g2])].copy()
+                        groups, lev_tbl, t_tbl = independent_ttest_tables(d, v_col, g_col)
+                        desc_g = _fmt_t_df(descriptives_for_groups(groups))
+                        lev_f = _fmt_t_df(lev_tbl)
+                        t_f = _fmt_t_df(t_tbl)
+                        show_table(desc_g, "Group Statistics")
+                        download_table_block(desc_g, "ttest_ind_desc", "Group Statistics")
+                        show_table(lev_f, "Test of Homogeneity of Variances")
+                        download_table_block(lev_f, "ttest_ind_levene", "Homogeneity of Variances")
+                        show_table(t_f, "Independent Samples Test")
+                        download_table_block(t_f, "ttest_ind_results", "Independent Samples Test")
+                else:
+                    c1, c2 = st.columns(2)
+                    with c1: col1 = st.selectbox("Variable 1 (Before)", numeric_cols)
+                    with c2: col2 = st.selectbox("Variable 2 (After)", [c for c in numeric_cols if c != col1])
+                    if st.button("Run Paired-Samples t Test", type="primary", use_container_width=True):
+                        d = paired_numeric_data(df, col1, col2)
+                        groups, t_tbl = paired_ttest_table(d, col1, col2)
+                        t_f = _fmt_t_df(t_tbl)
+                        show_table(t_f, "Paired Samples Test")
+                        download_table_block(t_f, "ttest_paired_results", "Paired Samples Test")
                     download_table_block(t_tbl, "ttest_paired_results", "Paired Samples Test")
 
     elif sub == "Nonparametric Tests":
