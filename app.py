@@ -1727,7 +1727,11 @@ elif section == "Categorical Tests":
                 show_table(out, "Mantel-Haenszel Test")
                 download_table_block(out, "mh_results", "Mantel–Haenszel")
 
-import re
+# -----------------------------
+# QUANTITATIVE TESTS
+# -----------------------------
+elif section == "Quantitative Tests":
+    import re
 
     def _qt_try_float(tok: str):
         if tok is None:
@@ -1742,7 +1746,6 @@ import re
             return None
 
     def _qt_smart_parse_1d(text: str) -> np.ndarray:
-        """Tách 1 dãy số, tự bỏ qua hàng tiêu đề trên cùng (kể cả 'Nhóm 1', 'T1') và các ô chữ ('N/A', 'KPH')."""
         if not text or not str(text).strip():
             return np.array([], dtype=float)
         raw_lines = [ln.strip() for ln in str(text).strip().splitlines() if ln.strip()]
@@ -1778,13 +1781,6 @@ import re
         return np.array([v for v in (_qt_try_float(t) for t in tokens) if v is not None], dtype=float)
 
     def _qt_smart_parse_table(text: str, listwise: bool = False, allow_long_format: bool = True):
-        """
-        Tự động xử lý bảng dán từ Excel gồm cả tiêu đề trên cùng và các cột/ô chứa chữ:
-        - Tự tách dòng tiêu đề trên cùng làm tên nhóm/biến.
-        - Nếu bảng có cột chữ phân nhóm + 1 cột số (vd: 'Nam/Nữ', 'Nhóm A/B/C'): tự gom nhóm theo cột chữ.
-        - Nếu bảng có nhiều cột số + cột mã/tên định danh ('STT', 'Mã BN', 'Họ tên'): tự bỏ qua cột định danh.
-        - Tự bỏ qua các ô chữ ('N/A', 'KPH', '-') bên trong cột số.
-        """
         if not text or not str(text).strip():
             return [], []
         raw_lines = [ln for ln in str(text).splitlines() if ln.strip()]
@@ -1809,7 +1805,6 @@ import re
 
         rows = [r + [""] * (max_cols - len(r)) for r in rows]
 
-        # 1. Nhận diện hàng tiêu đề trên cùng
         first_row = rows[0]
         first_non_empty = [c for c in first_row if c != ""]
         first_num_cnt = sum(1 for c in first_non_empty if _qt_try_float(c) is not None)
@@ -1825,7 +1820,6 @@ import re
         if not data_rows:
             return [], []
 
-        # 2. Phân loại cột số vs cột chữ (bỏ qua cột STT/ID số thứ tự nếu có)
         id_header_pat = re.compile(r"^(stt|id|mã(\s*bn|\s*số)?|code|subject|bn|no\.?|#)$", re.IGNORECASE)
         col_is_numeric = []
         for j in range(max_cols):
@@ -1842,7 +1836,6 @@ import re
         num_col_indices = [j for j, is_num in enumerate(col_is_numeric) if is_num]
         text_col_indices = [j for j, is_num in enumerate(col_is_numeric) if not is_num]
 
-        # 3. Dạng bảng dọc (1 cột số + cột chữ phân nhóm như Nam/Nữ, Nhóm A/B/C)
         if allow_long_format and len(num_col_indices) == 1 and len(text_col_indices) >= 1:
             val_idx = num_col_indices[0]
             grp_idx = text_col_indices[-1]
@@ -1864,7 +1857,6 @@ import re
             out_names = list(grouped.keys())
             return out_names, [np.array(grouped[k], dtype=float) for k in out_names]
 
-        # 4. Dạng bảng ngang (nhiều cột số, tự bỏ qua cột định danh bằng chữ như Mã BN / Họ tên)
         if len(num_col_indices) >= 2:
             sel_headers = [headers[j] for j in num_col_indices]
             cols_data = [[] for _ in num_col_indices]
@@ -1881,10 +1873,7 @@ import re
             return sel_headers, [np.array(c, dtype=float) for c in cols_data]
 
         return [], []
-# -----------------------------
-# QUANTITATIVE TESTS
-# -----------------------------
-elif section == "Quantitative Tests":
+
     def _show_template_downloads(kind: str):
         if kind == "ttest":
             c1, c2, c3 = st.columns(3)
