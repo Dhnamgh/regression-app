@@ -1727,6 +1727,160 @@ elif section == "Categorical Tests":
                 show_table(out, "Mantel-Haenszel Test")
                 download_table_block(out, "mh_results", "Mantel–Haenszel")
 
+import re
+
+    def _qt_try_float(tok: str):
+        if tok is None:
+            return None
+        s = str(tok).strip()
+        if s == "" or s.lower() in ["na", "n/a", "nan", "null", "none", ".", "-", "kph", "không"]:
+            return None
+        try:
+            val = float(s.replace(",", "."))
+            return None if (np.isnan(val) or np.isinf(val)) else val
+        except ValueError:
+            return None
+
+    def _qt_smart_parse_1d(text: str) -> np.ndarray:
+        """Tách 1 dãy số, tự bỏ qua hàng tiêu đề trên cùng (kể cả 'Nhóm 1', 'T1') và các ô chữ ('N/A', 'KPH')."""
+        if not text or not str(text).strip():
+            return np.array([], dtype=float)
+        raw_lines = [ln.strip() for ln in str(text).strip().splitlines() if ln.strip()]
+        if not raw_lines:
+            return np.array([], dtype=float)
+
+        if len(raw_lines) >= 2:
+            first_ln = raw_lines[0]
+            if not re.search(r"[\t;]", first_ln) and _qt_try_float(first_ln) is None:
+                parts_test = re.split(r"[,\s]+", first_ln)
+                num_count = sum(1 for p in parts_test if _qt_try_float(p) is not None)
+                if num_count <= 1 and re.search(r"[A-Za-zÀ-ỹ]", first_ln):
+                    raw_lines = raw_lines[1:]
+
+        s = "\n".join(raw_lines)
+        if ";" in s:
+            tokens = re.split(r"[;\s\n\t]+", s)
+            return np.array([v for v in (_qt_try_float(t) for t in tokens) if v is not None], dtype=float)
+
+        if "," in s:
+            if "." in s:
+                s = s.replace(",", " ")
+            else:
+                parts_ws = re.split(r"[\s\n\t]+", s)
+                if len(parts_ws) > 1 and all(re.match(r"^[-+]?\d+,\d+$", t) for t in parts_ws if t):
+                    s = s.replace(",", ".")
+                elif len(parts_ws) == 1 and re.match(r"^[-+]?\d+,\d+$", parts_ws[0]):
+                    s = s.replace(",", ".")
+                else:
+                    s = s.replace(",", " ")
+
+        tokens = re.split(r"[\s\n\t]+", s)
+        return np.array([v for v in (_qt_try_float(t) for t in tokens) if v is not None], dtype=float)
+
+    def _qt_smart_parse_table(text: str, listwise: bool = False, allow_long_format: bool = True):
+        """
+        Tự động xử lý bảng dán từ Excel gồm cả tiêu đề trên cùng và các cột/ô chứa chữ:
+        - Tự tách dòng tiêu đề trên cùng làm tên nhóm/biến.
+        - Nếu bảng có cột chữ phân nhóm + 1 cột số (vd: 'Nam/Nữ', 'Nhóm A/B/C'): tự gom nhóm theo cột chữ.
+        - Nếu bảng có nhiều cột số + cột mã/tên định danh ('STT', 'Mã BN', 'Họ tên'): tự bỏ qua cột định danh.
+        - Tự bỏ qua các ô chữ ('N/A', 'KPH', '-') bên trong cột số.
+        """
+        if not text or not str(text).strip():
+            return [], []
+        raw_lines = [ln for ln in str(text).splitlines() if ln.strip()]
+        if not raw_lines:
+            return [], []
+
+        def split_row(ln: str):
+            if "\t" in ln:
+                return [p.strip() for p in ln.split("\t")]
+            elif ";" in ln:
+                return [p.strip() for p in ln.split(";")]
+            elif "," in ln:
+                p_c = [p.strip() for p in ln.split(",")]
+                if len(p_c) >= 2:
+                    return p_c
+            return [p.strip() for p in re.split(r"\s+", ln.strip()) if p.strip()]
+
+        rows = [split_row(ln) for ln in raw_lines]
+        max_cols = max(len(r) for r in rows)
+        if max_cols < 2:
+            return [], []
+
+        rows = [r + [""] * (max_cols - len(r)) for r in rows]
+
+        # 1. Nhận diện hàng tiêu đề trên cùng
+        first_row = rows[0]
+        first_non_empty = [c for c in first_row if c != ""]
+        first_num_cnt = sum(1 for c in first_non_empty if _qt_try_float(c) is not None)
+        first_alpha_cnt = sum(1 for c in first_non_empty if re.search(r"[A-Za-zÀ-ỹ]", c))
+
+        if len(rows) >= 2 and first_alpha_cnt >= 1 and first_num_cnt == 0:
+            headers = [first_row[j] if first_row[j] else f"Col {j+1}" for j in range(max_cols)]
+            data_rows = rows[1:]
+        else:
+            headers = [f"Group {j+1}" for j in range(max_cols)]
+            data_rows = rows
+
+        if not data_rows:
+            return [], []
+
+        # 2. Phân loại cột số vs cột chữ (bỏ qua cột STT/ID số thứ tự nếu có)
+        id_header_pat = re.compile(r"^(stt|id|mã(\s*bn|\s*số)?|code|subject|bn|no\.?|#)$", re.IGNORECASE)
+        col_is_numeric = []
+        for j in range(max_cols):
+            if id_header_pat.match(headers[j].strip()):
+                col_is_numeric.append(False)
+                continue
+            non_empty_vals = [r[j] for r in data_rows if r[j] != ""]
+            if not non_empty_vals:
+                col_is_numeric.append(False)
+                continue
+            num_cnt = sum(1 for v in non_empty_vals if _qt_try_float(v) is not None)
+            col_is_numeric.append(num_cnt >= max(1, 0.5 * len(non_empty_vals)))
+
+        num_col_indices = [j for j, is_num in enumerate(col_is_numeric) if is_num]
+        text_col_indices = [j for j, is_num in enumerate(col_is_numeric) if not is_num]
+
+        # 3. Dạng bảng dọc (1 cột số + cột chữ phân nhóm như Nam/Nữ, Nhóm A/B/C)
+        if allow_long_format and len(num_col_indices) == 1 and len(text_col_indices) >= 1:
+            val_idx = num_col_indices[0]
+            grp_idx = text_col_indices[-1]
+            for idx_t in text_col_indices:
+                if id_header_pat.match(headers[idx_t].strip()):
+                    continue
+                distinct_vals = set(r[idx_t] for r in data_rows if r[idx_t] != "")
+                if 2 <= len(distinct_vals) < len(data_rows):
+                    grp_idx = idx_t
+                    break
+
+            grouped = {}
+            for r in data_rows:
+                g_name = r[grp_idx].strip()
+                v_num = _qt_try_float(r[val_idx])
+                if g_name != "" and v_num is not None:
+                    grouped.setdefault(g_name, []).append(v_num)
+
+            out_names = list(grouped.keys())
+            return out_names, [np.array(grouped[k], dtype=float) for k in out_names]
+
+        # 4. Dạng bảng ngang (nhiều cột số, tự bỏ qua cột định danh bằng chữ như Mã BN / Họ tên)
+        if len(num_col_indices) >= 2:
+            sel_headers = [headers[j] for j in num_col_indices]
+            cols_data = [[] for _ in num_col_indices]
+            for r in data_rows:
+                parsed_row = [_qt_try_float(r[j]) for j in num_col_indices]
+                if listwise:
+                    if all(v is not None for v in parsed_row):
+                        for k_i, v in enumerate(parsed_row):
+                            cols_data[k_i].append(v)
+                else:
+                    for k_i, v in enumerate(parsed_row):
+                        if v is not None:
+                            cols_data[k_i].append(v)
+            return sel_headers, [np.array(c, dtype=float) for c in cols_data]
+
+        return [], []
 # -----------------------------
 # QUANTITATIVE TESTS
 # -----------------------------
@@ -1835,86 +1989,15 @@ elif section == "Quantitative Tests":
                         notes.append(f"{label}: Sig. = {_fmt_t_val(float(p_val))} ≤ 0.05 (không phân phối chuẩn)")
             return pd.DataFrame(rows), " | ".join(notes)
 
-        # Hàm tách 1 dãy số (hỗ trợ khoảng trắng, dấu phẩy ',', chấm phẩy ';', xuống dòng)
+        # Gọi bộ phân giải bảng thông minh đã khai báo ở đầu Quantitative Tests
         def _parse_1d_nums(text: str) -> np.ndarray:
-            if not text or not str(text).strip():
-                return np.array([], dtype=float)
-            s = str(text).strip()
-            if ";" in s:
-                tokens = re.split(r"[;\s\n\t]+", s)
-                vals = []
-                for tok in tokens:
-                    tok = tok.strip().replace(",", ".")
-                    if tok:
-                        try:
-                            vals.append(float(tok))
-                        except ValueError:
-                            pass
-                return np.array(vals, dtype=float)
-            if "," in s:
-                if "." in s:
-                    s = s.replace(",", " ")
-                else:
-                    parts_ws = re.split(r"[\s\n\t]+", s)
-                    if len(parts_ws) > 1 and all(re.match(r"^[-+]?\d+,\d+$", t) for t in parts_ws if t):
-                        s = s.replace(",", ".")
-                    elif len(parts_ws) == 1 and re.match(r"^[-+]?\d+,\d+$", parts_ws[0]):
-                        s = s.replace(",", ".")
-                    else:
-                        s = s.replace(",", " ")
-            tokens = re.split(r"[\s\n\t]+", s)
-            vals = []
-            for tok in tokens:
-                tok = tok.strip()
-                if tok:
-                    try:
-                        vals.append(float(tok))
-                    except ValueError:
-                        pass
-            return np.array(vals, dtype=float)
+            return _qt_smart_parse_1d(text)
 
-        # Hàm tách 2 cột chép từ Excel (Tab) hoặc phân tách bằng ';', ',', khoảng trắng
         def _parse_2cols_nums(text: str, paired: bool = False):
-            if not text or not str(text).strip():
-                return np.array([], dtype=float), np.array([], dtype=float)
-            c1, c2 = [], []
-            for line in str(text).splitlines():
-                if not line.strip():
-                    continue
-                if "\t" in line:
-                    parts = line.split("\t")
-                elif ";" in line:
-                    parts = line.split(";")
-                elif "," in line:
-                    p_c = line.split(",")
-                    parts = p_c if len(p_c) == 2 else re.split(r"\s+", line.strip())
-                else:
-                    parts = re.split(r"\s+", line.strip())
-
-                v1_str = parts[0].strip().replace(",", ".") if len(parts) >= 1 else ""
-                v2_str = parts[1].strip().replace(",", ".") if len(parts) >= 2 else ""
-                v1, v2 = None, None
-                try:
-                    if v1_str != "":
-                        v1 = float(v1_str)
-                except ValueError:
-                    pass
-                try:
-                    if v2_str != "":
-                        v2 = float(v2_str)
-                except ValueError:
-                    pass
-
-                if paired:
-                    if v1 is not None and v2 is not None:
-                        c1.append(v1)
-                        c2.append(v2)
-                else:
-                    if v1 is not None:
-                        c1.append(v1)
-                    if v2 is not None:
-                        c2.append(v2)
-            return np.array(c1, dtype=float), np.array(c2, dtype=float)
+            _, cols = _qt_smart_parse_table(text, listwise=paired, allow_long_format=(not paired))
+            if len(cols) >= 2:
+                return cols[0], cols[1]
+            return np.array([], dtype=float), np.array([], dtype=float)
 
         st.markdown("## Quantitative Tests — t Tests")
         input_source = st.radio(
@@ -2301,108 +2384,12 @@ elif section == "Quantitative Tests":
             s = _fmt_np_val(p_val)
             return f"p {s}" if s.startswith("<") else f"p = {s}"
 
-        # Hàm tách 1 dãy số (hỗ trợ khoảng trắng, dấu phẩy ',', chấm phẩy ';', xuống dòng)
+        # Gọi bộ phân giải bảng thông minh đã khai báo ở đầu Quantitative Tests
         def _np_parse_1d(text: str) -> np.ndarray:
-            if not text or not str(text).strip():
-                return np.array([], dtype=float)
-            s = str(text).strip()
-            if ";" in s:
-                tokens = re.split(r"[;\s\n\t]+", s)
-                vals = []
-                for tok in tokens:
-                    tok = tok.strip().replace(",", ".")
-                    if tok:
-                        try:
-                            vals.append(float(tok))
-                        except ValueError:
-                            pass
-                return np.array(vals, dtype=float)
-            if "," in s:
-                if "." in s:
-                    s = s.replace(",", " ")
-                else:
-                    parts_ws = re.split(r"[\s\n\t]+", s)
-                    if len(parts_ws) > 1 and all(re.match(r"^[-+]?\d+,\d+$", t) for t in parts_ws if t):
-                        s = s.replace(",", ".")
-                    elif len(parts_ws) == 1 and re.match(r"^[-+]?\d+,\d+$", parts_ws[0]):
-                        s = s.replace(",", ".")
-                    else:
-                        s = s.replace(",", " ")
-            tokens = re.split(r"[\s\n\t]+", s)
-            vals = []
-            for tok in tokens:
-                tok = tok.strip()
-                if tok:
-                    try:
-                        vals.append(float(tok))
-                    except ValueError:
-                        pass
-            return np.array(vals, dtype=float)
+            return _qt_smart_parse_1d(text)
 
-        # Hàm tách nhiều cột từ Excel (Tab) hoặc ';', ',', khoảng trắng; tự nhận diện dòng tiêu đề chữ
         def _np_parse_multicol(text: str, listwise: bool = False):
-            if not text or not str(text).strip():
-                return [], []
-            raw_lines = [ln for ln in str(text).splitlines() if ln.strip()]
-            if not raw_lines:
-                return [], []
-
-            def split_row(ln: str):
-                if "\t" in ln:
-                    return [p.strip() for p in ln.split("\t")]
-                elif ";" in ln:
-                    return [p.strip() for p in ln.split(";")]
-                elif "," in ln:
-                    p_c = [p.strip() for p in ln.split(",")]
-                    if len(p_c) >= 2:
-                        return p_c
-                return [p.strip() for p in re.split(r"\s+", ln.strip()) if p.strip()]
-
-            rows_tokens = [split_row(ln) for ln in raw_lines]
-            max_cols = max(len(r) for r in rows_tokens)
-            if max_cols < 2:
-                return [], []
-
-            first_row = rows_tokens[0]
-            numeric_in_first = 0
-            for tok in first_row:
-                if tok != "":
-                    try:
-                        float(tok.replace(",", "."))
-                        numeric_in_first += 1
-                    except ValueError:
-                        pass
-            has_header = (numeric_in_first == 0)
-
-            if has_header:
-                headers = [first_row[j] if j < len(first_row) and first_row[j] else f"Group {j+1}" for j in range(max_cols)]
-                data_rows = rows_tokens[1:]
-            else:
-                headers = [f"Group {j+1}" for j in range(max_cols)]
-                data_rows = rows_tokens
-
-            cols = [[] for _ in range(max_cols)]
-            for r in data_rows:
-                parsed_row = []
-                for j in range(max_cols):
-                    tok = r[j].replace(",", ".") if j < len(r) else ""
-                    if tok == "":
-                        parsed_row.append(None)
-                    else:
-                        try:
-                            parsed_row.append(float(tok))
-                        except ValueError:
-                            parsed_row.append(None)
-                if listwise:
-                    if all(v is not None for v in parsed_row):
-                        for j in range(max_cols):
-                            cols[j].append(parsed_row[j])
-                else:
-                    for j in range(max_cols):
-                        if parsed_row[j] is not None:
-                            cols[j].append(parsed_row[j])
-
-            return headers, [np.array(c, dtype=float) for c in cols]
+            return _qt_smart_parse_table(text, listwise=listwise, allow_long_format=(not listwise))
 
         # Bảng thống kê mô tả phi tham số (Median & IQR)
         def _np_desc_table(named_arrays: list, label_col: str = "Group") -> pd.DataFrame:
@@ -2936,106 +2923,12 @@ elif section == "Quantitative Tests":
         # ----------------------------------------------------------------------
         # 2. CÁC HÀM PHÂN GIẢI DỮ LIỆU DÁN (1 CHIỀU, NHIỀU CỘT, 2 YẾU TỐ)
         # ----------------------------------------------------------------------
+        # Gọi bộ phân giải bảng thông minh đã khai báo ở đầu Quantitative Tests
         def _av_parse_1d(text: str) -> np.ndarray:
-            if not text or not str(text).strip():
-                return np.array([], dtype=float)
-            s = str(text).strip()
-            if ";" in s:
-                tokens = re.split(r"[;\s\n\t]+", s)
-                vals = []
-                for tok in tokens:
-                    tok = tok.strip().replace(",", ".")
-                    if tok:
-                        try:
-                            vals.append(float(tok))
-                        except ValueError:
-                            pass
-                return np.array(vals, dtype=float)
-            if "," in s:
-                if "." in s:
-                    s = s.replace(",", " ")
-                else:
-                    parts_ws = re.split(r"[\s\n\t]+", s)
-                    if len(parts_ws) > 1 and all(re.match(r"^[-+]?\d+,\d+$", t) for t in parts_ws if t):
-                        s = s.replace(",", ".")
-                    elif len(parts_ws) == 1 and re.match(r"^[-+]?\d+,\d+$", parts_ws[0]):
-                        s = s.replace(",", ".")
-                    else:
-                        s = s.replace(",", " ")
-            tokens = re.split(r"[\s\n\t]+", s)
-            vals = []
-            for tok in tokens:
-                tok = tok.strip()
-                if tok:
-                    try:
-                        vals.append(float(tok))
-                    except ValueError:
-                        pass
-            return np.array(vals, dtype=float)
+            return _qt_smart_parse_1d(text)
 
         def _av_parse_multicol(text: str, listwise: bool = False):
-            if not text or not str(text).strip():
-                return [], []
-            raw_lines = [ln for ln in str(text).splitlines() if ln.strip()]
-            if not raw_lines:
-                return [], []
-
-            def split_row(ln: str):
-                if "\t" in ln:
-                    return [p.strip() for p in ln.split("\t")]
-                elif ";" in ln:
-                    return [p.strip() for p in ln.split(";")]
-                elif "," in ln:
-                    p_c = [p.strip() for p in ln.split(",")]
-                    if len(p_c) >= 2:
-                        return p_c
-                return [p.strip() for p in re.split(r"\s+", ln.strip()) if p.strip()]
-
-            rows_tokens = [split_row(ln) for ln in raw_lines]
-            max_cols = max(len(r) for r in rows_tokens)
-            if max_cols < 2:
-                return [], []
-
-            first_row = rows_tokens[0]
-            numeric_in_first = 0
-            for tok in first_row:
-                if tok != "":
-                    try:
-                        float(tok.replace(",", "."))
-                        numeric_in_first += 1
-                    except ValueError:
-                        pass
-            has_header = (numeric_in_first == 0)
-
-            if has_header:
-                headers = [first_row[j] if j < len(first_row) and first_row[j] else f"Group {j+1}" for j in range(max_cols)]
-                data_rows = rows_tokens[1:]
-            else:
-                headers = [f"Group {j+1}" for j in range(max_cols)]
-                data_rows = rows_tokens
-
-            cols = [[] for _ in range(max_cols)]
-            for r in data_rows:
-                parsed_row = []
-                for j in range(max_cols):
-                    tok = r[j].replace(",", ".") if j < len(r) else ""
-                    if tok == "":
-                        parsed_row.append(None)
-                    else:
-                        try:
-                            parsed_row.append(float(tok))
-                        except ValueError:
-                            parsed_row.append(None)
-                if listwise:
-                    if all(v is not None for v in parsed_row):
-                        for j in range(max_cols):
-                            cols[j].append(parsed_row[j])
-                else:
-                    for j in range(max_cols):
-                        if parsed_row[j] is not None:
-                            cols[j].append(parsed_row[j])
-
-            return headers, [np.array(c, dtype=float) for c in cols]
+            return _qt_smart_parse_table(text, listwise=listwise, allow_long_format=(not listwise))
 
         def _av_parse_twoway_3cols(text: str):
             """Tách dữ liệu 3 cột từ Excel: Factor A | Factor B | Value"""
