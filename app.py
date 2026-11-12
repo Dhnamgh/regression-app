@@ -1797,6 +1797,44 @@ elif section == "Quantitative Tests":
                 df_out[col] = df_out[col].apply(_fmt_t_val)
             return df_out
 
+        # Hàm kiểm định phân phối chuẩn Shapiro-Wilk theo định dạng bảng SPSS (Tests of Normality)
+        def _shapiro_test_table(samples: list):
+            rows = []
+            notes = []
+            for label, arr in samples:
+                clean = np.asarray(arr, dtype=float)
+                clean = clean[~np.isnan(clean)]
+                n = len(clean)
+                if n < 3:
+                    rows.append({
+                        "Variable / Group": label,
+                        "Shapiro-Wilk Statistic": "N/A (N < 3)",
+                        "df": _fmt_t_val(n),
+                        "Sig.": "N/A"
+                    })
+                    notes.append(f"{label}: N < 3 (cần tối thiểu 3 quan sát để kiểm định Shapiro-Wilk)")
+                elif np.ptp(clean) == 0:
+                    rows.append({
+                        "Variable / Group": label,
+                        "Shapiro-Wilk Statistic": "1",
+                        "df": _fmt_t_val(n),
+                        "Sig.": "1"
+                    })
+                    notes.append(f"{label}: dữ liệu hằng số")
+                else:
+                    w_stat, p_val = stats.shapiro(clean)
+                    rows.append({
+                        "Variable / Group": label,
+                        "Shapiro-Wilk Statistic": _fmt_t_val(float(w_stat)),
+                        "df": _fmt_t_val(n),
+                        "Sig.": _fmt_t_val(float(p_val))
+                    })
+                    if p_val > 0.05:
+                        notes.append(f"{label}: Sig. = {_fmt_t_val(float(p_val))} > 0.05 (phân phối chuẩn)")
+                    else:
+                        notes.append(f"{label}: Sig. = {_fmt_t_val(float(p_val))} ≤ 0.05 (không phân phối chuẩn)")
+            return pd.DataFrame(rows), " | ".join(notes)
+
         # Hàm tách 1 dãy số (hỗ trợ khoảng trắng, dấu phẩy ',', chấm phẩy ';', xuống dòng)
         def _parse_1d_nums(text: str) -> np.ndarray:
             if not text or not str(text).strip():
@@ -1930,6 +1968,7 @@ elif section == "Quantitative Tests":
                             "SE Mean": se_v,
                             "Test Value (μ₀)": mu_val
                         }]))
+                        norm_tbl, norm_note = _shapiro_test_table([("Sample", arr)])
                         res_tbl = _fmt_t_df(pd.DataFrame([{
                             "t": t_v,
                             "df": df_v,
@@ -1938,26 +1977,30 @@ elif section == "Quantitative Tests":
                             "95% CI Lower": ci_low,
                             "95% CI Upper": ci_high
                         }]))
+
                         show_table(desc_tbl, "One-Sample Statistics")
                         download_table_block(desc_tbl, "one_sample_desc", "One-Sample Statistics")
+                        show_table(norm_tbl, "Tests of Normality (Shapiro-Wilk)")
+                        st.caption(norm_note)
+                        download_table_block(norm_tbl, "one_sample_normality", "Tests of Normality")
                         show_table(res_tbl, "One-Sample Test")
                         download_table_block(res_tbl, "one_sample_ttest", "One-Sample t Test")
 
-            # 2. PAIRED-SAMPLES T TEST
+            # 2. PAIRED-SAMPLES T TEST (d = Sau - Trước)
             elif test_type_paste == "Paired-samples t test":
                 pair_mode = st.radio(
                     "Cách nhập dữ liệu ghép cặp:",
                     [
                         "Dán 2 cột Trước, Sau (chép từ 2 cột Excel dán vào 1 ô)",
                         "Dán 2 ô riêng biệt (Trước & Sau)",
-                        "Dán dãy hiệu số chênh lệch d (theo cặp)"
+                        "Dán dãy hiệu số chênh lệch d (d = Sau - Trước)"
                     ],
                     horizontal=True,
                     key="ttest_pair_mode"
                 )
 
                 arr_pre, arr_post, arr_d = None, None, None
-                diff_label = "Before - After"
+                diff_label = "d = After - Before"
 
                 if pair_mode == "Dán 2 cột Trước, Sau (chép từ 2 cột Excel dán vào 1 ô)":
                     txt_2col_pair = st.text_area(
@@ -1976,22 +2019,22 @@ elif section == "Quantitative Tests":
                     arr_post = _parse_1d_nums(txt_post)
                 else:
                     txt_d = st.text_area(
-                        "Dán dãy hiệu số d (cách nhau khoảng trắng, dấu chấm phẩy ';' hoặc dấu phẩy ','):",
+                        "Dán dãy hiệu số d = Sau - Trước (cách nhau khoảng trắng, dấu chấm phẩy ';' hoặc dấu phẩy ','):",
                         height=120,
                         key="ttest_pair_d"
                     )
                     arr_d = _parse_1d_nums(txt_d)
-                    diff_label = "Difference (d)"
 
                 if st.button("Run Paired-Samples t Test", type="primary", use_container_width=True, key="btn_paste_pair"):
                     valid = False
-                    if pair_mode != "Dán dãy hiệu số chênh lệch d (theo cặp)":
+                    if pair_mode != "Dán dãy hiệu số chênh lệch d (d = Sau - Trước)":
                         if len(arr_pre) != len(arr_post):
                             st.error(f"Số lượng quan sát không khớp: Cột Trước có {len(arr_pre)} số, Cột Sau có {len(arr_post)} số.")
                         elif len(arr_pre) < 2:
                             st.warning("Vui lòng nhập ít nhất 2 cặp dữ liệu hợp lệ.")
                         else:
-                            arr_d = arr_pre - arr_post
+                            # Sự khác biệt trước sau: d = Sau - Trước
+                            arr_d = arr_post - arr_pre
                             valid = True
                     else:
                         if arr_d is None or len(arr_d) < 2:
@@ -2030,6 +2073,12 @@ elif section == "Quantitative Tests":
                             ]))
                             show_table(desc_pair, "Paired Samples Statistics")
                             download_table_block(desc_pair, "ttest_paired_desc", "Paired Samples Statistics")
+
+                        # Kiểm định Shapiro-Wilk cho biến hiệu số d = Sau - Trước
+                        norm_pair, norm_pair_note = _shapiro_test_table([(diff_label, arr_d)])
+                        show_table(norm_pair, "Tests of Normality (Shapiro-Wilk)")
+                        st.caption(norm_pair_note)
+                        download_table_block(norm_pair, "ttest_paired_normality", "Tests of Normality")
 
                         res_pair = _fmt_t_df(pd.DataFrame([{
                             "Pair": diff_label,
@@ -2115,6 +2164,8 @@ elif section == "Quantitative Tests":
                             {"Group": "Sample 1", "N": n1, "Mean": m1, "SD": sd1, "SE Mean": se1},
                             {"Group": "Sample 2", "N": n2, "Mean": m2, "SD": sd2, "SE Mean": se2}
                         ]))
+                        # Kiểm định Shapiro-Wilk cho cả 2 mẫu độc lập
+                        norm_ind, norm_ind_note = _shapiro_test_table([("Sample 1", s1), ("Sample 2", s2)])
                         lev_tbl = _fmt_t_df(pd.DataFrame([
                             {"Levene F": float(f_lev), "Sig.": float(p_lev)}
                         ]))
@@ -2143,13 +2194,16 @@ elif section == "Quantitative Tests":
 
                         show_table(grp_tbl, "Group Statistics")
                         download_table_block(grp_tbl, "ttest_ind_desc", "Group Statistics")
+                        show_table(norm_ind, "Tests of Normality (Shapiro-Wilk)")
+                        st.caption(norm_ind_note)
+                        download_table_block(norm_ind, "ttest_ind_normality", "Tests of Normality")
                         show_table(lev_tbl, "Test of Homogeneity of Variances")
                         download_table_block(lev_tbl, "ttest_ind_levene", "Homogeneity of Variances")
                         show_table(t_tbl, "Independent Samples Test")
                         download_table_block(t_tbl, "ttest_ind_results", "Independent Samples Test")
 
         # ======================================================================
-        # CHẾ ĐỘ 2: TẢI FILE DỮ LIỆU (GIỮ NGUYÊN CHỨC NĂNG CŨ)
+        # CHẾ ĐỘ 2: TẢI FILE DỮ LIỆU (GIỮ NGUYÊN CHỨC NĂNG CŨ + BỔ SUNG SHAPIRO-WILK)
         # ======================================================================
         else:
             _show_template_downloads("ttest")
@@ -2164,7 +2218,11 @@ elif section == "Quantitative Tests":
                     mu_val = st.number_input("Test value (mu)", value=0.0)
                     if st.button("Run One-Sample t Test", type="primary", use_container_width=True):
                         arr = numeric_series_from_df(df, v_col).values
+                        norm_t, norm_note = _shapiro_test_table([(str(v_col), arr)])
                         res_t = _fmt_t_df(one_sample_ttest_table(arr, mu_val))
+                        show_table(norm_t, "Tests of Normality (Shapiro-Wilk)")
+                        st.caption(norm_note)
+                        download_table_block(norm_t, "one_sample_normality", "Tests of Normality")
                         show_table(res_t, "One-Sample Test")
                         download_table_block(res_t, "one_sample_ttest", "One-Sample t Test")
                 elif test_type == "Independent-samples t test":
@@ -2173,12 +2231,21 @@ elif section == "Quantitative Tests":
                     g1, g2 = level_selector(df, g_col, "ind_ttest")
                     if st.button("Run Independent-Samples t Test", type="primary", use_container_width=True):
                         d = df[df[g_col].astype(str).isin([g1, g2])].copy()
+                        s1_up = numeric_series_from_df(d[d[g_col].astype(str) == str(g1)], v_col).values
+                        s2_up = numeric_series_from_df(d[d[g_col].astype(str) == str(g2)], v_col).values
+                        norm_ind_up, norm_ind_up_note = _shapiro_test_table([
+                            (f"{g_col} = {g1}", s1_up),
+                            (f"{g_col} = {g2}", s2_up)
+                        ])
                         groups, lev_tbl, t_tbl = independent_ttest_tables(d, v_col, g_col)
                         desc_g = _fmt_t_df(descriptives_for_groups(groups))
                         lev_f = _fmt_t_df(lev_tbl)
                         t_f = _fmt_t_df(t_tbl)
                         show_table(desc_g, "Group Statistics")
                         download_table_block(desc_g, "ttest_ind_desc", "Group Statistics")
+                        show_table(norm_ind_up, "Tests of Normality (Shapiro-Wilk)")
+                        st.caption(norm_ind_up_note)
+                        download_table_block(norm_ind_up, "ttest_ind_normality", "Tests of Normality")
                         show_table(lev_f, "Test of Homogeneity of Variances")
                         download_table_block(lev_f, "ttest_ind_levene", "Homogeneity of Variances")
                         show_table(t_f, "Independent Samples Test")
@@ -2189,11 +2256,15 @@ elif section == "Quantitative Tests":
                     with c2: col2 = st.selectbox("Variable 2 (After)", [c for c in numeric_cols if c != col1])
                     if st.button("Run Paired-Samples t Test", type="primary", use_container_width=True):
                         d = paired_numeric_data(df, col1, col2)
+                        arr_d_up = (d[col2] - d[col1]).values
+                        norm_pair_up, norm_pair_up_note = _shapiro_test_table([(f"d = {col2} - {col1}", arr_d_up)])
                         groups, t_tbl = paired_ttest_table(d, col1, col2)
                         t_f = _fmt_t_df(t_tbl)
+                        show_table(norm_pair_up, "Tests of Normality (Shapiro-Wilk)")
+                        st.caption(norm_pair_up_note)
+                        download_table_block(norm_pair_up, "ttest_paired_normality", "Tests of Normality")
                         show_table(t_f, "Paired Samples Test")
                         download_table_block(t_f, "ttest_paired_results", "Paired Samples Test")
-                    download_table_block(t_tbl, "ttest_paired_results", "Paired Samples Test")
 
     elif sub == "Nonparametric Tests":
         st.markdown("## Quantitative Tests — Nonparametric Tests")
