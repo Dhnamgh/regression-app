@@ -1626,7 +1626,7 @@ elif section == "Logistic Regression":
                     st.session_state[name_key] = "Dữ liệu dán từ Excel"
                     st.caption(f"✅ Đã nhận diện bảng dữ liệu: **{parsed_df.shape[0]} hàng × {parsed_df.shape[1]} cột** ({', '.join(map(str, parsed_df.columns))})")
                     with st.expander("Xem trước dữ liệu đã dán (20 dòng đầu)", expanded=False):
-                        st.dataframe(parsed_df.head(20), use_container_width=True)
+                        st.dataframe(parsed_df.head(20), hide_index=True)
                 else:
                     st.warning("⚠️ Chưa nhận diện được bảng hợp lệ (cần ít nhất 2 cột phân tách bằng Tab từ Excel, dấu chấm phẩy ';' hoặc dấu phẩy ',').")
         else:
