@@ -1647,8 +1647,12 @@ elif section == "Logistic Regression":
 
     def _reg_data_input_panel(template_df: pd.DataFrame, template_name: str, state_key: str, name_key: str):
         import html as _html
+        import inspect as _inspect
 
-        uid = f"{state_key}_{sub}"
+        caller_frame = _inspect.currentframe().f_back
+        caller_line = caller_frame.f_lineno if caller_frame is not None else 0
+        uid = f"{state_key}_L{caller_line}"
+
         shared_mode_key = f"{state_key}_shared_mode"
         shared_paste_key = f"{state_key}_shared_paste"
         if shared_mode_key not in st.session_state:
@@ -1752,148 +1756,6 @@ elif section == "Logistic Regression":
         else:
             data_input_panel(template_df, template_name, state_key, name_key)
 
-        if src_mode == "📋 Dán dữ liệu từ Excel":
-            col_left, col_right = st.columns([1.05, 1.0])
-            with col_left:
-                txt_pasted = st.text_area(
-                    "Quét chọn vùng bảng trong Excel (gồm hàng tiêu đề) rồi dán vào đây:",
-                    height=210,
-                    key=paste_key,
-                    placeholder="Ví dụ:\ntarget_binary\tCRP\tWBC\n0\t10.2\t7.1\n1\t35.1\t12.5\n0\t8.7\t6.8\n1\t22.4\t10.3"
-                )
-                c_act1, c_act2 = st.columns([2.2, 1])
-                with c_act1:
-                    st.button("📥 Nạp / Cập nhật dữ liệu", type="secondary", use_container_width=True, key=f"{state_key}_btn_apply_paste")
-                with c_act2:
-                    if st.button("🗑️ Xóa", use_container_width=True, key=f"{state_key}_btn_clear_paste"):
-                        st.session_state[paste_key] = ""
-                        st.session_state[state_key] = None
-                        st.session_state[name_key] = ""
-                        st.rerun()
-
-            with col_right:
-                if txt_pasted and txt_pasted.strip():
-                    parsed_df = _reg_parse_excel_to_df(txt_pasted)
-                    if not parsed_df.empty and parsed_df.shape[1] >= 2:
-                        st.session_state[state_key] = parsed_df
-                        st.session_state[name_key] = "Dữ liệu dán từ Excel"
-                        st.markdown(
-                            f'<div style="font-size:13.5px;font-weight:600;color:#15803d;margin-bottom:4px;">'
-                            f'✅ Dữ liệu đã nhận diện ({parsed_df.shape[0]} hàng × {parsed_df.shape[1]} cột):</div>',
-                            unsafe_allow_html=True
-                        )
-                        cols_prev = list(parsed_df.columns)
-                        col_aligns = {c: ("center" if pd.api.types.is_numeric_dtype(parsed_df[c]) else "left") for c in cols_prev}
-                        th_html = "".join(
-                            f'<th style="position:sticky;top:0;z-index:2;background:#f1f5f9;color:#0f172a;font-weight:700;'
-                            f'padding:6px 12px;border:1px solid #cbd5e1;text-align:{col_aligns[c]};white-space:nowrap;">'
-                            f'{_html.escape(str(c))}</th>'
-                            for c in cols_prev
-                        )
-                        rows_html = []
-                        for r_idx, (_, row_p) in enumerate(parsed_df.iterrows()):
-                            bg = "#ffffff" if r_idx % 2 == 0 else "#f8fafc"
-                            tds = []
-                            for c in cols_prev:
-                                val = row_p[c]
-                                if pd.isna(val):
-                                    disp = ""
-                                elif isinstance(val, (float, np.floating)) and abs(val - round(val)) < 1e-9:
-                                    disp = str(int(round(val)))
-                                else:
-                                    disp = str(val)
-                                tds.append(
-                                    f'<td style="padding:5px 12px;border:1px solid #e2e8f0;color:#111827;'
-                                    f'text-align:{col_aligns[c]};white-space:nowrap;">{_html.escape(disp)}</td>'
-                                )
-                            rows_html.append(f'<tr style="background:{bg};">{"".join(tds)}</tr>')
-                        tbl_html = (
-                            '<div style="width:fit-content;max-width:100%;height:210px;overflow:auto;'
-                            '-webkit-overflow-scrolling:touch;border:1px solid #cbd5e1;border-radius:6px;background:#ffffff;">'
-                            '<table style="border-collapse:collapse;font-family:sans-serif;font-size:13.5px;width:auto;">'
-                            f'<thead><tr>{th_html}</tr></thead>'
-                            f'<tbody>{"".join(rows_html)}</tbody>'
-                            '</table></div>'
-                        )
-                        st.markdown(tbl_html, unsafe_allow_html=True)
-                    else:
-                        st.warning("⚠️ Chưa nhận diện được bảng hợp lệ (cần ít nhất 2 cột phân tách bằng Tab, ';' hoặc ',').")
-                else:
-                    st.markdown(
-                        '<div style="height:210px;margin-top:28px;border:1px dashed #cbd5e1;border-radius:6px;'
-                        'display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13.5px;padding:12px;text-align:center;">'
-                        'Bảng dữ liệu đã nhận diện sẽ hiển thị trực tiếp tại đây (kéo ngang & cuộn dọc toàn bộ các dòng).'
-                        '</div>',
-                        unsafe_allow_html=True
-                    )
-        else:
-            data_input_panel(template_df, template_name, state_key, name_key)
-
-        if src_mode == "📋 Dán dữ liệu từ Excel":
-            txt_pasted = st.text_area(
-                "Quét chọn vùng bảng trong Excel (bao gồm cả hàng tiêu đề tên biến ở dòng đầu) rồi dán vào đây:",
-                height=160,
-                key=paste_key,
-                placeholder="Ví dụ:\ntarget_binary\tCRP\tWBC\n0\t10.2\t7.1\n1\t35.1\t12.5\n0\t8.7\t6.8\n1\t22.4\t10.3"
-            )
-            c_act1, c_act2 = st.columns([3, 1])
-            with c_act1:
-                st.button("📥 Nạp / Cập nhật dữ liệu đã dán", type="secondary", use_container_width=True, key=f"{state_key}_btn_apply_paste")
-            with c_act2:
-                if st.button("🗑️ Xóa dữ liệu dán", use_container_width=True, key=f"{state_key}_btn_clear_paste"):
-                    st.session_state[paste_key] = ""
-                    st.session_state[state_key] = None
-                    st.session_state[name_key] = ""
-                    st.rerun()
-
-            if txt_pasted and txt_pasted.strip():
-                parsed_df = _reg_parse_excel_to_df(txt_pasted)
-                if not parsed_df.empty and parsed_df.shape[1] >= 2:
-                    st.session_state[state_key] = parsed_df
-                    st.session_state[name_key] = "Dữ liệu dán từ Excel"
-                    st.caption(f"✅ Đã nhận diện bảng dữ liệu: **{parsed_df.shape[0]} hàng × {parsed_df.shape[1]} cột** ({', '.join(map(str, parsed_df.columns))})")
-                    with st.expander("Xem trước dữ liệu đã dán (20 dòng đầu)", expanded=False):
-                        import html as _html
-                        sub_prev = parsed_df.head(20)
-                        cols_prev = list(sub_prev.columns)
-                        col_aligns = {c: ("center" if pd.api.types.is_numeric_dtype(sub_prev[c]) else "left") for c in cols_prev}
-                        th_html = "".join(
-                            f'<th style="position:sticky;top:0;background:#f1f5f9;color:#0f172a;font-weight:700;'
-                            f'padding:7px 14px;border:1px solid #cbd5e1;text-align:{col_aligns[c]};white-space:nowrap;">'
-                            f'{_html.escape(str(c))}</th>'
-                            for c in cols_prev
-                        )
-                        rows_html = []
-                        for r_idx, (_, row_p) in enumerate(sub_prev.iterrows()):
-                            bg = "#ffffff" if r_idx % 2 == 0 else "#f8fafc"
-                            tds = []
-                            for c in cols_prev:
-                                val = row_p[c]
-                                if pd.isna(val):
-                                    disp = ""
-                                elif isinstance(val, (float, np.floating)) and abs(val - round(val)) < 1e-9:
-                                    disp = str(int(round(val)))
-                                else:
-                                    disp = str(val)
-                                tds.append(
-                                    f'<td style="padding:6px 14px;border:1px solid #e2e8f0;color:#111827;'
-                                    f'text-align:{col_aligns[c]};white-space:nowrap;">{_html.escape(disp)}</td>'
-                                )
-                            rows_html.append(f'<tr style="background:{bg};">{"".join(tds)}</tr>')
-                        tbl_html = (
-                            '<div style="width:fit-content;max-width:100%;max-height:340px;overflow:auto;'
-                            'border:1px solid #cbd5e1;border-radius:6px;margin:4px 0 8px 0;">'
-                            '<table style="border-collapse:collapse;font-family:sans-serif;font-size:13.5px;width:auto;">'
-                            f'<thead><tr>{th_html}</tr></thead>'
-                            f'<tbody>{"".join(rows_html)}</tbody>'
-                            '</table></div>'
-                        )
-                        st.markdown(tbl_html, unsafe_allow_html=True)
-                else:
-                    st.warning("⚠️ Chưa nhận diện được bảng hợp lệ (cần ít nhất 2 cột phân tách bằng Tab từ Excel, dấu chấm phẩy ';' hoặc dấu phẩy ',').")
-        else:
-            data_input_panel(template_df, template_name, state_key, name_key)
-
     def _build_logistic_conclusion(tbl: pd.DataFrame, target_name: str) -> str:
         if tbl is None or tbl.empty:
             return ""
@@ -1905,7 +1767,6 @@ elif section == "Logistic Regression":
         ci_u_col = next((c for c in cols if "upper" in c.lower() or "97.5%" in c.lower()), None)
         if not p_col:
             return ""
-
         sig_items, nonsig_items = [], []
         for _, row in tbl.iterrows():
             term = str(row[term_col]).strip()
@@ -1922,7 +1783,6 @@ elif section == "Logistic Regression":
                     p_txt = f"p = {p_raw}"
                 except ValueError:
                     p_txt = f"p = {p_raw}"
-
             detail = f"**{term}** ("
             if or_col and str(row[or_col]).strip() != "":
                 detail += f"OR = {row[or_col]}"
@@ -1931,12 +1791,10 @@ elif section == "Logistic Regression":
                 detail += f", {p_txt})"
             else:
                 detail += f"{p_txt})"
-
             if is_sig:
                 sig_items.append(detail)
             else:
                 nonsig_items.append(detail)
-
         lines = [f"**Kết luận mô hình hồi quy Logistic (biến kết cục: {target_name}):**"]
         if sig_items:
             lines.append(f"- **Các yếu tố liên quan có ý nghĩa thống kê (p < 0,05):** {'; '.join(sig_items)}.")
@@ -1991,7 +1849,6 @@ elif section == "Logistic Regression":
                 st.pyplot(fig)
                 download_figure_block(fig, "logistic_roc_curve")
                 plt.close(fig)
-
                 conc_log = _build_logistic_conclusion(res["table"], str(target))
                 if conc_log:
                     st.success(conc_log)
@@ -2011,7 +1868,6 @@ elif section == "Linear Regression":
         raw_lines = [ln for ln in str(text).splitlines() if ln.strip()]
         if not raw_lines:
             return pd.DataFrame()
-
         sample_line = raw_lines[0]
         if "\t" in sample_line:
             sep = "\t"
@@ -2021,7 +1877,6 @@ elif section == "Linear Regression":
             sep = ","
         else:
             sep = r"\s+"
-
         rows = []
         for ln in raw_lines:
             if sep == r"\s+":
@@ -2029,12 +1884,10 @@ elif section == "Linear Regression":
             else:
                 parts = [p.strip() for p in ln.split(sep)]
             rows.append(parts)
-
         max_cols = max(len(r) for r in rows)
         if max_cols < 2:
             return pd.DataFrame()
         rows = [r + [""] * (max_cols - len(r)) for r in rows]
-
         def _is_num(val_s: str) -> bool:
             if val_s == "":
                 return False
@@ -2043,12 +1896,10 @@ elif section == "Linear Regression":
                 return True
             except ValueError:
                 return False
-
         first_row = rows[0]
         non_empty_first = [c for c in first_row if c != ""]
         num_in_first = sum(1 for c in non_empty_first if _is_num(c))
         alpha_in_first = sum(1 for c in non_empty_first if re.search(r"[A-Za-zÀ-ỹ]", c))
-
         if len(rows) >= 2 and alpha_in_first >= 1 and num_in_first == 0:
             raw_headers = [first_row[j] if first_row[j] else f"Var_{j+1}" for j in range(max_cols)]
             seen = {}
@@ -2064,10 +1915,8 @@ elif section == "Linear Regression":
         else:
             headers = [f"Var_{j+1}" for j in range(max_cols)]
             data_rows = rows
-
         df_out = pd.DataFrame(data_rows, columns=headers)
         missing_tokens = {"", "NA", "N/A", "na", "n/a", "nan", "NaN", "null", "NULL", ".", "-"}
-
         for col in df_out.columns:
             s_col = df_out[col].astype(str).str.strip()
             s_clean = s_col.replace(list(missing_tokens), np.nan)
@@ -2081,13 +1930,16 @@ elif section == "Linear Regression":
                 df_out[col] = pd.to_numeric(s_clean.str.replace(",", ".", regex=False), errors="coerce")
             else:
                 df_out[col] = s_clean
-
         return df_out
 
     def _reg_data_input_panel(template_df: pd.DataFrame, template_name: str, state_key: str, name_key: str):
         import html as _html
+        import inspect as _inspect
 
-        uid = f"{state_key}_{sub}"
+        caller_frame = _inspect.currentframe().f_back
+        caller_line = caller_frame.f_lineno if caller_frame is not None else 0
+        uid = f"{state_key}_L{caller_line}"
+
         shared_mode_key = f"{state_key}_shared_mode"
         shared_paste_key = f"{state_key}_shared_paste"
         if shared_mode_key not in st.session_state:
