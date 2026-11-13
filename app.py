@@ -1626,7 +1626,42 @@ elif section == "Logistic Regression":
                     st.session_state[name_key] = "Dữ liệu dán từ Excel"
                     st.caption(f"✅ Đã nhận diện bảng dữ liệu: **{parsed_df.shape[0]} hàng × {parsed_df.shape[1]} cột** ({', '.join(map(str, parsed_df.columns))})")
                     with st.expander("Xem trước dữ liệu đã dán (20 dòng đầu)", expanded=False):
-                        st.dataframe(parsed_df.head(20), hide_index=True)
+                        import html as _html
+                        sub_prev = parsed_df.head(20)
+                        cols_prev = list(sub_prev.columns)
+                        col_aligns = {c: ("center" if pd.api.types.is_numeric_dtype(sub_prev[c]) else "left") for c in cols_prev}
+                        th_html = "".join(
+                            f'<th style="position:sticky;top:0;background:#f1f5f9;color:#0f172a;font-weight:700;'
+                            f'padding:7px 14px;border:1px solid #cbd5e1;text-align:{col_aligns[c]};white-space:nowrap;">'
+                            f'{_html.escape(str(c))}</th>'
+                            for c in cols_prev
+                        )
+                        rows_html = []
+                        for r_idx, (_, row_p) in enumerate(sub_prev.iterrows()):
+                            bg = "#ffffff" if r_idx % 2 == 0 else "#f8fafc"
+                            tds = []
+                            for c in cols_prev:
+                                val = row_p[c]
+                                if pd.isna(val):
+                                    disp = ""
+                                elif isinstance(val, (float, np.floating)) and abs(val - round(val)) < 1e-9:
+                                    disp = str(int(round(val)))
+                                else:
+                                    disp = str(val)
+                                tds.append(
+                                    f'<td style="padding:6px 14px;border:1px solid #e2e8f0;color:#111827;'
+                                    f'text-align:{col_aligns[c]};white-space:nowrap;">{_html.escape(disp)}</td>'
+                                )
+                            rows_html.append(f'<tr style="background:{bg};">{"".join(tds)}</tr>')
+                        tbl_html = (
+                            '<div style="width:fit-content;max-width:100%;max-height:340px;overflow:auto;'
+                            'border:1px solid #cbd5e1;border-radius:6px;margin:4px 0 8px 0;">'
+                            '<table style="border-collapse:collapse;font-family:sans-serif;font-size:13.5px;width:auto;">'
+                            f'<thead><tr>{th_html}</tr></thead>'
+                            f'<tbody>{"".join(rows_html)}</tbody>'
+                            '</table></div>'
+                        )
+                        st.markdown(tbl_html, unsafe_allow_html=True)
                 else:
                     st.warning("⚠️ Chưa nhận diện được bảng hợp lệ (cần ít nhất 2 cột phân tách bằng Tab từ Excel, dấu chấm phẩy ';' hoặc dấu phẩy ',').")
         else:
@@ -1861,7 +1896,42 @@ elif section == "Linear Regression":
                     st.session_state[name_key] = "Dữ liệu dán từ Excel"
                     st.caption(f"✅ Đã nhận diện bảng dữ liệu: **{parsed_df.shape[0]} hàng × {parsed_df.shape[1]} cột** ({', '.join(map(str, parsed_df.columns))})")
                     with st.expander("Xem trước dữ liệu đã dán (20 dòng đầu)", expanded=False):
-                        st.dataframe(parsed_df.head(20), hide_index=True)
+                        import html as _html
+                        sub_prev = parsed_df.head(20)
+                        cols_prev = list(sub_prev.columns)
+                        col_aligns = {c: ("center" if pd.api.types.is_numeric_dtype(sub_prev[c]) else "left") for c in cols_prev}
+                        th_html = "".join(
+                            f'<th style="position:sticky;top:0;background:#f1f5f9;color:#0f172a;font-weight:700;'
+                            f'padding:7px 14px;border:1px solid #cbd5e1;text-align:{col_aligns[c]};white-space:nowrap;">'
+                            f'{_html.escape(str(c))}</th>'
+                            for c in cols_prev
+                        )
+                        rows_html = []
+                        for r_idx, (_, row_p) in enumerate(sub_prev.iterrows()):
+                            bg = "#ffffff" if r_idx % 2 == 0 else "#f8fafc"
+                            tds = []
+                            for c in cols_prev:
+                                val = row_p[c]
+                                if pd.isna(val):
+                                    disp = ""
+                                elif isinstance(val, (float, np.floating)) and abs(val - round(val)) < 1e-9:
+                                    disp = str(int(round(val)))
+                                else:
+                                    disp = str(val)
+                                tds.append(
+                                    f'<td style="padding:6px 14px;border:1px solid #e2e8f0;color:#111827;'
+                                    f'text-align:{col_aligns[c]};white-space:nowrap;">{_html.escape(disp)}</td>'
+                                )
+                            rows_html.append(f'<tr style="background:{bg};">{"".join(tds)}</tr>')
+                        tbl_html = (
+                            '<div style="width:fit-content;max-width:100%;max-height:340px;overflow:auto;'
+                            'border:1px solid #cbd5e1;border-radius:6px;margin:4px 0 8px 0;">'
+                            '<table style="border-collapse:collapse;font-family:sans-serif;font-size:13.5px;width:auto;">'
+                            f'<thead><tr>{th_html}</tr></thead>'
+                            f'<tbody>{"".join(rows_html)}</tbody>'
+                            '</table></div>'
+                        )
+                        st.markdown(tbl_html, unsafe_allow_html=True)
                 else:
                     st.warning("⚠️ Chưa nhận diện được bảng hợp lệ (cần ít nhất 2 cột phân tách bằng Tab từ Excel, dấu chấm phẩy ';' hoặc dấu phẩy ',').")
         else:
