@@ -242,7 +242,7 @@ st.markdown(
 <div class="header-banner">
   <h1>Data Analysis in Health Sciences</h1>
   <p style="color: #e2e8f0 !important; margin: 4px 0 0 0; font-size: 15px;">
-    Regression, categorical analysis, quantitative tests, diagnostics, sample size, probability & AI reasoning.
+    <span style="color: #f1f5f9 !important;">Regression, categorical analysis, quantitative tests, diagnostics, sample size, probability & AI reasoning.</span>
   </p>
 </div>
 """,
@@ -2051,71 +2051,7 @@ elif section == "Linear Regression":
             data_input_panel(template_df, template_name, state_key, name_key)
 
         
-        if src_mode == "📋 Dán dữ liệu từ Excel":
-            txt_pasted = st.text_area(
-                "Quét chọn vùng bảng trong Excel (bao gồm cả hàng tiêu đề tên biến ở dòng đầu) rồi dán vào đây:",
-                height=160,
-                key=paste_key,
-                placeholder="Ví dụ:\nY_outcome\tCRP\tWBC\n10.2\t10.2\t7.1\n12.1\t35.1\t12.5\n9.8\t8.7\t6.8\n14.0\t22.4\t10.3"
-            )
-            c_act1, c_act2 = st.columns([3, 1])
-            with c_act1:
-                st.button("📥 Nạp / Cập nhật dữ liệu đã dán", type="secondary", use_container_width=True, key=f"{state_key}_btn_apply_paste")
-            with c_act2:
-                if st.button("🗑️ Xóa dữ liệu dán", use_container_width=True, key=f"{state_key}_btn_clear_paste"):
-                    st.session_state[paste_key] = ""
-                    st.session_state[state_key] = None
-                    st.session_state[name_key] = ""
-                    st.rerun()
-
-            if txt_pasted and txt_pasted.strip():
-                parsed_df = _reg_parse_excel_to_df(txt_pasted)
-                if not parsed_df.empty and parsed_df.shape[1] >= 2:
-                    st.session_state[state_key] = parsed_df
-                    st.session_state[name_key] = "Dữ liệu dán từ Excel"
-                    st.caption(f"✅ Đã nhận diện bảng dữ liệu: **{parsed_df.shape[0]} hàng × {parsed_df.shape[1]} cột** ({', '.join(map(str, parsed_df.columns))})")
-                    with st.expander("Xem trước dữ liệu đã dán (20 dòng đầu)", expanded=False):
-                        import html as _html
-                        sub_prev = parsed_df.head(20)
-                        cols_prev = list(sub_prev.columns)
-                        col_aligns = {c: ("center" if pd.api.types.is_numeric_dtype(sub_prev[c]) else "left") for c in cols_prev}
-                        th_html = "".join(
-                            f'<th style="position:sticky;top:0;background:#f1f5f9;color:#0f172a;font-weight:700;'
-                            f'padding:7px 14px;border:1px solid #cbd5e1;text-align:{col_aligns[c]};white-space:nowrap;">'
-                            f'{_html.escape(str(c))}</th>'
-                            for c in cols_prev
-                        )
-                        rows_html = []
-                        for r_idx, (_, row_p) in enumerate(sub_prev.iterrows()):
-                            bg = "#ffffff" if r_idx % 2 == 0 else "#f8fafc"
-                            tds = []
-                            for c in cols_prev:
-                                val = row_p[c]
-                                if pd.isna(val):
-                                    disp = ""
-                                elif isinstance(val, (float, np.floating)) and abs(val - round(val)) < 1e-9:
-                                    disp = str(int(round(val)))
-                                else:
-                                    disp = str(val)
-                                tds.append(
-                                    f'<td style="padding:6px 14px;border:1px solid #e2e8f0;color:#111827;'
-                                    f'text-align:{col_aligns[c]};white-space:nowrap;">{_html.escape(disp)}</td>'
-                                )
-                            rows_html.append(f'<tr style="background:{bg};">{"".join(tds)}</tr>')
-                        tbl_html = (
-                            '<div style="width:fit-content;max-width:100%;max-height:340px;overflow:auto;'
-                            'border:1px solid #cbd5e1;border-radius:6px;margin:4px 0 8px 0;">'
-                            '<table style="border-collapse:collapse;font-family:sans-serif;font-size:13.5px;width:auto;">'
-                            f'<thead><tr>{th_html}</tr></thead>'
-                            f'<tbody>{"".join(rows_html)}</tbody>'
-                            '</table></div>'
-                        )
-                        st.markdown(tbl_html, unsafe_allow_html=True)
-                else:
-                    st.warning("⚠️ Chưa nhận diện được bảng hợp lệ (cần ít nhất 2 cột phân tách bằng Tab từ Excel, dấu chấm phẩy ';' hoặc dấu phẩy ',').")
-        else:
-            data_input_panel(template_df, template_name, state_key, name_key)
-
+        
     def _build_linear_conclusion(b_tbl: pd.DataFrame, y_name: str, r2_val=None, adj_r2_val=None) -> str:
         if b_tbl is None or b_tbl.empty:
             return ""
