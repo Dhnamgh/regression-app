@@ -241,7 +241,9 @@ st.markdown(
     """
 <div class="header-banner">
   <h1>Data Analysis in Health Sciences</h1>
-  <p>Regression, categorical analysis, quantitative tests, diagnostics, sample size, probability & AI reasoning.</p>
+  <p style="color: #e2e8f0 !important; margin: 4px 0 0 0; font-size: 15px;">
+    Regression, categorical analysis, quantitative tests, diagnostics, sample size, probability & AI reasoning.
+  </p>
 </div>
 """,
     unsafe_allow_html=True
@@ -2048,83 +2050,7 @@ elif section == "Linear Regression":
         else:
             data_input_panel(template_df, template_name, state_key, name_key)
 
-        if src_mode == "📋 Dán dữ liệu từ Excel":
-            col_left, col_right = st.columns([1.05, 1.0])
-            with col_left:
-                txt_pasted = st.text_area(
-                    "Quét chọn vùng bảng trong Excel (gồm hàng tiêu đề) rồi dán vào đây:",
-                    height=210,
-                    key=paste_key,
-                    placeholder="Ví dụ:\ntarget_binary\tCRP\tWBC\n0\t10.2\t7.1\n1\t35.1\t12.5\n0\t8.7\t6.8\n1\t22.4\t10.3"
-                )
-                c_act1, c_act2 = st.columns([2.2, 1])
-                with c_act1:
-                    st.button("📥 Nạp / Cập nhật dữ liệu", type="secondary", use_container_width=True, key=f"{state_key}_btn_apply_paste")
-                with c_act2:
-                    if st.button("🗑️ Xóa", use_container_width=True, key=f"{state_key}_btn_clear_paste"):
-                        st.session_state[paste_key] = ""
-                        st.session_state[state_key] = None
-                        st.session_state[name_key] = ""
-                        st.rerun()
-
-            with col_right:
-                if txt_pasted and txt_pasted.strip():
-                    parsed_df = _reg_parse_excel_to_df(txt_pasted)
-                    if not parsed_df.empty and parsed_df.shape[1] >= 2:
-                        st.session_state[state_key] = parsed_df
-                        st.session_state[name_key] = "Dữ liệu dán từ Excel"
-                        st.markdown(
-                            f'<div style="font-size:13.5px;font-weight:600;color:#15803d;margin-bottom:4px;">'
-                            f'✅ Dữ liệu đã nhận diện ({parsed_df.shape[0]} hàng × {parsed_df.shape[1]} cột):</div>',
-                            unsafe_allow_html=True
-                        )
-                        cols_prev = list(parsed_df.columns)
-                        col_aligns = {c: ("center" if pd.api.types.is_numeric_dtype(parsed_df[c]) else "left") for c in cols_prev}
-                        th_html = "".join(
-                            f'<th style="position:sticky;top:0;z-index:2;background:#f1f5f9;color:#0f172a;font-weight:700;'
-                            f'padding:6px 12px;border:1px solid #cbd5e1;text-align:{col_aligns[c]};white-space:nowrap;">'
-                            f'{_html.escape(str(c))}</th>'
-                            for c in cols_prev
-                        )
-                        rows_html = []
-                        for r_idx, (_, row_p) in enumerate(parsed_df.iterrows()):
-                            bg = "#ffffff" if r_idx % 2 == 0 else "#f8fafc"
-                            tds = []
-                            for c in cols_prev:
-                                val = row_p[c]
-                                if pd.isna(val):
-                                    disp = ""
-                                elif isinstance(val, (float, np.floating)) and abs(val - round(val)) < 1e-9:
-                                    disp = str(int(round(val)))
-                                else:
-                                    disp = str(val)
-                                tds.append(
-                                    f'<td style="padding:5px 12px;border:1px solid #e2e8f0;color:#111827;'
-                                    f'text-align:{col_aligns[c]};white-space:nowrap;">{_html.escape(disp)}</td>'
-                                )
-                            rows_html.append(f'<tr style="background:{bg};">{"".join(tds)}</tr>')
-                        tbl_html = (
-                            '<div style="width:fit-content;max-width:100%;height:210px;overflow:auto;'
-                            '-webkit-overflow-scrolling:touch;border:1px solid #cbd5e1;border-radius:6px;background:#ffffff;">'
-                            '<table style="border-collapse:collapse;font-family:sans-serif;font-size:13.5px;width:auto;">'
-                            f'<thead><tr>{th_html}</tr></thead>'
-                            f'<tbody>{"".join(rows_html)}</tbody>'
-                            '</table></div>'
-                        )
-                        st.markdown(tbl_html, unsafe_allow_html=True)
-                    else:
-                        st.warning("⚠️ Chưa nhận diện được bảng hợp lệ (cần ít nhất 2 cột phân tách bằng Tab, ';' hoặc ',').")
-                else:
-                    st.markdown(
-                        '<div style="height:210px;margin-top:28px;border:1px dashed #cbd5e1;border-radius:6px;'
-                        'display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13.5px;padding:12px;text-align:center;">'
-                        'Bảng dữ liệu đã nhận diện sẽ hiển thị trực tiếp tại đây (kéo ngang & cuộn dọc toàn bộ các dòng).'
-                        '</div>',
-                        unsafe_allow_html=True
-                    )
-        else:
-            data_input_panel(template_df, template_name, state_key, name_key)
-
+        
         if src_mode == "📋 Dán dữ liệu từ Excel":
             txt_pasted = st.text_area(
                 "Quét chọn vùng bảng trong Excel (bao gồm cả hàng tiêu đề tên biến ở dòng đầu) rồi dán vào đây:",
