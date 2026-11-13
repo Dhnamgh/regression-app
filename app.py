@@ -1978,7 +1978,7 @@ elif section == "Linear Regression":
                     key=w_paste_key,
                     on_change=_sync_state,
                     args=(w_paste_key, shared_paste_key),
-                    placeholder="Ví dụ:\ntarget_binary\tCRP\tWBC\n0\t10.2\t7.1\n1\t35.1\t12.5\n0\t8.7\t6.8\n1\t22.4\t10.3"
+                    placeholder="Ví dụ:\nY_outcome\tCRP\tWBC\n10.2\t10.2\t7.1\n12.1\t35.1\t12.5\n9.8\t8.7\t6.8\n14.0\t22.4\t10.3"
                 )
                 c_act1, c_act2 = st.columns([2.2, 1])
                 with c_act1:
