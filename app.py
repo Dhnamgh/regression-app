@@ -473,7 +473,7 @@ def render_copy_excel_button(df: pd.DataFrame, base_name: str):
     components.html(html_code, height=45)
 
 def download_table_block(df: pd.DataFrame, base_name: str, title: str = ""):
-    c1, c2, c3 = st.columns([1, 1, 1])
+    c1, c2, c3, _ = st.columns([1.25, 1.25, 1.25, 4.25])
     with c1:
         st.download_button(
             "Download Excel",
@@ -536,8 +536,9 @@ def show_table(df: pd.DataFrame, title: str = ""):
     aligns = {c: ("center" if _is_num_col(df_disp[c]) else "left") for c in cols}
 
     th_cells = "".join(
-        f'<th style="position:sticky;top:0;background:#f1f5f9;color:#0f172a;font-weight:700;'
-        f'padding:8px 14px;border:1px solid #cbd5e1;text-align:{aligns[c]};white-space:nowrap;">'
+        f'<th style="position:sticky;top:0;background:#e2e8f0 !important;color:#000000 !important;'
+        f'font-weight:700 !important;font-size:14.5px !important;line-height:1.4 !important;'
+        f'padding:8px 14px !important;border:1px solid #94a3b8 !important;text-align:{aligns[c]} !important;white-space:nowrap;">'
         f'{_html.escape(str(c))}</th>'
         for c in cols
     )
@@ -555,16 +556,20 @@ def show_table(df: pd.DataFrame, title: str = ""):
             else:
                 disp = str(val)
             tds.append(
-                f'<td style="padding:7px 14px;border:1px solid #e2e8f0;color:#111827;'
-                f'text-align:{aligns[c]};white-space:nowrap;">{_html.escape(disp)}</td>'
+                f'<td style="padding:7px 14px !important;border:1px solid #cbd5e1 !important;'
+                f'color:#000000 !important;font-weight:500 !important;font-size:14.5px !important;'
+                f'line-height:1.4 !important;text-align:{aligns[c]} !important;white-space:nowrap;">'
+                f'{_html.escape(disp)}</td>'
             )
-        body_rows.append(f'<tr style="background:{bg};">{"".join(tds)}</tr>')
+        body_rows.append(f'<tr style="background:{bg} !important;">{"".join(tds)}</tr>')
 
     table_html = (
         '<div class="analysis-table-wrap" style="display:block;width:fit-content;max-width:100%;overflow-x:auto;'
-        '-webkit-overflow-scrolling:touch;border:1px solid #cbd5e1;border-radius:6px;'
-        'margin:4px 0 12px 0;background:#ffffff;">'
-        '<table class="analysis-table" style="border-collapse:collapse;font-family:sans-serif;font-size:14px;width:auto;">'
+        '-webkit-overflow-scrolling:touch;padding:0 !important;border:1px solid #94a3b8 !important;border-radius:6px;'
+        'margin:4px 0 8px 0;background:#ffffff !important;">'
+        '<table class="analysis-table" style="border-collapse:collapse;margin:0 !important;'
+        'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Arial,sans-serif !important;'
+        'font-size:14.5px !important;width:auto !important;">'
         f'<thead><tr>{th_cells}</tr></thead>'
         f'<tbody>{"".join(body_rows)}</tbody>'
         '</table></div>'
