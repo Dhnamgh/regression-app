@@ -1504,223 +1504,186 @@ if section == "Home":
             st.caption("No linear dataset loaded.")
 
 # -----------------------------
-# HÀM HỖ TRỢ DÁN DỮ LIỆU EXCEL & KẾT LUẬN CHO HỒI QUY
-# -----------------------------
-def _reg_parse_excel_to_df(text: str) -> pd.DataFrame:
-    import re
-    if not text or not str(text).strip():
-        return pd.DataFrame()
-    raw_lines = [ln for ln in str(text).splitlines() if ln.strip()]
-    if not raw_lines:
-        return pd.DataFrame()
-
-    sample_line = raw_lines[0]
-    if "\t" in sample_line:
-        sep = "\t"
-    elif ";" in sample_line:
-        sep = ";"
-    elif "," in sample_line:
-        sep = ","
-    else:
-        sep = r"\s+"
-
-    rows = []
-    for ln in raw_lines:
-        if sep == r"\s+":
-            parts = [p.strip() for p in re.split(r"\s+", ln.strip()) if p.strip()]
-        else:
-            parts = [p.strip() for p in ln.split(sep)]
-        rows.append(parts)
-
-    max_cols = max(len(r) for r in rows)
-    if max_cols < 2:
-        return pd.DataFrame()
-    rows = [r + [""] * (max_cols - len(r)) for r in rows]
-
-    def _is_num(val_s: str) -> bool:
-        if val_s == "":
-            return False
-        try:
-            float(val_s.replace(",", "."))
-            return True
-        except ValueError:
-            return False
-
-    first_row = rows[0]
-    non_empty_first = [c for c in first_row if c != ""]
-    num_in_first = sum(1 for c in non_empty_first if _is_num(c))
-    alpha_in_first = sum(1 for c in non_empty_first if re.search(r"[A-Za-zÀ-ỹ]", c))
-
-    if len(rows) >= 2 and alpha_in_first >= 1 and num_in_first == 0:
-        raw_headers = [first_row[j] if first_row[j] else f"Var_{j+1}" for j in range(max_cols)]
-        seen = {}
-        headers = []
-        for h in raw_headers:
-            if h in seen:
-                seen[h] += 1
-                headers.append(f"{h}_{seen[h]}")
-            else:
-                seen[h] = 0
-                headers.append(h)
-        data_rows = rows[1:]
-    else:
-        headers = [f"Var_{j+1}" for j in range(max_cols)]
-        data_rows = rows
-
-    df_out = pd.DataFrame(data_rows, columns=headers)
-    missing_tokens = {"", "NA", "N/A", "na", "n/a", "nan", "NaN", "null", "NULL", ".", "-"}
-
-    for col in df_out.columns:
-        s_col = df_out[col].astype(str).str.strip()
-        s_clean = s_col.replace(list(missing_tokens), np.nan)
-        non_na = s_clean.dropna()
-        if len(non_na) == 0:
-            df_out[col] = s_clean
-            continue
-        s_num_try = non_na.str.replace(",", ".", regex=False)
-        converted = pd.to_numeric(s_num_try, errors="coerce")
-        if converted.notna().sum() >= max(1, 0.8 * len(non_na)):
-            df_out[col] = pd.to_numeric(s_clean.str.replace(",", ".", regex=False), errors="coerce")
-        else:
-            df_out[col] = s_clean
-
-    return df_out
-
-
-def _reg_data_input_panel(template_df: pd.DataFrame, template_name: str, state_key: str, name_key: str):
-    mode_key = f"{state_key}_input_mode"
-    paste_key = f"{state_key}_paste_text"
-    if mode_key not in st.session_state:
-        st.session_state[mode_key] = "📋 Dán dữ liệu từ Excel"
-    if paste_key not in st.session_state:
-        st.session_state[paste_key] = ""
-
-    src_mode = st.radio(
-        "Nguồn dữ liệu:",
-        ["📋 Dán dữ liệu từ Excel", "📁 Tải file dữ liệu (XLSX/CSV)"],
-        horizontal=True,
-        key=mode_key
-    )
-
-    if src_mode == "📋 Dán dữ liệu từ Excel":
-        txt_pasted = st.text_area(
-            "Quét chọn vùng bảng trong Excel (bao gồm cả hàng tiêu đề tên biến ở dòng đầu) rồi dán vào đây:",
-            height=160,
-            key=paste_key,
-            placeholder="Ví dụ:\ntarget_binary\tCRP\tWBC\n0\t10.2\t7.1\n1\t35.1\t12.5\n0\t8.7\t6.8\n1\t22.4\t10.3"
-        )
-        c_act1, c_act2 = st.columns([3, 1])
-        with c_act1:
-            st.button("📥 Nạp / Cập nhật dữ liệu đã dán", type="secondary", use_container_width=True, key=f"{state_key}_btn_apply_paste")
-        with c_act2:
-            if st.button("🗑️ Xóa dữ liệu dán", use_container_width=True, key=f"{state_key}_btn_clear_paste"):
-                st.session_state[paste_key] = ""
-                st.session_state[state_key] = None
-                st.session_state[name_key] = ""
-                st.rerun()
-
-        if txt_pasted and txt_pasted.strip():
-            parsed_df = _reg_parse_excel_to_df(txt_pasted)
-            if not parsed_df.empty and parsed_df.shape[1] >= 2:
-                st.session_state[state_key] = parsed_df
-                st.session_state[name_key] = "Dữ liệu dán từ Excel"
-                st.caption(f"✅ Đã nhận diện bảng dữ liệu: **{parsed_df.shape[0]} hàng × {parsed_df.shape[1]} cột** ({', '.join(map(str, parsed_df.columns))})")
-                with st.expander("Xem trước dữ liệu đã dán (20 dòng đầu)", expanded=False):
-                    st.dataframe(parsed_df.head(20), use_container_width=True)
-            else:
-                st.warning("⚠️ Chưa nhận diện được bảng hợp lệ (cần ít nhất 2 cột phân tách bằng Tab từ Excel, dấu chấm phẩy ';' hoặc dấu phẩy ',').")
-    else:
-        data_input_panel(template_df, template_name, state_key, name_key)
-
-
-def _build_logistic_conclusion(tbl: pd.DataFrame, target_name: str) -> str:
-    if tbl is None or tbl.empty:
-        return ""
-    cols = list(tbl.columns)
-    term_col = cols[0]
-    p_col = next((c for c in cols if "sig" in c.lower() or "p>" in c.lower() or c.lower() in ["p", "p-value", "pvalue"]), None)
-    or_col = next((c for c in cols if "exp" in c.lower() or c.lower() in ["or", "odds ratio", "aor"]), None)
-    ci_l_col = next((c for c in cols if "lower" in c.lower() or "2.5%" in c.lower()), None)
-    ci_u_col = next((c for c in cols if "upper" in c.lower() or "97.5%" in c.lower()), None)
-    if not p_col:
-        return ""
-
-    sig_items, nonsig_items = [], []
-    for _, row in tbl.iterrows():
-        term = str(row[term_col]).strip()
-        if term.lower() in ["intercept", "constant", "(intercept)", "_cons"]:
-            continue
-        p_raw = str(row[p_col]).strip()
-        is_sig = False
-        if p_raw.startswith("<"):
-            is_sig = True
-            p_txt = f"p {p_raw}"
-        else:
-            try:
-                is_sig = (float(p_raw.replace(",", ".")) < 0.05)
-                p_txt = f"p = {p_raw}"
-            except ValueError:
-                p_txt = f"p = {p_raw}"
-
-        detail = f"**{term}** ("
-        if or_col and str(row[or_col]).strip() != "":
-            detail += f"OR = {row[or_col]}"
-            if ci_l_col and ci_u_col and str(row[ci_l_col]).strip() != "" and str(row[ci_u_col]).strip() != "":
-                detail += f", KTC 95%: {row[ci_l_col]} – {row[ci_u_col]}"
-            detail += f", {p_txt})"
-        else:
-            detail += f"{p_txt})"
-
-        if is_sig:
-            sig_items.append(detail)
-        else:
-            nonsig_items.append(detail)
-
-    lines = [f"**Kết luận mô hình hồi quy Logistic (biến kết cục: {target_name}):**"]
-    if sig_items:
-        lines.append(f"- **Các yếu tố liên quan có ý nghĩa thống kê (p < 0,05):** {'; '.join(sig_items)}.")
-    else:
-        lines.append("- **Không ghi nhận yếu tố độc lập nào có liên quan có ý nghĩa thống kê** với biến kết cục (p ≥ 0,05).")
-    if nonsig_items:
-        lines.append(f"- **Các yếu tố chưa có ý nghĩa thống kê (p ≥ 0,05):** {'; '.join(nonsig_items)}.")
-    return "\n\n".join(lines)
-
-
-def _build_linear_conclusion(b_tbl: pd.DataFrame, y_name: str, r2_val=None, adj_r2_val=None) -> str:
-    if b_tbl is None or b_tbl.empty:
-        return ""
-    sig_items, nonsig_items = [], []
-    for _, row in b_tbl.iterrows():
-        term = str(row["Term"]).strip()
-        if term.lower() in ["intercept", "constant", "(intercept)", "_cons"]:
-            continue
-        p_raw = str(row["Sig."]).strip()
-        p_txt = f"p {p_raw}" if p_raw.startswith("<") else f"p = {p_raw}"
-        is_sig = (str(row.get("Significant (p<0.05)", "")).strip().lower() == "yes")
-        detail = f"**{term}** (B = {row['B']}, KTC 95%: {row['CI 2.5%']} – {row['CI 97.5%']}, {p_txt})"
-        if is_sig:
-            sig_items.append(detail)
-        else:
-            nonsig_items.append(detail)
-
-    r2_note = ""
-    if r2_val is not None and adj_r2_val is not None:
-        r2_note = f" (R² = {r2_val:.3f}, R² hiệu chỉnh = {adj_r2_val:.3f})"
-
-    lines = [f"**Kết luận mô hình hồi quy tuyến tính đa biến (biến phụ thuộc: {y_name}){r2_note}:**"]
-    if sig_items:
-        lines.append(f"- **Các yếu tố có mối liên quan tuyến tính có ý nghĩa thống kê (p < 0,05):** {'; '.join(sig_items)}.")
-    else:
-        lines.append("- **Không ghi nhận biến độc lập nào có mối liên quan có ý nghĩa thống kê** với biến phụ thuộc (p ≥ 0,05).")
-    if nonsig_items:
-        lines.append(f"- **Các yếu tố chưa có ý nghĩa thống kê (p ≥ 0,05):** {'; '.join(nonsig_items)}.")
-    return "\n\n".join(lines)
-
-
-# -----------------------------
 # LOGISTIC REGRESSION
 # -----------------------------
 elif section == "Logistic Regression":
+    def _reg_parse_excel_to_df(text: str) -> pd.DataFrame:
+        import re
+        if not text or not str(text).strip():
+            return pd.DataFrame()
+        raw_lines = [ln for ln in str(text).splitlines() if ln.strip()]
+        if not raw_lines:
+            return pd.DataFrame()
+
+        sample_line = raw_lines[0]
+        if "\t" in sample_line:
+            sep = "\t"
+        elif ";" in sample_line:
+            sep = ";"
+        elif "," in sample_line:
+            sep = ","
+        else:
+            sep = r"\s+"
+
+        rows = []
+        for ln in raw_lines:
+            if sep == r"\s+":
+                parts = [p.strip() for p in re.split(r"\s+", ln.strip()) if p.strip()]
+            else:
+                parts = [p.strip() for p in ln.split(sep)]
+            rows.append(parts)
+
+        max_cols = max(len(r) for r in rows)
+        if max_cols < 2:
+            return pd.DataFrame()
+        rows = [r + [""] * (max_cols - len(r)) for r in rows]
+
+        def _is_num(val_s: str) -> bool:
+            if val_s == "":
+                return False
+            try:
+                float(val_s.replace(",", "."))
+                return True
+            except ValueError:
+                return False
+
+        first_row = rows[0]
+        non_empty_first = [c for c in first_row if c != ""]
+        num_in_first = sum(1 for c in non_empty_first if _is_num(c))
+        alpha_in_first = sum(1 for c in non_empty_first if re.search(r"[A-Za-zÀ-ỹ]", c))
+
+        if len(rows) >= 2 and alpha_in_first >= 1 and num_in_first == 0:
+            raw_headers = [first_row[j] if first_row[j] else f"Var_{j+1}" for j in range(max_cols)]
+            seen = {}
+            headers = []
+            for h in raw_headers:
+                if h in seen:
+                    seen[h] += 1
+                    headers.append(f"{h}_{seen[h]}")
+                else:
+                    seen[h] = 0
+                    headers.append(h)
+            data_rows = rows[1:]
+        else:
+            headers = [f"Var_{j+1}" for j in range(max_cols)]
+            data_rows = rows
+
+        df_out = pd.DataFrame(data_rows, columns=headers)
+        missing_tokens = {"", "NA", "N/A", "na", "n/a", "nan", "NaN", "null", "NULL", ".", "-"}
+
+        for col in df_out.columns:
+            s_col = df_out[col].astype(str).str.strip()
+            s_clean = s_col.replace(list(missing_tokens), np.nan)
+            non_na = s_clean.dropna()
+            if len(non_na) == 0:
+                df_out[col] = s_clean
+                continue
+            s_num_try = non_na.str.replace(",", ".", regex=False)
+            converted = pd.to_numeric(s_num_try, errors="coerce")
+            if converted.notna().sum() >= max(1, 0.8 * len(non_na)):
+                df_out[col] = pd.to_numeric(s_clean.str.replace(",", ".", regex=False), errors="coerce")
+            else:
+                df_out[col] = s_clean
+
+        return df_out
+
+    def _reg_data_input_panel(template_df: pd.DataFrame, template_name: str, state_key: str, name_key: str):
+        mode_key = f"{state_key}_input_mode"
+        paste_key = f"{state_key}_paste_text"
+        if mode_key not in st.session_state:
+            st.session_state[mode_key] = "📋 Dán dữ liệu từ Excel"
+        if paste_key not in st.session_state:
+            st.session_state[paste_key] = ""
+
+        src_mode = st.radio(
+            "Nguồn dữ liệu:",
+            ["📋 Dán dữ liệu từ Excel", "📁 Tải file dữ liệu (XLSX/CSV)"],
+            horizontal=True,
+            key=mode_key
+        )
+
+        if src_mode == "📋 Dán dữ liệu từ Excel":
+            txt_pasted = st.text_area(
+                "Quét chọn vùng bảng trong Excel (bao gồm cả hàng tiêu đề tên biến ở dòng đầu) rồi dán vào đây:",
+                height=160,
+                key=paste_key,
+                placeholder="Ví dụ:\ntarget_binary\tCRP\tWBC\n0\t10.2\t7.1\n1\t35.1\t12.5\n0\t8.7\t6.8\n1\t22.4\t10.3"
+            )
+            c_act1, c_act2 = st.columns([3, 1])
+            with c_act1:
+                st.button("📥 Nạp / Cập nhật dữ liệu đã dán", type="secondary", use_container_width=True, key=f"{state_key}_btn_apply_paste")
+            with c_act2:
+                if st.button("🗑️ Xóa dữ liệu dán", use_container_width=True, key=f"{state_key}_btn_clear_paste"):
+                    st.session_state[paste_key] = ""
+                    st.session_state[state_key] = None
+                    st.session_state[name_key] = ""
+                    st.rerun()
+
+            if txt_pasted and txt_pasted.strip():
+                parsed_df = _reg_parse_excel_to_df(txt_pasted)
+                if not parsed_df.empty and parsed_df.shape[1] >= 2:
+                    st.session_state[state_key] = parsed_df
+                    st.session_state[name_key] = "Dữ liệu dán từ Excel"
+                    st.caption(f"✅ Đã nhận diện bảng dữ liệu: **{parsed_df.shape[0]} hàng × {parsed_df.shape[1]} cột** ({', '.join(map(str, parsed_df.columns))})")
+                    with st.expander("Xem trước dữ liệu đã dán (20 dòng đầu)", expanded=False):
+                        st.dataframe(parsed_df.head(20), use_container_width=True)
+                else:
+                    st.warning("⚠️ Chưa nhận diện được bảng hợp lệ (cần ít nhất 2 cột phân tách bằng Tab từ Excel, dấu chấm phẩy ';' hoặc dấu phẩy ',').")
+        else:
+            data_input_panel(template_df, template_name, state_key, name_key)
+
+    def _build_logistic_conclusion(tbl: pd.DataFrame, target_name: str) -> str:
+        if tbl is None or tbl.empty:
+            return ""
+        cols = list(tbl.columns)
+        term_col = cols[0]
+        p_col = next((c for c in cols if "sig" in c.lower() or "p>" in c.lower() or c.lower() in ["p", "p-value", "pvalue"]), None)
+        or_col = next((c for c in cols if "exp" in c.lower() or c.lower() in ["or", "odds ratio", "aor"]), None)
+        ci_l_col = next((c for c in cols if "lower" in c.lower() or "2.5%" in c.lower()), None)
+        ci_u_col = next((c for c in cols if "upper" in c.lower() or "97.5%" in c.lower()), None)
+        if not p_col:
+            return ""
+
+        sig_items, nonsig_items = [], []
+        for _, row in tbl.iterrows():
+            term = str(row[term_col]).strip()
+            if term.lower() in ["intercept", "constant", "(intercept)", "_cons"]:
+                continue
+            p_raw = str(row[p_col]).strip()
+            is_sig = False
+            if p_raw.startswith("<"):
+                is_sig = True
+                p_txt = f"p {p_raw}"
+            else:
+                try:
+                    is_sig = (float(p_raw.replace(",", ".")) < 0.05)
+                    p_txt = f"p = {p_raw}"
+                except ValueError:
+                    p_txt = f"p = {p_raw}"
+
+            detail = f"**{term}** ("
+            if or_col and str(row[or_col]).strip() != "":
+                detail += f"OR = {row[or_col]}"
+                if ci_l_col and ci_u_col and str(row[ci_l_col]).strip() != "" and str(row[ci_u_col]).strip() != "":
+                    detail += f", KTC 95%: {row[ci_l_col]} – {row[ci_u_col]}"
+                detail += f", {p_txt})"
+            else:
+                detail += f"{p_txt})"
+
+            if is_sig:
+                sig_items.append(detail)
+            else:
+                nonsig_items.append(detail)
+
+        lines = [f"**Kết luận mô hình hồi quy Logistic (biến kết cục: {target_name}):**"]
+        if sig_items:
+            lines.append(f"- **Các yếu tố liên quan có ý nghĩa thống kê (p < 0,05):** {'; '.join(sig_items)}.")
+        else:
+            lines.append("- **Không ghi nhận yếu tố độc lập nào có liên quan có ý nghĩa thống kê** với biến kết cục (p ≥ 0,05).")
+        if nonsig_items:
+            lines.append(f"- **Các yếu tố chưa có ý nghĩa thống kê (p ≥ 0,05):** {'; '.join(nonsig_items)}.")
+        return "\n\n".join(lines)
+
     logistic_template = pd.DataFrame({
         "target_binary": [0, 1, 0, 1],
         "CRP": [10.2, 35.1, 8.7, 22.4],
@@ -1779,6 +1742,161 @@ elif section == "Logistic Regression":
 # LINEAR REGRESSION
 # -----------------------------
 elif section == "Linear Regression":
+    def _reg_parse_excel_to_df(text: str) -> pd.DataFrame:
+        import re
+        if not text or not str(text).strip():
+            return pd.DataFrame()
+        raw_lines = [ln for ln in str(text).splitlines() if ln.strip()]
+        if not raw_lines:
+            return pd.DataFrame()
+
+        sample_line = raw_lines[0]
+        if "\t" in sample_line:
+            sep = "\t"
+        elif ";" in sample_line:
+            sep = ";"
+        elif "," in sample_line:
+            sep = ","
+        else:
+            sep = r"\s+"
+
+        rows = []
+        for ln in raw_lines:
+            if sep == r"\s+":
+                parts = [p.strip() for p in re.split(r"\s+", ln.strip()) if p.strip()]
+            else:
+                parts = [p.strip() for p in ln.split(sep)]
+            rows.append(parts)
+
+        max_cols = max(len(r) for r in rows)
+        if max_cols < 2:
+            return pd.DataFrame()
+        rows = [r + [""] * (max_cols - len(r)) for r in rows]
+
+        def _is_num(val_s: str) -> bool:
+            if val_s == "":
+                return False
+            try:
+                float(val_s.replace(",", "."))
+                return True
+            except ValueError:
+                return False
+
+        first_row = rows[0]
+        non_empty_first = [c for c in first_row if c != ""]
+        num_in_first = sum(1 for c in non_empty_first if _is_num(c))
+        alpha_in_first = sum(1 for c in non_empty_first if re.search(r"[A-Za-zÀ-ỹ]", c))
+
+        if len(rows) >= 2 and alpha_in_first >= 1 and num_in_first == 0:
+            raw_headers = [first_row[j] if first_row[j] else f"Var_{j+1}" for j in range(max_cols)]
+            seen = {}
+            headers = []
+            for h in raw_headers:
+                if h in seen:
+                    seen[h] += 1
+                    headers.append(f"{h}_{seen[h]}")
+                else:
+                    seen[h] = 0
+                    headers.append(h)
+            data_rows = rows[1:]
+        else:
+            headers = [f"Var_{j+1}" for j in range(max_cols)]
+            data_rows = rows
+
+        df_out = pd.DataFrame(data_rows, columns=headers)
+        missing_tokens = {"", "NA", "N/A", "na", "n/a", "nan", "NaN", "null", "NULL", ".", "-"}
+
+        for col in df_out.columns:
+            s_col = df_out[col].astype(str).str.strip()
+            s_clean = s_col.replace(list(missing_tokens), np.nan)
+            non_na = s_clean.dropna()
+            if len(non_na) == 0:
+                df_out[col] = s_clean
+                continue
+            s_num_try = non_na.str.replace(",", ".", regex=False)
+            converted = pd.to_numeric(s_num_try, errors="coerce")
+            if converted.notna().sum() >= max(1, 0.8 * len(non_na)):
+                df_out[col] = pd.to_numeric(s_clean.str.replace(",", ".", regex=False), errors="coerce")
+            else:
+                df_out[col] = s_clean
+
+        return df_out
+
+    def _reg_data_input_panel(template_df: pd.DataFrame, template_name: str, state_key: str, name_key: str):
+        mode_key = f"{state_key}_input_mode"
+        paste_key = f"{state_key}_paste_text"
+        if mode_key not in st.session_state:
+            st.session_state[mode_key] = "📋 Dán dữ liệu từ Excel"
+        if paste_key not in st.session_state:
+            st.session_state[paste_key] = ""
+
+        src_mode = st.radio(
+            "Nguồn dữ liệu:",
+            ["📋 Dán dữ liệu từ Excel", "📁 Tải file dữ liệu (XLSX/CSV)"],
+            horizontal=True,
+            key=mode_key
+        )
+
+        if src_mode == "📋 Dán dữ liệu từ Excel":
+            txt_pasted = st.text_area(
+                "Quét chọn vùng bảng trong Excel (bao gồm cả hàng tiêu đề tên biến ở dòng đầu) rồi dán vào đây:",
+                height=160,
+                key=paste_key,
+                placeholder="Ví dụ:\nY_outcome\tCRP\tWBC\n10.2\t10.2\t7.1\n12.1\t35.1\t12.5\n9.8\t8.7\t6.8\n14.0\t22.4\t10.3"
+            )
+            c_act1, c_act2 = st.columns([3, 1])
+            with c_act1:
+                st.button("📥 Nạp / Cập nhật dữ liệu đã dán", type="secondary", use_container_width=True, key=f"{state_key}_btn_apply_paste")
+            with c_act2:
+                if st.button("🗑️ Xóa dữ liệu dán", use_container_width=True, key=f"{state_key}_btn_clear_paste"):
+                    st.session_state[paste_key] = ""
+                    st.session_state[state_key] = None
+                    st.session_state[name_key] = ""
+                    st.rerun()
+
+            if txt_pasted and txt_pasted.strip():
+                parsed_df = _reg_parse_excel_to_df(txt_pasted)
+                if not parsed_df.empty and parsed_df.shape[1] >= 2:
+                    st.session_state[state_key] = parsed_df
+                    st.session_state[name_key] = "Dữ liệu dán từ Excel"
+                    st.caption(f"✅ Đã nhận diện bảng dữ liệu: **{parsed_df.shape[0]} hàng × {parsed_df.shape[1]} cột** ({', '.join(map(str, parsed_df.columns))})")
+                    with st.expander("Xem trước dữ liệu đã dán (20 dòng đầu)", expanded=False):
+                        st.dataframe(parsed_df.head(20), use_container_width=True)
+                else:
+                    st.warning("⚠️ Chưa nhận diện được bảng hợp lệ (cần ít nhất 2 cột phân tách bằng Tab từ Excel, dấu chấm phẩy ';' hoặc dấu phẩy ',').")
+        else:
+            data_input_panel(template_df, template_name, state_key, name_key)
+
+    def _build_linear_conclusion(b_tbl: pd.DataFrame, y_name: str, r2_val=None, adj_r2_val=None) -> str:
+        if b_tbl is None or b_tbl.empty:
+            return ""
+        sig_items, nonsig_items = [], []
+        for _, row in b_tbl.iterrows():
+            term = str(row["Term"]).strip()
+            if term.lower() in ["intercept", "constant", "(intercept)", "_cons"]:
+                continue
+            p_raw = str(row["Sig."]).strip()
+            p_txt = f"p {p_raw}" if p_raw.startswith("<") else f"p = {p_raw}"
+            is_sig = (str(row.get("Significant (p<0.05)", "")).strip().lower() == "yes")
+            detail = f"**{term}** (B = {row['B']}, KTC 95%: {row['CI 2.5%']} – {row['CI 97.5%']}, {p_txt})"
+            if is_sig:
+                sig_items.append(detail)
+            else:
+                nonsig_items.append(detail)
+
+        r2_note = ""
+        if r2_val is not None and adj_r2_val is not None:
+            r2_note = f" (R² = {r2_val:.3f}, R² hiệu chỉnh = {adj_r2_val:.3f})"
+
+        lines = [f"**Kết luận mô hình hồi quy tuyến tính đa biến (biến phụ thuộc: {y_name}){r2_note}:**"]
+        if sig_items:
+            lines.append(f"- **Các yếu tố có mối liên quan tuyến tính có ý nghĩa thống kê (p < 0,05):** {'; '.join(sig_items)}.")
+        else:
+            lines.append("- **Không ghi nhận biến độc lập nào có mối liên quan có ý nghĩa thống kê** với biến phụ thuộc (p ≥ 0,05).")
+        if nonsig_items:
+            lines.append(f"- **Các yếu tố chưa có ý nghĩa thống kê (p ≥ 0,05):** {'; '.join(nonsig_items)}.")
+        return "\n\n".join(lines)
+
     linear_template = pd.DataFrame({
         "Y_outcome": [10.2, 12.1, 9.8, 14.0],
         "CRP": [10.2, 35.1, 8.7, 22.4],
@@ -1818,7 +1936,6 @@ elif section == "Linear Regression":
                 show_table(vif_df, "Collinearity Statistics (VIF)")
                 download_table_block(vif_df, "linear_vif", "VIF")
 
-                # Nhận xét nhanh các giả định hồi quy tuyến tính
                 diag_notes = []
                 if not np.isnan(sh_p):
                     diag_notes.append(
