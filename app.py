@@ -262,21 +262,18 @@ div[data-baseweb="select"] * {
     opacity: 1 !important;
 }
 
-/* 2. Dòng mô tả trên thanh tiêu đề xanh đậm hiện màu trắng sáng rõ */
-[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] p,
-[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] span,
-[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] div {
+/* 2. Dòng mô tả trên thanh tiêu đề xanh đậm hiện màu trắng sáng rõ (không lọt vào các hàng chia cột) */
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3):not([data-testid="stHorizontalBlock"]):not([data-testid="stHorizontalBlock"] *) [data-testid="stMarkdownContainer"] p,
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3):not([data-testid="stHorizontalBlock"]):not([data-testid="stHorizontalBlock"] *) [data-testid="stMarkdownContainer"] span,
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3):not([data-testid="stHorizontalBlock"]):not([data-testid="stHorizontalBlock"] *) [data-testid="stMarkdownContainer"] div {
     color: #ffffff !important;
     opacity: 1 !important;
 }
 
-/* 3. Khóa màu đen đậm sắc nét cho tiêu đề cột (Group, Category 1...), nhãn Rows/Columns và các nút phụ ở vùng nội dung chính */
-[data-testid="stMain"] [data-testid="column"] [data-testid="stMarkdownContainer"] div,
-[data-testid="stMain"] [data-testid="column"] [data-testid="stMarkdownContainer"] p,
-[data-testid="stMain"] [data-testid="column"] [data-testid="stMarkdownContainer"] span,
-[data-testid="stMain"] [data-testid="stColumn"] [data-testid="stMarkdownContainer"] div,
-[data-testid="stMain"] [data-testid="stColumn"] [data-testid="stMarkdownContainer"] p,
-[data-testid="stMain"] [data-testid="stColumn"] [data-testid="stMarkdownContainer"] span,
+/* 3. Khóa màu đen đậm sắc nét cho tiêu đề cột (Group, Category 1...), nhãn Rows/Columns và các nút phụ */
+[data-testid="stMain"] [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] div,
+[data-testid="stMain"] [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stMain"] [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] span,
 [data-testid="stMain"] [data-testid="stWidgetLabel"],
 [data-testid="stMain"] [data-testid="stWidgetLabel"] p,
 [data-testid="stMain"] [data-testid="stWidgetLabel"] label,
