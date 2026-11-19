@@ -258,11 +258,25 @@ div[data-baseweb="select"] * {
     opacity: 1 !important;
 }
 
-/* 2. Dòng mô tả trên thanh tiêu đề xanh đậm hiện màu trắng sáng rõ */
-[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] p,
-[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] span,
-[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] div {
+/* 2. Dòng mô tả trên thanh tiêu đề xanh đậm: chỉ áp dụng cho duy nhất banner đầu trang (first-of-type) */
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:first-of-type [data-testid="stMarkdownContainer"] p,
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:first-of-type [data-testid="stMarkdownContainer"] span,
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:first-of-type [data-testid="stMarkdownContainer"] div {
     color: #ffffff !important;
+    opacity: 1 !important;
+}
+
+/* Giữ màu đen đậm sắc nét cho tiêu đề cột (Group, Category 1...), nhãn Rows/Columns và các nút phụ */
+[data-testid="stMain"] [data-testid="stColumn"] [data-testid="stMarkdownContainer"] div,
+[data-testid="stMain"] [data-testid="stColumn"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stMain"] [data-testid="stWidgetLabel"],
+[data-testid="stMain"] [data-testid="stWidgetLabel"] p,
+[data-testid="stMain"] [data-testid="stWidgetLabel"] label,
+[data-testid="stMain"] [data-testid="stDownloadButton"] button,
+[data-testid="stMain"] [data-testid="stDownloadButton"] button p,
+[data-testid="stMain"] button[kind="secondary"],
+[data-testid="stMain"] button[kind="secondary"] p {
+    color: #0f172a !important;
     opacity: 1 !important;
 }
 
