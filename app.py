@@ -232,7 +232,82 @@ div[data-baseweb="select"] * {
 .analysis-table tbody tr:nth-child(even){
   background: #f8fafc;
 }
+/* Chữ mô tả trên thanh tiêu đề xanh đậm hiện màu trắng sáng rõ như tiêu đề chính */
+[data-testid="stMarkdownContainer"] div[style*="background"] p,
+[data-testid="stMarkdownContainer"] div[style*="linear-gradient"] p,
+[data-testid="stMarkdownContainer"] .hero-banner p,
+[data-testid="stMarkdownContainer"] .hero-banner div,
+[data-testid="stMarkdownContainer"] .hero-banner span {
+    color: #ffffff !important;
+    opacity: 1 !important;
+}
 
+/* Bảng nhập liệu & ô nhập liệu: viền rõ, nền trắng tinh, chữ đen sắc nét */
+[data-testid="stDataFrame"] {
+    border: 1.5px solid #64748b !important;
+    border-radius: 6px !important;
+    background: #ffffff !important;
+    --gdg-text-dark: #000000 !important;
+    --gdg-text-medium: #000000 !important;
+    --gdg-text-light: #000000 !important;
+    --gdg-text-header: #000000 !important;
+    --gdg-text-header-selected: #000000 !important;
+    --gdg-bg-cell: #ffffff !important;
+    --gdg-bg-cell-medium: #f8fafc !important;
+    --gdg-bg-header: #e2e8f0 !important;
+    --gdg-bg-header-has-focus: #cbd5e1 !important;
+    --gdg-bg-header-hovered: #cbd5e1 !important;
+    --gdg-border-color: #94a3b8 !important;
+    --gdg-horizontal-border-color: #cbd5e1 !important;
+    --gdg-header-font-style: 700 14.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
+    --gdg-base-font-style: 600 14.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
+}
+
+[data-testid="stDataFrame"] input,
+[data-testid="stDataFrame"] textarea {
+    color: #000000 !important;
+    font-weight: 600 !important;
+    font-size: 14.5px !important;
+    background-color: #ffffff !important;
+}
+
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] p,
+[data-testid="stWidgetLabel"] label {
+    color: #0f172a !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    opacity: 1 !important;
+}
+
+[data-testid="stNumberInput"] > div,
+[data-testid="stTextInput"] > div > div,
+[data-testid="stTextArea"] > div > div,
+[data-testid="stSelectbox"] > div > div,
+[data-testid="stMultiSelect"] > div > div {
+    border: 1.2px solid #64748b !important;
+    background-color: #ffffff !important;
+}
+
+[data-testid="stNumberInput"] input,
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea {
+    color: #000000 !important;
+    font-weight: 600 !important;
+    font-size: 14.5px !important;
+}
+
+[data-testid="stExpander"] details {
+    border: 1.2px solid #64748b !important;
+    border-radius: 6px !important;
+    background-color: #ffffff !important;
+}
+
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary p {
+    color: #0f172a !important;
+    font-weight: 600 !important;
+}
 </style>
 """,
     unsafe_allow_html=True
