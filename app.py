@@ -232,34 +232,44 @@ div[data-baseweb="select"] * {
 .analysis-table tbody tr:nth-child(even){
   background: #f8fafc;
 }
-/* 1. Khôi phục nền xanh đậm & chữ trắng cho các mục con trong thanh Navigation bên trái */
+/* 1. Khôi phục nền tối & chữ trắng cho hộp mở rộng / danh sách con trong thanh Navigation bên trái */
+[data-testid="stSidebar"] [data-testid="stExpander"],
+[data-testid="stSidebar"] [data-testid="stExpander"] details,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"],
 [data-testid="stSidebar"] [data-testid="stRadio"],
 [data-testid="stSidebar"] [data-testid="stRadio"] > div,
 [data-testid="stSidebar"] [role="radiogroup"],
 [data-testid="stSidebar"] [role="radiogroup"] > label {
-    background: transparent !important;
-    background-color: transparent !important;
-    border: none !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    border-color: rgba(255, 255, 255, 0.25) !important;
 }
+
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span,
+[data-testid="stSidebar"] [data-testid="stExpander"] svg,
 [data-testid="stSidebar"] [role="radiogroup"] label,
 [data-testid="stSidebar"] [role="radiogroup"] p,
 [data-testid="stSidebar"] [role="radiogroup"] span,
 [data-testid="stSidebar"] [role="radiogroup"] div {
     color: #ffffff !important;
+    fill: #ffffff !important;
     opacity: 1 !important;
 }
 
-/* 2. Dòng mô tả dưới tiêu đề chính trên banner xanh đậm hiện màu trắng sáng rõ */
-[data-testid="stMainBlockContainer"] [data-testid="element-container"]:nth-child(-n+2) [data-testid="stMarkdownContainer"] *,
-section.main [data-testid="stVerticalBlock"] > [data-testid="element-container"]:nth-child(-n+2) [data-testid="stMarkdownContainer"] * {
+/* 2. Dòng mô tả trên thanh tiêu đề xanh đậm hiện màu trắng sáng rõ */
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] p,
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] span,
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] div {
     color: #ffffff !important;
     opacity: 1 !important;
 }
 
-/* 3. Nhãn (Rows, Columns...), ô nhập số, ô nhập chữ & thanh mở rộng rõ nét */
-[data-testid="stWidgetLabel"],
-[data-testid="stWidgetLabel"] p,
-[data-testid="stWidgetLabel"] label {
+/* 3. Nhãn (Rows, Columns...), ô nhập số, ô nhập chữ & thanh mở rộng (chỉ áp dụng ở vùng nội dung chính) */
+[data-testid="stMain"] [data-testid="stWidgetLabel"],
+[data-testid="stMain"] [data-testid="stWidgetLabel"] p,
+[data-testid="stMain"] [data-testid="stWidgetLabel"] label {
     color: #0f172a !important;
     font-weight: 600 !important;
     font-size: 14px !important;
@@ -283,14 +293,14 @@ section.main [data-testid="stVerticalBlock"] > [data-testid="element-container"]
     font-size: 14.5px !important;
 }
 
-[data-testid="stExpander"] details {
+[data-testid="stMain"] [data-testid="stExpander"] details {
     border: 1.2px solid #64748b !important;
     border-radius: 6px !important;
     background-color: #ffffff !important;
 }
 
-[data-testid="stExpander"] summary,
-[data-testid="stExpander"] summary p {
+[data-testid="stMain"] [data-testid="stExpander"] summary,
+[data-testid="stMain"] [data-testid="stExpander"] summary p {
     color: #0f172a !important;
     font-weight: 600 !important;
 }
