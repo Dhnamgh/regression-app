@@ -232,7 +232,7 @@ div[data-baseweb="select"] * {
 .analysis-table tbody tr:nth-child(even){
   background: #f8fafc;
 }
-/* 1. Khôi phục nền tối & chữ trắng cho hộp mở rộng / danh sách con trong thanh Navigation bên trái */
+/* 1. Khôi phục nền tối & chữ trắng sáng rõ cho toàn bộ nút và menu con trong thanh Navigation bên trái */
 [data-testid="stSidebar"] [data-testid="stExpander"],
 [data-testid="stSidebar"] [data-testid="stExpander"] details,
 [data-testid="stSidebar"] [data-testid="stExpander"] summary,
@@ -246,6 +246,10 @@ div[data-baseweb="select"] * {
     border-color: rgba(255, 255, 255, 0.25) !important;
 }
 
+[data-testid="stSidebar"] button,
+[data-testid="stSidebar"] button p,
+[data-testid="stSidebar"] button span,
+[data-testid="stSidebar"] button div,
 [data-testid="stSidebar"] [data-testid="stExpander"] summary p,
 [data-testid="stSidebar"] [data-testid="stExpander"] summary span,
 [data-testid="stSidebar"] [data-testid="stExpander"] svg,
@@ -258,30 +262,30 @@ div[data-baseweb="select"] * {
     opacity: 1 !important;
 }
 
-/* 2. Dòng mô tả trên thanh tiêu đề xanh đậm hiện màu trắng sáng rõ (chỉ nhắm đúng khối banner ngoài cùng) */
-[data-testid="stMainBlockContainer"] > div > [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] p,
-[data-testid="stMainBlockContainer"] > div > [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] span,
-[data-testid="stMainBlockContainer"] > div > [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] div {
+/* 2. Dòng mô tả trên thanh tiêu đề xanh đậm hiện màu trắng sáng rõ */
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] p,
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] span,
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(-n+3) [data-testid="stMarkdownContainer"] div {
     color: #ffffff !important;
     opacity: 1 !important;
 }
 
-/* 3. Khóa màu đen đậm sắc nét cho tiêu đề cột (Group, Category 1...), nhãn Rows/Columns và các nút phụ */
-[data-testid="column"] [data-testid="stMarkdownContainer"] div,
-[data-testid="column"] [data-testid="stMarkdownContainer"] p,
-[data-testid="column"] [data-testid="stMarkdownContainer"] span,
-[data-testid="stColumn"] [data-testid="stMarkdownContainer"] div,
-[data-testid="stColumn"] [data-testid="stMarkdownContainer"] p,
-[data-testid="stColumn"] [data-testid="stMarkdownContainer"] span,
-[data-testid="stWidgetLabel"],
-[data-testid="stWidgetLabel"] p,
-[data-testid="stWidgetLabel"] label,
-[data-testid="stDownloadButton"] button,
-[data-testid="stDownloadButton"] button p,
-[data-testid="stDownloadButton"] button span,
-button[kind="secondary"],
-button[kind="secondary"] p,
-button[kind="secondary"] span {
+/* 3. Khóa màu đen đậm sắc nét cho tiêu đề cột (Group, Category 1...), nhãn Rows/Columns và các nút phụ ở vùng nội dung chính */
+[data-testid="stMain"] [data-testid="column"] [data-testid="stMarkdownContainer"] div,
+[data-testid="stMain"] [data-testid="column"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stMain"] [data-testid="column"] [data-testid="stMarkdownContainer"] span,
+[data-testid="stMain"] [data-testid="stColumn"] [data-testid="stMarkdownContainer"] div,
+[data-testid="stMain"] [data-testid="stColumn"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stMain"] [data-testid="stColumn"] [data-testid="stMarkdownContainer"] span,
+[data-testid="stMain"] [data-testid="stWidgetLabel"],
+[data-testid="stMain"] [data-testid="stWidgetLabel"] p,
+[data-testid="stMain"] [data-testid="stWidgetLabel"] label,
+[data-testid="stMain"] [data-testid="stDownloadButton"] button,
+[data-testid="stMain"] [data-testid="stDownloadButton"] button p,
+[data-testid="stMain"] [data-testid="stDownloadButton"] button span,
+[data-testid="stMain"] button[kind="secondary"],
+[data-testid="stMain"] button[kind="secondary"] p,
+[data-testid="stMain"] button[kind="secondary"] span {
     color: #0f172a !important;
     opacity: 1 !important;
 }
