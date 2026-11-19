@@ -232,45 +232,31 @@ div[data-baseweb="select"] * {
 .analysis-table tbody tr:nth-child(even){
   background: #f8fafc;
 }
-/* Chữ mô tả trên thanh tiêu đề xanh đậm hiện màu trắng sáng rõ như tiêu đề chính */
-[data-testid="stMarkdownContainer"] div[style*="background"] p,
-[data-testid="stMarkdownContainer"] div[style*="linear-gradient"] p,
-[data-testid="stMarkdownContainer"] .hero-banner p,
-[data-testid="stMarkdownContainer"] .hero-banner div,
-[data-testid="stMarkdownContainer"] .hero-banner span {
+/* 1. Khôi phục nền xanh đậm & chữ trắng cho các mục con trong thanh Navigation bên trái */
+[data-testid="stSidebar"] [data-testid="stRadio"],
+[data-testid="stSidebar"] [data-testid="stRadio"] > div,
+[data-testid="stSidebar"] [role="radiogroup"],
+[data-testid="stSidebar"] [role="radiogroup"] > label {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+}
+[data-testid="stSidebar"] [role="radiogroup"] label,
+[data-testid="stSidebar"] [role="radiogroup"] p,
+[data-testid="stSidebar"] [role="radiogroup"] span,
+[data-testid="stSidebar"] [role="radiogroup"] div {
     color: #ffffff !important;
     opacity: 1 !important;
 }
 
-/* Bảng nhập liệu & ô nhập liệu: viền rõ, nền trắng tinh, chữ đen sắc nét */
-[data-testid="stDataFrame"] {
-    border: 1.5px solid #64748b !important;
-    border-radius: 6px !important;
-    background: #ffffff !important;
-    --gdg-text-dark: #000000 !important;
-    --gdg-text-medium: #000000 !important;
-    --gdg-text-light: #000000 !important;
-    --gdg-text-header: #000000 !important;
-    --gdg-text-header-selected: #000000 !important;
-    --gdg-bg-cell: #ffffff !important;
-    --gdg-bg-cell-medium: #f8fafc !important;
-    --gdg-bg-header: #e2e8f0 !important;
-    --gdg-bg-header-has-focus: #cbd5e1 !important;
-    --gdg-bg-header-hovered: #cbd5e1 !important;
-    --gdg-border-color: #94a3b8 !important;
-    --gdg-horizontal-border-color: #cbd5e1 !important;
-    --gdg-header-font-style: 700 14.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
-    --gdg-base-font-style: 600 14.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
+/* 2. Dòng mô tả dưới tiêu đề chính trên banner xanh đậm hiện màu trắng sáng rõ */
+[data-testid="stMainBlockContainer"] [data-testid="element-container"]:nth-child(-n+2) [data-testid="stMarkdownContainer"] *,
+section.main [data-testid="stVerticalBlock"] > [data-testid="element-container"]:nth-child(-n+2) [data-testid="stMarkdownContainer"] * {
+    color: #ffffff !important;
+    opacity: 1 !important;
 }
 
-[data-testid="stDataFrame"] input,
-[data-testid="stDataFrame"] textarea {
-    color: #000000 !important;
-    font-weight: 600 !important;
-    font-size: 14.5px !important;
-    background-color: #ffffff !important;
-}
-
+/* 3. Nhãn (Rows, Columns...), ô nhập số, ô nhập chữ & thanh mở rộng rõ nét */
 [data-testid="stWidgetLabel"],
 [data-testid="stWidgetLabel"] p,
 [data-testid="stWidgetLabel"] label {
@@ -313,18 +299,114 @@ div[data-baseweb="select"] * {
     unsafe_allow_html=True
 )
 _orig_data_editor = st.data_editor
+
 def _clean_data_editor(data, *args, **kwargs):
-    kwargs["use_container_width"] = False
-    if isinstance(data, pd.DataFrame):
-        n_rows = len(data)
-        hide_idx = kwargs.get("hide_index", False)
-        if "hide_index" not in kwargs and isinstance(data.index, pd.RangeIndex):
-            kwargs["hide_index"] = True
-            hide_idx = True
-        n_cols = data.shape[1] + (0 if hide_idx else 1)
-        kwargs.setdefault("height", (n_rows + 1) * 36 + 10)
-        kwargs.setdefault("width", max(320, n_cols * 145 + 16))
-    return _orig_data_editor(data, *args, **kwargs)
+    if not isinstance(data, pd.DataFrame) or len(data) == 0 or len(data) > 15 or data.shape[1] > 8:
+        kwargs["use_container_width"] = False
+        return _orig_data_editor(data, *args, **kwargs)
+
+    import html as _html
+    key_base = str(kwargs.get("key", f"ed_{abs(hash(tuple(data.columns))) % 100000}"))
+    hide_idx = kwargs.get("hide_index", isinstance(data.index, pd.RangeIndex))
+    disabled_arg = kwargs.get("disabled", False)
+    if disabled_arg is True:
+        disabled_cols = set(data.columns)
+    elif isinstance(disabled_arg, (list, tuple, set)):
+        disabled_cols = set(disabled_arg)
+    else:
+        disabled_cols = set()
+
+    df_res = data.copy()
+    data_cols = list(df_res.columns)
+    show_idx = not hide_idx
+    idx_label = str(df_res.index.name) if df_res.index.name else ""
+
+    snap_key = f"{key_base}_snap"
+    prev_snap = st.session_state.get(snap_key, None)
+    external_reset = (
+        prev_snap is None
+        or prev_snap.shape != df_res.shape
+        or list(prev_snap.columns) != data_cols
+        or list(prev_snap.index) != list(df_res.index)
+        or not prev_snap.equals(df_res)
+    )
+
+    total_cols = len(data_cols) + (1 if show_idx else 0)
+    col_widths = [1.15] * total_cols
+    spacer = max(0.2, 8.2 - sum(col_widths))
+    ratios = col_widths + [spacer]
+
+    hdr_cols = st.columns(ratios, gap="small")
+    c_ptr = 0
+    if show_idx:
+        hdr_cols[c_ptr].markdown(
+            f'<div style="background:#e2e8f0;color:#000000 !important;font-weight:700;font-size:14.5px;'
+            f'padding:7px 10px;border:1px solid #94a3b8;border-radius:4px;text-align:left;white-space:nowrap;">'
+            f'{_html.escape(idx_label) if idx_label else "&nbsp;"}</div>',
+            unsafe_allow_html=True
+        )
+        c_ptr += 1
+
+    for col in data_cols:
+        is_num = pd.api.types.is_numeric_dtype(df_res[col])
+        align = "center" if is_num else "left"
+        hdr_cols[c_ptr].markdown(
+            f'<div style="background:#e2e8f0;color:#000000 !important;font-weight:700;font-size:14.5px;'
+            f'padding:7px 10px;border:1px solid #94a3b8;border-radius:4px;text-align:{align};white-space:nowrap;">'
+            f'{_html.escape(str(col))}</div>',
+            unsafe_allow_html=True
+        )
+        c_ptr += 1
+
+    for r_i in range(len(df_res)):
+        row_cols = st.columns(ratios, gap="small")
+        c_ptr = 0
+        if show_idx:
+            idx_val = str(df_res.index[r_i])
+            row_cols[c_ptr].markdown(
+                f'<div style="background:#f8fafc;color:#000000 !important;font-weight:600;font-size:14.5px;'
+                f'padding:7px 10px;border:1px solid #cbd5e1;border-radius:4px;white-space:nowrap;">'
+                f'{_html.escape(idx_val)}</div>',
+                unsafe_allow_html=True
+            )
+            c_ptr += 1
+
+        for c_i, col in enumerate(data_cols):
+            val = df_res.iloc[r_i, c_i]
+            cell_key = f"{key_base}_r{r_i}_c{c_i}"
+            is_dis = col in disabled_cols
+            if pd.api.types.is_integer_dtype(df_res[col]):
+                v_int = 0 if pd.isna(val) else int(val)
+                if external_reset or cell_key not in st.session_state:
+                    st.session_state[cell_key] = v_int
+                new_v = row_cols[c_ptr].number_input(
+                    f"{col}_{r_i}", step=1,
+                    key=cell_key, label_visibility="collapsed", disabled=is_dis
+                )
+                df_res.iloc[r_i, c_i] = int(new_v)
+            elif pd.api.types.is_float_dtype(df_res[col]):
+                v_flt = 0.0 if pd.isna(val) else float(val)
+                if external_reset or cell_key not in st.session_state:
+                    st.session_state[cell_key] = v_flt
+                new_v = row_cols[c_ptr].number_input(
+                    f"{col}_{r_i}", step=0.1,
+                    key=cell_key, label_visibility="collapsed", disabled=is_dis
+                )
+                df_res.iloc[r_i, c_i] = float(new_v)
+            else:
+                v_str = "" if pd.isna(val) else str(val)
+                if external_reset or cell_key not in st.session_state:
+                    st.session_state[cell_key] = v_str
+                new_v = row_cols[c_ptr].text_input(
+                    f"{col}_{r_i}",
+                    key=cell_key, label_visibility="collapsed", disabled=is_dis
+                )
+                df_res.iloc[r_i, c_i] = new_v
+            c_ptr += 1
+
+    st.session_state[snap_key] = df_res.copy()
+    return df_res
+
 st.data_editor = _clean_data_editor
 st.markdown(
     """
