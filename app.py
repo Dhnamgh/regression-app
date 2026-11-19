@@ -237,7 +237,20 @@ div[data-baseweb="select"] * {
 """,
     unsafe_allow_html=True
 )
-
+_orig_data_editor = st.data_editor
+def _clean_data_editor(data, *args, **kwargs):
+    kwargs["use_container_width"] = False
+    if isinstance(data, pd.DataFrame):
+        n_rows = len(data)
+        hide_idx = kwargs.get("hide_index", False)
+        if "hide_index" not in kwargs and isinstance(data.index, pd.RangeIndex):
+            kwargs["hide_index"] = True
+            hide_idx = True
+        n_cols = data.shape[1] + (0 if hide_idx else 1)
+        kwargs.setdefault("height", (n_rows + 1) * 36 + 10)
+        kwargs.setdefault("width", max(320, n_cols * 145 + 16))
+    return _orig_data_editor(data, *args, **kwargs)
+st.data_editor = _clean_data_editor
 st.markdown(
     """
 <div class="header-banner">
