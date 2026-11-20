@@ -447,6 +447,585 @@ st.markdown(
 st.write("")
 
 # =========================================================
+# Cohen's Kappa (Unweighted & Weighted) & Effect Size Helpers
+# =========================================================
+def _interpret_cohen_d(d_abs: float) -> str:
+    if not np.isfinite(d_abs):
+        return "Không xác định"
+    if d_abs < 0.20:
+        return "Rất nhỏ / Không đáng kể (< 0,20)"
+    elif d_abs < 0.50:
+        return "Nhỏ (0,20 – 0,49)"
+    elif d_abs < 0.80:
+        return "Trung bình (0,50 – 0,79)"
+    else:
+        return "Lớn (≥ 0,80)"
+
+
+def _interpret_r_or_w(val_abs: float) -> str:
+    if not np.isfinite(val_abs):
+        return "Không xác định"
+    if val_abs < 0.10:
+        return "Rất nhỏ / Không đáng kể (< 0,10)"
+    elif val_abs < 0.30:
+        return "Nhỏ (0,10 – 0,29)"
+    elif val_abs < 0.50:
+        return "Trung bình (0,30 – 0,49)"
+    else:
+        return "Lớn (≥ 0,50)"
+
+
+def _interpret_eta2(eta: float) -> str:
+    if not np.isfinite(eta):
+        return "Không xác định"
+    if eta < 0.01:
+        return "Rất nhỏ / Không đáng kể (< 0,01)"
+    elif eta < 0.06:
+        return "Nhỏ (0,01 – 0,059)"
+    elif eta < 0.14:
+        return "Trung bình (0,06 – 0,139)"
+    else:
+        return "Lớn (≥ 0,14)"
+
+
+def _interpret_cramers_v(v: float, df_star: int) -> str:
+    if not np.isfinite(v) or df_star < 1:
+        return "Không xác định"
+    v_adj = v * np.sqrt(min(df_star, 5))
+    if v_adj < 0.10:
+        return "Rất nhỏ (< 0,10)"
+    elif v_adj < 0.30:
+        return "Nhỏ (0,10 – 0,29)"
+    elif v_adj < 0.50:
+        return "Trung bình (0,30 – 0,49)"
+    else:
+        return "Lớn (≥ 0,50)"
+
+
+def _interpret_kappa(k_val: float) -> str:
+    if not np.isfinite(k_val):
+        return "Không xác định"
+    if k_val < 0:
+        return "Kém / Không đồng thuận (< 0,00)"
+    elif k_val <= 0.20:
+        return "Đồng thuận rất yếu (0,01 – 0,20)"
+    elif k_val <= 0.40:
+        return "Đồng thuận yếu (0,21 – 0,40)"
+    elif k_val <= 0.60:
+        return "Đồng thuận trung bình (0,41 – 0,60)"
+    elif k_val <= 0.80:
+        return "Đồng thuận khá / tốt (0,61 – 0,80)"
+    else:
+        return "Đồng thuận rất tốt / gần như hoàn hảo (0,81 – 1,00)"
+
+
+def compute_cohens_kappa_table(mat_df: pd.DataFrame) -> pd.DataFrame:
+    mat = mat_df.to_numpy(dtype=float)
+    r, c = mat.shape
+    N = float(np.sum(mat))
+    if r != c or r < 2 or N <= 0:
+        raise ValueError("Bảng đánh giá đồng thuận phải là bảng vuông (k × k, k ≥ 2) với tổng tần số N > 0.")
+
+    p = mat / N
+    row_m = p.sum(axis=1)
+    col_m = p.sum(axis=0)
+    pe_mat = np.outer(row_m, col_m)
+
+    # 1. Unweighted Cohen's Kappa
+    po_unw = float(np.trace(p))
+    pe_unw = float(np.trace(pe_mat))
+    if abs(1.0 - pe_unw) < 1e-12:
+        k_unw, se_unw = 1.0, 0.0
+    else:
+        k_unw = (po_unw - pe_unw) / (1.0 - pe_unw)
+        term1 = sum(p[i, i] * (1.0 - (row_m[i] + col_m[i]) * (1.0 - k_unw)) ** 2 for i in range(r))
+        term2 = sum(
+            p[i, j] * ((col_m[i] + row_m[j]) * (1.0 - k_unw)) ** 2
+            for i in range(r) for j in range(r) if i != j
+        )
+        term3 = (k_unw - pe_unw * (1.0 - k_unw)) ** 2
+        var_k = max(0.0, (term1 + term2 - term3) / (N * (1.0 - pe_unw) ** 2))
+        se_unw = float(np.sqrt(var_k))
+
+    def _weighted(mode: str):
+        idx = np.arange(r, dtype=float)
+        diff = np.abs(idx[:, None] - idx[None, :])
+        w = 1.0 - diff / (r - 1.0) if mode == "linear" else 1.0 - (diff / (r - 1.0)) ** 2
+        po_w = float(np.sum(w * p))
+        pe_w = float(np.sum(w * pe_mat))
+        if abs(1.0 - pe_w) < 1e-12:
+            return 1.0, 0.0, po_w, pe_w
+        kw = (po_w - pe_w) / (1.0 - pe_w)
+        w_i = np.sum(w * col_m[None, :], axis=1)
+        w_j = np.sum(w * row_m[:, None], axis=0)
+        num_sum = sum(
+            p[i, j] * (w[i, j] - (w_i[i] + w_j[j]) * (1.0 - kw)) ** 2
+            for i in range(r) for j in range(r)
+        )
+        denom = (kw - pe_w * (1.0 - kw)) ** 2
+        var_kw = max(0.0, (num_sum - denom) / (N * (1.0 - pe_w) ** 2))
+        return kw, float(np.sqrt(var_kw)), po_w, pe_w
+
+    k_lin, se_lin, po_lin, pe_lin = _weighted("linear")
+    k_quad, se_quad, po_quad, pe_quad = _weighted("quadratic")
+
+    items = [
+        ("Cohen's Kappa (Không trọng số)", k_unw, se_unw, po_unw, pe_unw),
+        ("Weighted Kappa (Trọng số tuyến tính)", k_lin, se_lin, po_lin, pe_lin),
+        ("Weighted Kappa (Trọng số bậc hai)", k_quad, se_quad, po_quad, pe_quad),
+    ]
+    rows = []
+    for label, kv, sev, pov, pev in items:
+        ci_l = max(-1.0, kv - 1.96 * sev)
+        ci_u = min(1.0, kv + 1.96 * sev)
+        z_val = kv / sev if sev > 1e-12 else np.nan
+        p_val = 2 * (1 - stats.norm.cdf(abs(z_val))) if np.isfinite(z_val) else np.nan
+        p_str = "< 0.001" if (np.isfinite(p_val) and p_val < 0.001) else (f"{p_val:.4f}" if np.isfinite(p_val) else "N/A")
+        rows.append({
+            "Chỉ số đánh giá": label,
+            "Kappa": f"{kv:.3f}",
+            "SE": f"{sev:.3f}",
+            "KTC 95%": f"{ci_l:.3f} – {ci_u:.3f}",
+            "Đồng thuận thực tế (Po)": f"{pov*100:.1f}%",
+            "Đồng thuận ngẫu nhiên (Pe)": f"{pev*100:.1f}%",
+            "z": f"{z_val:.3f}" if np.isfinite(z_val) else "N/A",
+            "p-value": p_str,
+            "Diễn giải (Landis & Koch)": _interpret_kappa(kv)
+        })
+    return pd.DataFrame(rows)
+
+
+def compute_categorical_effect_size(obs_mat: np.ndarray, kind: str = "rxc", exp_mat: np.ndarray = None, tables: list = None) -> pd.DataFrame:
+    rows = []
+    if kind == "mh" and tables is not None:
+        stbl = StratifiedTable(tables)
+        mh_or = float(stbl.oddsratio_pooled)
+        mh_ci = stbl.oddsratio_pooled_confint()
+        log_or = float(np.log(mh_or)) if mh_or > 0 else np.nan
+        try:
+            eq_res = stbl.test_equal_odds()
+            bd_stat = float(eq_res.statistic)
+            bd_p = float(eq_res.pvalue)
+            bd_p_str = "< 0.001" if bd_p < 0.001 else f"{bd_p:.3f}"
+            hom_note = f"Đồng nhất giữa các tầng (p = {bd_p_str} ≥ 0,05)" if bd_p >= 0.05 else f"Khác biệt giữa các tầng (p = {bd_p_str} < 0,05)"
+        except Exception:
+            bd_stat = np.nan
+            hom_note = "N/A"
+        rows.append({
+            "Chỉ số Effect Size": "Mantel–Haenszel Pooled OR",
+            "Giá trị": f"{mh_or:.3f}",
+            "KTC 95%": f"{mh_ci[0]:.3f} – {mh_ci[1]:.3f}",
+            "Mức độ ảnh hưởng": "OR > 1: tăng nguy cơ; OR < 1: giảm nguy cơ"
+        })
+        if np.isfinite(log_or):
+            rows.append({
+                "Chỉ số Effect Size": "Log Odds Ratio (ln OR_MH)",
+                "Giá trị": f"{log_or:.3f}",
+                "KTC 95%": f"{np.log(max(mh_ci[0], 1e-12)):.3f} – {np.log(max(mh_ci[1], 1e-12)):.3f}",
+                "Mức độ ảnh hưởng": "0: không liên quan; > 0: liên quan thuận; < 0: nghịch"
+            })
+        if np.isfinite(bd_stat):
+            rows.append({
+                "Chỉ số Effect Size": "Kiểm định đồng nhất tầng (Tarone / Breslow–Day χ²)",
+                "Giá trị": f"{bd_stat:.3f}",
+                "KTC 95%": "N/A",
+                "Mức độ ảnh hưởng": hom_note
+            })
+        return pd.DataFrame(rows)
+
+    mat = np.asarray(obs_mat, dtype=float)
+    N = float(np.sum(mat))
+    if kind == "gof":
+        obs = mat.ravel()
+        exp = np.asarray(exp_mat, dtype=float).ravel() if exp_mat is not None else np.full_like(obs, N / max(len(obs), 1))
+        chi2_val = float(np.sum((obs - exp) ** 2 / np.maximum(exp, 1e-12)))
+        w = float(np.sqrt(chi2_val / max(N, 1.0)))
+        rows.append({
+            "Chỉ số Effect Size": "Cohen's w",
+            "Giá trị": f"{w:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_r_or_w(w)
+        })
+        return pd.DataFrame(rows)
+
+    r, c = mat.shape
+    chi2_val, _, _, _ = stats.chi2_contingency(mat, correction=False)
+    df_star = min(r - 1, c - 1)
+    cramers_v = float(np.sqrt(chi2_val / max(N * df_star, 1e-12)))
+    cont_c = float(np.sqrt(chi2_val / max(chi2_val + N, 1e-12)))
+
+    if r == 2 and c == 2:
+        a, b, c_cell, d = mat[0, 0], mat[0, 1], mat[1, 0], mat[1, 1]
+        phi = float((a * d - b * c_cell) / max(np.sqrt((a + b) * (c_cell + d) * (a + c_cell) * (b + d)), 1e-12))
+        rows.append({
+            "Chỉ số Effect Size": "Phi (φ)",
+            "Giá trị": f"{phi:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_r_or_w(abs(phi))
+        })
+        aa, bb, cc, dd = (a + 0.5, b + 0.5, c_cell + 0.5, d + 0.5) if min(a, b, c_cell, d) == 0 else (a, b, c_cell, d)
+        or_val = (aa * dd) / (bb * cc)
+        se_log_or = np.sqrt(1/aa + 1/bb + 1/cc + 1/dd)
+        rows.append({
+            "Chỉ số Effect Size": "Odds Ratio (OR)",
+            "Giá trị": f"{or_val:.3f}",
+            "KTC 95%": f"{np.exp(np.log(or_val) - 1.96 * se_log_or):.3f} – {np.exp(np.log(or_val) + 1.96 * se_log_or):.3f}",
+            "Mức độ ảnh hưởng": "OR > 1: tăng nguy cơ; OR < 1: giảm nguy cơ"
+        })
+        p1, p2 = aa / (aa + bb), cc / (cc + dd)
+        rr_val = p1 / p2
+        se_log_rr = np.sqrt(1/aa - 1/(aa + bb) + 1/cc - 1/(cc + dd))
+        rows.append({
+            "Chỉ số Effect Size": "Relative Risk (RR)",
+            "Giá trị": f"{rr_val:.3f}",
+            "KTC 95%": f"{np.exp(np.log(rr_val) - 1.96 * se_log_rr):.3f} – {np.exp(np.log(rr_val) + 1.96 * se_log_rr):.3f}",
+            "Mức độ ảnh hưởng": "RR > 1: tăng nguy cơ; RR < 1: giảm nguy cơ"
+        })
+
+    rng = np.random.default_rng(42)
+    probs = mat.ravel() / max(N, 1.0)
+    v_boot = []
+    for _ in range(400):
+        samp = rng.multinomial(int(round(N)), probs).reshape(r, c)
+        if np.all(samp.sum(axis=0) > 0) and np.all(samp.sum(axis=1) > 0):
+            c2_b, _, _, _ = stats.chi2_contingency(samp, correction=False)
+            v_boot.append(np.sqrt(c2_b / (N * df_star)))
+    v_ci = f"{np.percentile(v_boot, 2.5):.3f} – {np.percentile(v_boot, 97.5):.3f}" if len(v_boot) >= 50 else "N/A"
+
+    rows.append({
+        "Chỉ số Effect Size": f"Cramér's V (df* = {df_star})",
+        "Giá trị": f"{cramers_v:.3f}",
+        "KTC 95%": v_ci,
+        "Mức độ ảnh hưởng": _interpret_cramers_v(cramers_v, df_star)
+    })
+    rows.append({
+        "Chỉ số Effect Size": "Contingency Coefficient (C)",
+        "Giá trị": f"{cont_c:.3f}",
+        "KTC 95%": "N/A",
+        "Mức độ ảnh hưởng": _interpret_cramers_v(cramers_v, df_star)
+    })
+    return pd.DataFrame(rows)
+
+
+def compute_quantitative_effect_size(test_kind: str, **kwargs) -> pd.DataFrame:
+    rows = []
+    if test_kind == "ind_t":
+        x1 = np.asarray(kwargs["x1"], dtype=float)
+        x2 = np.asarray(kwargs["x2"], dtype=float)
+        x1, x2 = x1[np.isfinite(x1)], x2[np.isfinite(x2)]
+        n1, n2 = len(x1), len(x2)
+        s1, s2 = np.var(x1, ddof=1), np.var(x2, ddof=1)
+        sp = np.sqrt(((n1 - 1) * s1 + (n2 - 1) * s2) / max(n1 + n2 - 2, 1))
+        d = (np.mean(x1) - np.mean(x2)) / max(sp, 1e-12)
+        se_d = np.sqrt((n1 + n2) / (n1 * n2) + (d ** 2) / (2 * (n1 + n2)))
+        J = 1.0 - 3.0 / max(4.0 * (n1 + n2 - 2) - 1.0, 1.0)
+        g, se_g = d * J, se_d * J
+        rows.append({
+            "Chỉ số Effect Size": "Cohen's d (Pooled SD)",
+            "Giá trị": f"{d:.3f}",
+            "KTC 95%": f"{d - 1.96*se_d:.3f} – {d + 1.96*se_d:.3f}",
+            "Mức độ ảnh hưởng": _interpret_cohen_d(abs(d))
+        })
+        rows.append({
+            "Chỉ số Effect Size": "Hedges' g (Hiệu chỉnh cỡ mẫu nhỏ)",
+            "Giá trị": f"{g:.3f}",
+            "KTC 95%": f"{g - 1.96*se_g:.3f} – {g + 1.96*se_g:.3f}",
+            "Mức độ ảnh hưởng": _interpret_cohen_d(abs(g))
+        })
+
+    elif test_kind == "paired_t":
+        diff = np.asarray(kwargs["diff"], dtype=float)
+        diff = diff[np.isfinite(diff)]
+        n = len(diff)
+        dz = np.mean(diff) / max(np.std(diff, ddof=1), 1e-12)
+        se_dz = np.sqrt(1.0 / max(n, 1) + (dz ** 2) / max(2 * n, 1))
+        J = 1.0 - 3.0 / max(4.0 * (n - 1) - 1.0, 1.0)
+        gz = dz * J
+        rows.append({
+            "Chỉ số Effect Size": "Cohen's dz (Cặp đôi / 1 mẫu)",
+            "Giá trị": f"{dz:.3f}",
+            "KTC 95%": f"{dz - 1.96*se_dz:.3f} – {dz + 1.96*se_dz:.3f}",
+            "Mức độ ảnh hưởng": _interpret_cohen_d(abs(dz))
+        })
+        rows.append({
+            "Chỉ số Effect Size": "Hedges' gz",
+            "Giá trị": f"{gz:.3f}",
+            "KTC 95%": f"{gz - 1.96*se_dz*J:.3f} – {gz + 1.96*se_dz*J:.3f}",
+            "Mức độ ảnh hưởng": _interpret_cohen_d(abs(gz))
+        })
+
+    elif test_kind == "mann_whitney":
+        x1 = np.asarray(kwargs["x1"], dtype=float)
+        x2 = np.asarray(kwargs["x2"], dtype=float)
+        x1, x2 = x1[np.isfinite(x1)], x2[np.isfinite(x2)]
+        n1, n2 = len(x1), len(x2)
+        u_stat, _ = stats.mannwhitneyu(x1, x2, alternative="two-sided")
+        r_rb = 1.0 - (2.0 * u_stat) / max(n1 * n2, 1)
+        mu_u = n1 * n2 / 2.0
+        sd_u = np.sqrt(n1 * n2 * (n1 + n2 + 1) / 12.0)
+        r_z = (abs(u_stat - mu_u) / max(sd_u, 1e-12)) / np.sqrt(n1 + n2)
+        rows.append({
+            "Chỉ số Effect Size": "Rank-biserial correlation (r_rb)",
+            "Giá trị": f"{r_rb:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_r_or_w(abs(r_rb))
+        })
+        rows.append({
+            "Chỉ số Effect Size": "Hệ số tương quan r = |Z| / √N",
+            "Giá trị": f"{r_z:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_r_or_w(r_z)
+        })
+
+    elif test_kind == "wilcoxon":
+        diff = np.asarray(kwargs["diff"], dtype=float)
+        diff = diff[np.isfinite(diff) & (diff != 0)]
+        n = len(diff)
+        w_stat, _ = stats.wilcoxon(diff)
+        max_w = n * (n + 1) / 2.0
+        r_rb = 1.0 - (2.0 * w_stat) / max(max_w, 1.0)
+        sd_w = np.sqrt(n * (n + 1) * (2 * n + 1) / 24.0)
+        r_z = (abs(w_stat - max_w / 2.0) / max(sd_w, 1e-12)) / np.sqrt(max(n, 1))
+        rows.append({
+            "Chỉ số Effect Size": "Rank-biserial correlation (r_rb)",
+            "Giá trị": f"{r_rb:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_r_or_w(abs(r_rb))
+        })
+        rows.append({
+            "Chỉ số Effect Size": "Hệ số tương quan r = |Z| / √N",
+            "Giá trị": f"{r_z:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_r_or_w(r_z)
+        })
+
+    elif test_kind == "oneway_anova":
+        groups = [np.asarray(g, dtype=float)[np.isfinite(g)] for g in kwargs["groups"]]
+        k = len(groups)
+        N = sum(len(g) for g in groups)
+        grand_mean = np.mean(np.concatenate(groups))
+        ss_b = sum(len(g) * (np.mean(g) - grand_mean) ** 2 for g in groups)
+        ss_w = sum(np.sum((g - np.mean(g)) ** 2) for g in groups)
+        ss_t = ss_b + ss_w
+        ms_w = ss_w / max(N - k, 1)
+        eta2 = ss_b / max(ss_t, 1e-12)
+        omega2 = max(0.0, (ss_b - (k - 1) * ms_w) / max(ss_t + ms_w, 1e-12))
+        rows.append({
+            "Chỉ số Effect Size": "Eta-squared (η²)",
+            "Giá trị": f"{eta2:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_eta2(eta2)
+        })
+        rows.append({
+            "Chỉ số Effect Size": "Omega-squared (ω² — hiệu chỉnh thiên lệch)",
+            "Giá trị": f"{omega2:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_eta2(omega2)
+        })
+
+    elif test_kind == "rm_anova":
+        ss_cond = float(kwargs["ss_cond"])
+        ss_err = float(kwargs["ss_err"])
+        ss_subj = float(kwargs["ss_subj"])
+        eta_p2 = ss_cond / max(ss_cond + ss_err, 1e-12)
+        eta_g2 = ss_cond / max(ss_cond + ss_err + ss_subj, 1e-12)
+        rows.append({
+            "Chỉ số Effect Size": "Partial Eta-squared (ηp²)",
+            "Giá trị": f"{eta_p2:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_eta2(eta_p2)
+        })
+        rows.append({
+            "Chỉ số Effect Size": "Generalized Eta-squared (ηG²)",
+            "Giá trị": f"{eta_g2:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_eta2(eta_g2)
+        })
+
+    elif test_kind == "twoway_anova":
+        tw = kwargs["tw"]
+        fa_col = str(kwargs["fa_col"])
+        fb_col = str(kwargs["fb_col"])
+        for lbl, eta_val in [
+            (f"Partial Eta-squared (ηp²) — {fa_col}", float(tw["eta_a"])),
+            (f"Partial Eta-squared (ηp²) — {fb_col}", float(tw["eta_b"])),
+            (f"Partial Eta-squared (ηp²) — {fa_col} × {fb_col}", float(tw["eta_ab"])),
+        ]:
+            rows.append({
+                "Chỉ số Effect Size": lbl,
+                "Giá trị": f"{eta_val:.3f}",
+                "KTC 95%": "N/A",
+                "Mức độ ảnh hưởng": _interpret_eta2(eta_val)
+            })
+
+    elif test_kind == "srh_twoway":
+        fa_col = str(kwargs["fa_col"])
+        fb_col = str(kwargs["fb_col"])
+        n_obs = max(int(kwargs["n_obs"]) - 1, 1)
+        for lbl, h_val in [
+            (f"Rank Eta-squared (ηH²) — {fa_col}", float(kwargs["h_a"]) / n_obs),
+            (f"Rank Eta-squared (ηH²) — {fb_col}", float(kwargs["h_b"]) / n_obs),
+            (f"Rank Eta-squared (ηH²) — {fa_col} × {fb_col}", float(kwargs["h_ab"]) / n_obs),
+        ]:
+            rows.append({
+                "Chỉ số Effect Size": lbl,
+                "Giá trị": f"{h_val:.3f}",
+                "KTC 95%": "N/A",
+                "Mức độ ảnh hưởng": _interpret_eta2(h_val)
+            })
+
+    elif test_kind == "kruskal":
+        groups = [np.asarray(g, dtype=float)[np.isfinite(g)] for g in kwargs["groups"]]
+        N = sum(len(g) for g in groups)
+        h_stat, _ = stats.kruskal(*groups)
+        eps2 = float(h_stat / max((N ** 2 - 1.0) / (N + 1.0), 1e-12))
+        rows.append({
+            "Chỉ số Effect Size": "Epsilon-squared (ε²)",
+            "Giá trị": f"{eps2:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_eta2(eps2)
+        })
+
+    elif test_kind == "friedman":
+        mat = np.asarray(kwargs["mat"], dtype=float)
+        n_subj, k_cond = mat.shape
+        q_stat, _ = stats.friedmanchisquare(*[mat[:, j] for j in range(k_cond)])
+        kendall_w = float(q_stat / max(n_subj * (k_cond - 1), 1e-12))
+        rows.append({
+            "Chỉ số Effect Size": "Kendall's W (Hệ số đồng thuận Friedman)",
+            "Giá trị": f"{kendall_w:.3f}",
+            "KTC 95%": "N/A",
+            "Mức độ ảnh hưởng": _interpret_r_or_w(kendall_w)
+        })
+
+    return pd.DataFrame(rows)
+
+
+def _kappa_parse_excel_2cols(text: str) -> pd.DataFrame:
+    import re
+    if not text or not str(text).strip():
+        return pd.DataFrame()
+    raw_lines = [ln for ln in str(text).splitlines() if ln.strip()]
+    if not raw_lines:
+        return pd.DataFrame()
+    sample_line = raw_lines[0]
+    if "\t" in sample_line:
+        sep = "\t"
+    elif ";" in sample_line:
+        sep = ";"
+    elif "," in sample_line:
+        sep = ","
+    else:
+        sep = r"\s+"
+    rows = []
+    for ln in raw_lines:
+        if sep == r"\s+":
+            parts = [p.strip() for p in re.split(r"\s+", ln.strip()) if p.strip()]
+        else:
+            parts = [p.strip() for p in ln.split(sep)]
+        rows.append(parts)
+    max_cols = max(len(r) for r in rows)
+    if max_cols < 2:
+        return pd.DataFrame()
+    rows = [r + [""] * (max_cols - len(r)) for r in rows]
+    headers = [rows[0][j] if rows[0][j] else f"Var_{j+1}" for j in range(max_cols)]
+    df_out = pd.DataFrame(rows[1:], columns=headers)
+    missing_tokens = {"", "NA", "N/A", "na", "n/a", "nan", "NaN", "null", "NULL", ".", "-"}
+    for col in df_out.columns:
+        df_out[col] = df_out[col].astype(str).str.strip().replace(list(missing_tokens), np.nan)
+    return df_out
+
+
+def render_cohens_kappa_tab():
+    st.markdown("## Categorical Tests — Agreement (Cohen's Kappa)")
+    mode_k = st.radio(
+        "Cách nhập dữ liệu đánh giá đồng thuận:",
+        ["📊 Nhập bảng chéo vuông (k × k)", "📋 Dán 2 cột phân loại từ Excel"],
+        horizontal=True,
+        key="kappa_input_mode"
+    )
+
+    mat_df = None
+    if mode_k == "📊 Nhập bảng chéo vuông (k × k)":
+        c_k1, c_k2, _ = st.columns([1.2, 1.5, 5.3])
+        with c_k1:
+            k_dim = st.number_input("Số mức phân loại (k)", min_value=2, max_value=8, value=2, step=1, key="kappa_k_dim")
+        with c_k2:
+            r1_name = st.text_input("Tên người/PP đánh giá 1 (Hàng)", value="Đánh giá 1", key="kappa_r1_name")
+        c_k3, _ = st.columns([2.7, 5.3])
+        with c_k3:
+            r2_name = st.text_input("Tên người/PP đánh giá 2 (Cột)", value="Đánh giá 2", key="kappa_r2_name")
+
+        default_labels = [f"Mức {i+1}" for i in range(int(k_dim))]
+        with st.expander("Đổi tên các mức phân loại (tùy chọn)", expanded=False):
+            lbl_cols = st.columns(min(int(k_dim), 4))
+            custom_labels = []
+            for i in range(int(k_dim)):
+                with lbl_cols[i % len(lbl_cols)]:
+                    val_l = st.text_input(f"Nhãn mức {i+1}", value=default_labels[i], key=f"kappa_lbl_{k_dim}_{i}")
+                    custom_labels.append(val_l.strip() if val_l.strip() else default_labels[i])
+
+        init_mat = np.eye(int(k_dim), dtype=int) * 20 + 2
+        df_init = pd.DataFrame(
+            init_mat,
+            index=[f"{r1_name}: {lb}" for lb in custom_labels],
+            columns=[f"{r2_name}: {lb}" for lb in custom_labels]
+        )
+        st.markdown("**Bảng tần số chéo (nhập số ca vào từng ô):**")
+        edited_mat = st.data_editor(df_init, key=f"kappa_grid_{k_dim}")
+        mat_df = edited_mat.apply(pd.to_numeric, errors="coerce").fillna(0.0)
+
+    else:
+        col_l, col_r = st.columns([1.05, 1.0])
+        with col_l:
+            txt_k = st.text_area(
+                "Quét chọn 2 cột kết quả phân loại trong Excel (gồm hàng tiêu đề) rồi dán vào đây:",
+                height=200,
+                key="kappa_paste_area",
+                placeholder="Ví dụ:\nBacSi_A\tBacSi_B\nDương tính\tDương tính\nÂm tính\tÂm tính\nDương tính\tÂm tính"
+            )
+        with col_r:
+            if txt_k and txt_k.strip():
+                df_raw_k = _kappa_parse_excel_2cols(txt_k)
+                if not df_raw_k.empty and df_raw_k.shape[1] >= 2:
+                    c1_n, c2_n = df_raw_k.columns[0], df_raw_k.columns[1]
+                    sub_k = df_raw_k[[c1_n, c2_n]].dropna()
+                    cats = sorted(list(set(sub_k[c1_n].astype(str)).union(set(sub_k[c2_n].astype(str)))), key=str)
+                    if len(cats) >= 2:
+                        ct = pd.crosstab(
+                            pd.Categorical(sub_k[c1_n].astype(str), categories=cats),
+                            pd.Categorical(sub_k[c2_n].astype(str), categories=cats),
+                            dropna=False
+                        )
+                        ct.index = [f"{c1_n}: {x}" for x in cats]
+                        ct.columns = [f"{c2_n}: {x}" for x in cats]
+                        mat_df = ct.astype(float)
+                        st.markdown(f"✅ **Đã lập bảng chéo {len(cats)} × {len(cats)} từ {len(sub_k)} cặp quan sát:**")
+                        show_table(ct.reset_index().rename(columns={"index": f"{c1_n} \\ {c2_n}"}))
+                    else:
+                        st.warning("⚠️ Dữ liệu cần có ít nhất 2 giá trị phân loại khác nhau.")
+                else:
+                    st.warning("⚠️ Vui lòng dán bảng có ít nhất 2 cột phân tách bằng Tab, ';' hoặc ','.")
+
+    if mat_df is not None and st.button("Run Cohen's Kappa", type="primary", use_container_width=True, key="btn_run_kappa"):
+        try:
+            res_kappa = compute_cohens_kappa_table(mat_df)
+            show_table(res_kappa, "Cohen's Kappa & Weighted Kappa (Đánh giá độ đồng thuận)")
+            download_table_block(res_kappa, "cohens_kappa_agreement", "Cohen's Kappa")
+
+            tot_df = mat_df.copy()
+            tot_df["Tổng hàng"] = tot_df.sum(axis=1)
+            tot_row = pd.DataFrame([tot_df.sum(axis=0)], index=["Tổng cột"])
+            tot_df = pd.concat([tot_df, tot_row])
+            for c_num in tot_df.columns:
+                if np.all(np.abs(tot_df[c_num] - np.round(tot_df[c_num])) < 1e-9):
+                    tot_df[c_num] = tot_df[c_num].astype(int)
+            show_table(tot_df.reset_index().rename(columns={"index": "Phân loại"}), "Bảng chéo đồng thuận (kèm tổng biên)")
+            download_table_block(tot_df.reset_index().rename(columns={"index": "Phân loại"}), "kappa_crosstab", "Bảng chéo đồng thuận")
+        except Exception as e:
+            st.error(f"Không thể tính Cohen's Kappa: {e}")
+
+# =========================================================
 # Thuật toán 2 bước tính phân vị giáo trình (Q1 = 21 khi n=20)
 # =========================================================
 def compute_percentile_textbook(arr: np.ndarray, p: float) -> float:
@@ -1690,6 +2269,8 @@ with st.sidebar:
             set_nav("Categorical Tests", "Goodness-of-fit")
         if st.button("Mantel–Haenszel (Stratified 2×2)", key="c_4", use_container_width=True):
             set_nav("Categorical Tests", "Mantel–Haenszel")
+        if st.button("Agreement (Cohen's Kappa)", key="c_5", use_container_width=True):
+            set_nav("Categorical Tests", "Agreement (Cohen's Kappa)")
 
     with st.expander("Quantitative Tests", expanded=(st.session_state.section == "Quantitative Tests")):
         if st.button("t Tests", key="qt_ttests", use_container_width=True):
@@ -2407,6 +2988,10 @@ elif section == "Categorical Tests":
                     meas = two_by_two_measures(obs, alpha=0.05)
                     show_table(meas, "2×2 Measures (OR, RR, VE, Diagnostic Accuracy)")
                     download_table_block(meas, "chisq_2x2_measures", "2×2 Measures")
+
+                es_cat = compute_categorical_effect_size(obs, kind="rxc")
+                show_table(es_cat, "Effect Size (Độ lớn ảnh hưởng)")
+                download_table_block(es_cat, "chisq_effect_size", "Effect Size")
             except Exception as e:
                 st.error(f"Failed: {e}")
 
@@ -2427,6 +3012,10 @@ elif section == "Categorical Tests":
                 meas = two_by_two_measures(obs, alpha=0.05)
                 show_table(meas, "2×2 Measures (OR, RR, VE, Diagnostic Accuracy)")
                 download_table_block(meas, "fisher_2x2_measures", "2×2 Measures")
+
+                es_fisher = compute_categorical_effect_size(obs, kind="rxc")
+                show_table(es_fisher, "Effect Size (Độ lớn ảnh hưởng)")
+                download_table_block(es_fisher, "fisher_effect_size", "Effect Size")
             except Exception as e:
                 st.error(f"Failed: {e}")
 
@@ -2447,6 +3036,10 @@ elif section == "Categorical Tests":
                     show_table(gof_res, "Chi-Square Goodness-of-Fit Test")
                     download_table_block(gof_res, "gof_results", "Goodness-of-Fit")
 
+                    es_gof = compute_categorical_effect_size(obs, kind="gof", exp_mat=exp)
+                    show_table(es_gof, "Effect Size (Độ lớn ảnh hưởng)")
+                    download_table_block(es_gof, "gof_effect_size", "Effect Size")
+
     elif sub == "Mantel–Haenszel":
         st.markdown("## Categorical Tests — Mantel–Haenszel (Stratified 2×2)")
         template_mh = pd.DataFrame({"Stratum": ["S1", "S2"], "a": [5, 8], "b": [10, 12], "c": [7, 6], "d": [20, 18]})
@@ -2466,6 +3059,13 @@ elif section == "Categorical Tests":
                 out = compact_numeric_df(pd.DataFrame([["Mantel-Haenszel Pooled OR", mh_or, mh_ci[0], mh_ci[1], format_p_value(mh_p), "Yes" if mh_p < 0.05 else "No"]], columns=["Test", "Common OR", "CI 2.5%", "CI 97.5%", "Sig.", "Significant (p<0.05)"]), 3)
                 show_table(out, "Mantel-Haenszel Test")
                 download_table_block(out, "mh_results", "Mantel–Haenszel")
+
+                es_mh = compute_categorical_effect_size(None, kind="mh", tables=tables)
+                show_table(es_mh, "Effect Size (Độ lớn ảnh hưởng)")
+                download_table_block(es_mh, "mh_effect_size", "Effect Size")
+
+    elif sub == "Agreement (Cohen's Kappa)":
+        render_cohens_kappa_tab()
 
 # -----------------------------
 # QUANTITATIVE TESTS
@@ -2798,6 +3398,10 @@ elif section == "Quantitative Tests":
                         show_table(res_tbl, "One-Sample Test")
                         download_table_block(res_tbl, "one_sample_ttest", "One-Sample t Test")
 
+                        es_1s = compute_quantitative_effect_size("paired_t", diff=arr - mu_val)
+                        show_table(es_1s, "Effect Size (Độ lớn ảnh hưởng)")
+                        download_table_block(es_1s, "one_sample_effect_size", "Effect Size")
+
             # 2. PAIRED-SAMPLES T TEST (d = Sau - Trước)
             elif test_type_paste == "Paired-samples t test":
                 pair_mode = st.radio(
@@ -2907,6 +3511,10 @@ elif section == "Quantitative Tests":
                         show_table(res_pair, "Paired Samples Test")
                         download_table_block(res_pair, "ttest_paired_results", "Paired Samples Test")
 
+                        es_pair = compute_quantitative_effect_size("paired_t", diff=arr_d)
+                        show_table(es_pair, "Effect Size (Độ lớn ảnh hưởng)")
+                        download_table_block(es_pair, "ttest_paired_effect_size", "Effect Size")
+
             # 3. INDEPENDENT-SAMPLES T TEST
             else:
                 ind_mode = st.radio(
@@ -3014,6 +3622,10 @@ elif section == "Quantitative Tests":
                         show_table(t_tbl, "Independent Samples Test")
                         download_table_block(t_tbl, "ttest_ind_results", "Independent Samples Test")
 
+                        es_ind = compute_quantitative_effect_size("ind_t", x1=s1, x2=s2)
+                        show_table(es_ind, "Effect Size (Độ lớn ảnh hưởng)")
+                        download_table_block(es_ind, "ttest_ind_effect_size", "Effect Size")
+
         # ======================================================================
         # CHẾ ĐỘ 2: TẢI FILE DỮ LIỆU (GIỮ NGUYÊN CHỨC NĂNG CŨ + BỔ SUNG SHAPIRO-WILK)
         # ======================================================================
@@ -3037,6 +3649,10 @@ elif section == "Quantitative Tests":
                         download_table_block(norm_t, "one_sample_normality", "Tests of Normality")
                         show_table(res_t, "One-Sample Test")
                         download_table_block(res_t, "one_sample_ttest", "One-Sample t Test")
+
+                        es_1s_up = compute_quantitative_effect_size("paired_t", diff=arr - mu_val)
+                        show_table(es_1s_up, "Effect Size (Độ lớn ảnh hưởng)")
+                        download_table_block(es_1s_up, "one_sample_up_effect_size", "Effect Size")
                 elif test_type == "Independent-samples t test":
                     v_col = st.selectbox("Test variable", numeric_cols)
                     g_col = st.selectbox("Grouping variable", categorical_candidate_cols(df, exclude=[v_col]))
@@ -3062,6 +3678,10 @@ elif section == "Quantitative Tests":
                         download_table_block(lev_f, "ttest_ind_levene", "Homogeneity of Variances")
                         show_table(t_f, "Independent Samples Test")
                         download_table_block(t_f, "ttest_ind_results", "Independent Samples Test")
+
+                        es_ind_up = compute_quantitative_effect_size("ind_t", x1=s1_up, x2=s2_up)
+                        show_table(es_ind_up, "Effect Size (Độ lớn ảnh hưởng)")
+                        download_table_block(es_ind_up, "ttest_ind_up_effect_size", "Effect Size")
                 else:
                     c1, c2 = st.columns(2)
                     with c1: col1 = st.selectbox("Variable 1 (Before)", numeric_cols)
@@ -3077,6 +3697,10 @@ elif section == "Quantitative Tests":
                         download_table_block(norm_pair_up, "ttest_paired_normality", "Tests of Normality")
                         show_table(t_f, "Paired Samples Test")
                         download_table_block(t_f, "ttest_paired_results", "Paired Samples Test")
+
+                        es_pair_up = compute_quantitative_effect_size("paired_t", diff=arr_d_up)
+                        show_table(es_pair_up, "Effect Size (Độ lớn ảnh hưởng)")
+                        download_table_block(es_pair_up, "ttest_paired_up_effect_size", "Effect Size")
 
     elif sub == "Nonparametric Tests":
         import re
@@ -3177,6 +3801,10 @@ elif section == "Quantitative Tests":
             show_table(test_tbl, "Test Statistics (Mann-Whitney U)")
             download_table_block(test_tbl, "mann_whitney_results", "Mann-Whitney U Test")
 
+            es_mw = compute_quantitative_effect_size("mann_whitney", x1=s1, x2=s2)
+            show_table(es_mw, "Effect Size (Độ lớn ảnh hưởng)")
+            download_table_block(es_mw, "mann_whitney_effect_size", "Effect Size")
+
             q1_1, med_1, q3_1 = np.percentile(s1, [25, 50, 75])
             q1_2, med_2, q3_2 = np.percentile(s2, [25, 50, 75])
             p_str = _fmt_p_text(float(p_u))
@@ -3219,6 +3847,10 @@ elif section == "Quantitative Tests":
             download_table_block(ranks_tbl, "kruskal_ranks", "Ranks")
             show_table(test_tbl, "Test Statistics (Kruskal-Wallis)")
             download_table_block(test_tbl, "kruskal_results", "Kruskal-Wallis Test")
+
+            es_kw = compute_quantitative_effect_size("kruskal", groups=arrays)
+            show_table(es_kw, "Effect Size (Độ lớn ảnh hưởng)")
+            download_table_block(es_kw, "kruskal_effect_size", "Effect Size")
 
             p_str = _fmt_p_text(float(p_kw))
             if p_kw < 0.05:
@@ -3286,6 +3918,10 @@ elif section == "Quantitative Tests":
             show_table(test_tbl, "Test Statistics (Wilcoxon Signed-Rank)")
             download_table_block(test_tbl, "wilcoxon_results", "Wilcoxon Signed-Rank Test")
 
+            es_wx = compute_quantitative_effect_size("wilcoxon", diff=arr_d)
+            show_table(es_wx, "Effect Size (Độ lớn ảnh hưởng)")
+            download_table_block(es_wx, "wilcoxon_effect_size", "Effect Size")
+
             p_str = _fmt_p_text(float(p_w))
             q1_d, med_d, q3_d = np.percentile(arr_d, [25, 50, 75])
             diff_note = f"Trung vị (KTPV) của chênh lệch {label_d} là {_fmt_np_val(med_d)} ({_fmt_np_val(q1_d)} – {_fmt_np_val(q3_d)})."
@@ -3324,6 +3960,10 @@ elif section == "Quantitative Tests":
             download_table_block(ranks_tbl, "friedman_ranks", "Ranks")
             show_table(test_tbl, "Test Statistics (Friedman)")
             download_table_block(test_tbl, "friedman_results", "Friedman Test")
+
+            es_fr = compute_quantitative_effect_size("friedman", mat=mat)
+            show_table(es_fr, "Effect Size (Độ lớn ảnh hưởng)")
+            download_table_block(es_fr, "friedman_effect_size", "Effect Size")
 
             p_str = _fmt_p_text(float(p_fr))
             if p_fr < 0.05:
@@ -3876,6 +4516,10 @@ elif section == "Quantitative Tests":
                 show_table(anova_tbl, "ANOVA (One-Way)")
                 download_table_block(anova_tbl, "oneway_anova_results", "One-Way ANOVA")
 
+                es_av = compute_quantitative_effect_size("oneway_anova", groups=arrays)
+                show_table(es_av, "Effect Size (Độ lớn ảnh hưởng)")
+                download_table_block(es_av, "oneway_anova_effect_size", "Effect Size")
+
                 if p_anova < 0.05 and k >= 3:
                     ph_rows = []
                     for i in range(k):
@@ -3935,6 +4579,10 @@ elif section == "Quantitative Tests":
                 }]))
                 show_table(welch_tbl, "Robust Tests of Equality of Means (Welch's ANOVA — Phép kiểm thay thế)")
                 download_table_block(welch_tbl, "welch_anova_results", "Welch ANOVA")
+
+                es_welch = compute_quantitative_effect_size("oneway_anova", groups=arrays)
+                show_table(es_welch, "Effect Size (Độ lớn ảnh hưởng)")
+                download_table_block(es_welch, "welch_anova_effect_size", "Effect Size")
 
                 with st.expander("Xem bảng One-way ANOVA tham chiếu"):
                     show_table(anova_tbl, "ANOVA (Reference)")
@@ -4004,6 +4652,10 @@ elif section == "Quantitative Tests":
                 download_table_block(ranks_tbl, "anova_alt_kw_ranks", "Kruskal-Wallis Ranks")
                 show_table(kw_tbl, "Test Statistics (Kruskal-Wallis H — Phép kiểm thay thế)")
                 download_table_block(kw_tbl, "anova_alt_kw_results", "Kruskal-Wallis Test")
+
+                es_alt_kw = compute_quantitative_effect_size("kruskal", groups=arrays)
+                show_table(es_alt_kw, "Effect Size (Độ lớn ảnh hưởng)")
+                download_table_block(es_alt_kw, "anova_alt_kw_effect_size", "Effect Size")
 
                 with st.expander("Xem bảng One-way ANOVA tham chiếu"):
                     show_table(anova_tbl, "ANOVA (Reference)")
@@ -4183,6 +4835,10 @@ elif section == "Quantitative Tests":
                 show_table(rm_tbl, "Tests of Within-Subjects Effects (Repeated-Measures ANOVA)")
                 download_table_block(rm_tbl, "rm_anova_results", "Repeated-Measures ANOVA")
 
+                es_rm = compute_quantitative_effect_size("rm_anova", ss_cond=ss_cond, ss_err=ss_err, ss_subj=ss_subj)
+                show_table(es_rm, "Effect Size (Độ lớn ảnh hưởng)")
+                download_table_block(es_rm, "rm_anova_effect_size", "Effect Size")
+
                 active_p = p_gg if sphericity_violated else p_rm
                 active_df1 = _fmt_av_val(df_cond_gg if sphericity_violated else df_cond)
                 active_df2 = _fmt_av_val(df_err_gg if sphericity_violated else df_err)
@@ -4244,6 +4900,10 @@ elif section == "Quantitative Tests":
                 download_table_block(ranks_fr_tbl, "rm_alt_friedman_ranks", "Friedman Ranks")
                 show_table(fr_tbl, "Test Statistics (Friedman Test — Phép kiểm thay thế)")
                 download_table_block(fr_tbl, "rm_alt_friedman_results", "Friedman Test")
+
+                es_rm_fr = compute_quantitative_effect_size("friedman", mat=mat)
+                show_table(es_rm_fr, "Effect Size (Độ lớn ảnh hưởng)")
+                download_table_block(es_rm_fr, "rm_alt_friedman_effect_size", "Effect Size")
 
                 if float(p_fr) < 0.05 and k_cond >= 3:
                     n_pairs = k_cond * (k_cond - 1) / 2
@@ -4459,6 +5119,10 @@ elif section == "Quantitative Tests":
                 show_table(anova_2w_tbl, "Tests of Between-Subjects Effects (Two-Way ANOVA)")
                 download_table_block(anova_2w_tbl, "twoway_anova_results", "Two-Way ANOVA")
 
+                es_2w = compute_quantitative_effect_size("twoway_anova", tw=tw_res, fa_col=fa_col, fb_col=fb_col)
+                show_table(es_2w, "Effect Size (Độ lớn ảnh hưởng)")
+                download_table_block(es_2w, "twoway_anova_effect_size", "Effect Size")
+
                 # Kết luận chi tiết 3 tác động
                 c_a = f"- **Tác động chính của {fa_col}:** " + (
                     f"Có ý nghĩa thống kê (F({tw_res['df_a']}, {tw_res['df_err']}) = {_fmt_av_val(tw_res['f_a'])}, {_fmt_av_p(tw_res['p_a'])}, ηp² = {_fmt_av_val(tw_res['eta_a'])})."
@@ -4507,6 +5171,10 @@ elif section == "Quantitative Tests":
                 ]))
                 show_table(srh_tbl, "Scheirer-Ray-Hare Test (Two-Way Nonparametric ANOVA — Phép kiểm thay thế)")
                 download_table_block(srh_tbl, "scheirer_ray_hare_results", "Scheirer-Ray-Hare Test")
+
+                es_srh = compute_quantitative_effect_size("srh_twoway", fa_col=fa_col, fb_col=fb_col, h_a=h_a, h_b=h_b, h_ab=h_ab, n_obs=n_obs_r)
+                show_table(es_srh, "Effect Size (Độ lớn ảnh hưởng)")
+                download_table_block(es_srh, "srh_twoway_effect_size", "Effect Size")
 
                 with st.expander("Xem bảng Two-way ANOVA tham chiếu"):
                     show_table(anova_2w_tbl, "Tests of Between-Subjects Effects (Reference)")
