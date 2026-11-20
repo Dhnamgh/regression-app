@@ -936,94 +936,495 @@ def _kappa_parse_excel_2cols(text: str) -> pd.DataFrame:
     return df_out
 
 
-def render_cohens_kappa_tab():
-    st.markdown("## Categorical Tests — Agreement (Cohen's Kappa)")
-    mode_k = st.radio(
-        "Cách nhập dữ liệu đánh giá đồng thuận:",
-        ["📊 Nhập bảng chéo vuông (k × k)", "📋 Dán 2 cột phân loại từ Excel"],
-        horizontal=True,
-        key="kappa_input_mode"
+def _compute_krippendorff_alpha_val(df_ratings: pd.DataFrame, level: str = "nominal", categories=None) -> float:
+    arr = df_ratings.to_numpy(dtype=object)
+    valid_rows = []
+    all_vals = []
+    for r in arr:
+        vals = [str(x).strip() for x in r if x is not None and not (isinstance(x, float) and np.isnan(x)) and str(x).strip() != ""]
+        if len(vals) >= 2:
+            valid_rows.append(vals)
+            all_vals.extend(vals)
+    if len(valid_rows) < 2:
+        return np.nan
+    cats = list(categories) if categories is not None else sorted(list(set(all_vals)), key=str)
+    cat_idx = {c: i for i, c in enumerate(cats)}
+    K = len(cats)
+    if K < 2:
+        return 1.0
+
+    O = np.zeros((K, K), dtype=float)
+    for vals in valid_rows:
+        m_i = len(vals)
+        w = 1.0 / (m_i - 1.0)
+        for a in range(m_i):
+            for b in range(m_i):
+                if a != b:
+                    ia, ib = cat_idx[vals[a]], cat_idx[vals[b]]
+                    O[ia, ib] += w
+
+    n_u = O.sum(axis=1)
+    n_tot = float(n_u.sum())
+    if n_tot <= 1.0:
+        return np.nan
+
+    E = np.outer(n_u, n_u) / (n_tot - 1.0)
+    np.fill_diagonal(E, n_u * (n_u - 1.0) / (n_tot - 1.0))
+
+    if level == "nominal":
+        delta2 = 1.0 - np.eye(K)
+    else:
+        delta2 = np.zeros((K, K), dtype=float)
+        for u in range(K):
+            for v in range(K):
+                if u != v:
+                    lo, hi = min(u, v), max(u, v)
+                    s_g = np.sum(n_u[lo:hi + 1]) - 0.5 * (n_u[u] + n_u[v])
+                    delta2[u, v] = s_g ** 2
+
+    num = float(np.sum(O * delta2))
+    den = float(np.sum(E * delta2))
+    if den <= 1e-15:
+        return 1.0
+    return float(1.0 - num / den)
+
+
+def compute_multirater_agreement_tables(df_raters: pd.DataFrame, categories_order: list = None):
+    """
+    Tính đồng thuận cho m >= 3 người / phương pháp đánh giá:
+    1) Bảng tổng hợp: Fleiss' Kappa, Light's Kappa, Krippendorff's Alpha (Nominal & Ordinal)
+    2) Bảng Fleiss' Kappa theo từng phân loại (Category-wise Kappa)
+    3) Bảng ma trận Cohen's Kappa từng cặp người/phương pháp đánh giá
+    """
+    if df_raters is None or df_raters.shape[1] < 3:
+        raise ValueError("Cần ít nhất 3 cột người/phương pháp đánh giá (m ≥ 3).")
+
+    df_clean = df_raters.copy()
+    missing_tokens = {"", "NA", "N/A", "na", "n/a", "nan", "NaN", "null", "NULL", "None", ".", "-"}
+    for col in df_clean.columns:
+        df_clean[col] = df_clean[col].apply(
+            lambda x: np.nan if (x is None or (isinstance(x, float) and np.isnan(x)) or str(x).strip() in missing_tokens) else str(x).strip()
+        )
+
+    rater_names = list(df_clean.columns)
+    m = len(rater_names)
+
+    all_vals = []
+    for col in rater_names:
+        all_vals.extend(df_clean[col].dropna().tolist())
+    if categories_order is not None and len(categories_order) >= 2:
+        cats = [str(c).strip() for c in categories_order if str(c).strip() in set(all_vals)]
+        for c in sorted(list(set(all_vals)), key=str):
+            if c not in cats:
+                cats.append(c)
+    else:
+        cats = sorted(list(set(all_vals)), key=str)
+
+    if len(cats) < 2:
+        raise ValueError("Dữ liệu cần có ít nhất 2 mức phân loại khác nhau.")
+
+    K = len(cats)
+
+    df_complete = df_clean.dropna().copy()
+    N_comp = len(df_complete)
+    if N_comp < 2:
+        raise ValueError("Cần ít nhất 2 đối tượng có đầy đủ kết quả của tất cả các người/phương pháp đánh giá để tính Fleiss' Kappa.")
+
+    counts_mat = np.zeros((N_comp, K), dtype=float)
+    arr_comp = df_complete.to_numpy(dtype=str)
+    for j, cat_val in enumerate(cats):
+        counts_mat[:, j] = np.sum(arr_comp == cat_val, axis=1)
+
+    p_j = counts_mat.sum(axis=0) / (N_comp * m)
+    P_i = (np.sum(counts_mat ** 2, axis=1) - m) / (m * (m - 1.0))
+    P_bar = float(np.mean(P_i))
+    Pe_bar = float(np.sum(p_j ** 2))
+
+    if abs(1.0 - Pe_bar) < 1e-12:
+        fleiss_k, se_fleiss = 1.0, 0.0
+    else:
+        fleiss_k = (P_bar - Pe_bar) / (1.0 - Pe_bar)
+        var0 = (2.0 / (N_comp * m * (m - 1.0))) * (
+            Pe_bar - (2.0 * m - 3.0) * (Pe_bar ** 2) + 2.0 * (m - 2.0) * float(np.sum(p_j ** 3))
+        ) / ((1.0 - Pe_bar) ** 2)
+        se_fleiss = float(np.sqrt(max(0.0, var0)))
+
+    z_fleiss = fleiss_k / se_fleiss if se_fleiss > 1e-12 else np.nan
+    p_fleiss = 2.0 * (1.0 - stats.norm.cdf(abs(z_fleiss))) if np.isfinite(z_fleiss) else np.nan
+    p_fleiss_str = "< 0.001" if (np.isfinite(p_fleiss) and p_fleiss < 0.001) else (f"{p_fleiss:.4f}" if np.isfinite(p_fleiss) else "N/A")
+
+    se_cat = float(np.sqrt(2.0 / (N_comp * m * (m - 1.0))))
+    cat_rows = []
+    for j, cat_val in enumerate(cats):
+        pj = float(p_j[j])
+        tot_assign = int(round(counts_mat[:, j].sum()))
+        if pj <= 0.0 or pj >= 1.0:
+            kj = np.nan
+            zj = np.nan
+            pj_str = "N/A"
+        else:
+            num_j = float(np.sum(counts_mat[:, j] * (counts_mat[:, j] - 1.0))) - N_comp * m * (m - 1.0) * (pj ** 2)
+            den_j = N_comp * m * (m - 1.0) * pj * (1.0 - pj)
+            kj = num_j / den_j if abs(den_j) > 1e-12 else np.nan
+            zj = kj / se_cat if (np.isfinite(kj) and se_cat > 1e-12) else np.nan
+            pval_j = 2.0 * (1.0 - stats.norm.cdf(abs(zj))) if np.isfinite(zj) else np.nan
+            pj_str = "< 0.001" if (np.isfinite(pval_j) and pval_j < 0.001) else (f"{pval_j:.4f}" if np.isfinite(pval_j) else "N/A")
+        cat_rows.append({
+            "Mức phân loại": cat_val,
+            "Số lượt gán": tot_assign,
+            "Tỷ lệ (pj)": f"{pj * 100:.1f}%",
+            "Fleiss' Kappa (κj)": f"{kj:.3f}" if np.isfinite(kj) else "N/A",
+            "SE": f"{se_cat:.3f}",
+            "z": f"{zj:.3f}" if np.isfinite(zj) else "N/A",
+            "p-value": pj_str,
+            "Diễn giải (Landis & Koch)": _interpret_kappa(kj)
+        })
+    cat_df = pd.DataFrame(cat_rows)
+
+    pair_rows = []
+    pair_kappas = []
+    for a in range(m):
+        for b in range(a + 1, m):
+            ra, rb = rater_names[a], rater_names[b]
+            sub_ab = df_clean[[ra, rb]].dropna()
+            n_ab = len(sub_ab)
+            if n_ab < 2:
+                continue
+            ct_ab = pd.crosstab(
+                pd.Categorical(sub_ab[ra], categories=cats),
+                pd.Categorical(sub_ab[rb], categories=cats),
+                dropna=False
+            )
+            mat_ab = ct_ab.to_numpy(dtype=float)
+            p_ab = mat_ab / n_ab
+            rm_ab = p_ab.sum(axis=1)
+            cm_ab = p_ab.sum(axis=0)
+            po_ab = float(np.trace(p_ab))
+            pe_ab = float(np.sum(rm_ab * cm_ab))
+            if abs(1.0 - pe_ab) < 1e-12:
+                k_ab, se_ab = 1.0, 0.0
+            else:
+                k_ab = (po_ab - pe_ab) / (1.0 - pe_ab)
+                t1 = sum(p_ab[i, i] * (1.0 - (rm_ab[i] + cm_ab[i]) * (1.0 - k_ab)) ** 2 for i in range(K))
+                t2 = sum(
+                    p_ab[i, j] * ((cm_ab[i] + rm_ab[j]) * (1.0 - k_ab)) ** 2
+                    for i in range(K) for j in range(K) if i != j
+                )
+                t3 = (k_ab - pe_ab * (1.0 - k_ab)) ** 2
+                se_ab = float(np.sqrt(max(0.0, (t1 + t2 - t3) / (n_ab * (1.0 - pe_ab) ** 2))))
+            pair_kappas.append(k_ab)
+            z_ab = k_ab / se_ab if se_ab > 1e-12 else np.nan
+            p_val_ab = 2.0 * (1.0 - stats.norm.cdf(abs(z_ab))) if np.isfinite(z_ab) else np.nan
+            p_str_ab = "< 0.001" if (np.isfinite(p_val_ab) and p_val_ab < 0.001) else (f"{p_val_ab:.4f}" if np.isfinite(p_val_ab) else "N/A")
+            pair_rows.append({
+                "Cặp so sánh": f"{ra} vs {rb}",
+                "Số cặp (N)": n_ab,
+                "Đồng thuận thô (Po)": f"{po_ab * 100:.1f}%",
+                "Cohen's Kappa (κ)": f"{k_ab:.3f}",
+                "SE": f"{se_ab:.3f}",
+                "KTC 95%": f"{max(-1.0, k_ab - 1.96 * se_ab):.3f} – {min(1.0, k_ab + 1.96 * se_ab):.3f}",
+                "p-value": p_str_ab,
+                "Diễn giải (Landis & Koch)": _interpret_kappa(k_ab)
+            })
+    pair_df = pd.DataFrame(pair_rows)
+
+    lights_k = float(np.mean(pair_kappas)) if pair_kappas else np.nan
+    se_lights = float(np.std(pair_kappas, ddof=1) / np.sqrt(len(pair_kappas))) if len(pair_kappas) > 1 else np.nan
+    lights_ci = (
+        f"{max(-1.0, lights_k - 1.96 * se_lights):.3f} – {min(1.0, lights_k + 1.96 * se_lights):.3f}"
+        if (np.isfinite(lights_k) and np.isfinite(se_lights)) else "N/A"
     )
 
-    mat_df = None
-    if mode_k == "📊 Nhập bảng chéo vuông (k × k)":
-        c_k1, c_k2, _ = st.columns([1.2, 1.5, 5.3])
-        with c_k1:
-            k_dim = st.number_input("Số mức phân loại (k)", min_value=2, max_value=8, value=2, step=1, key="kappa_k_dim")
-        with c_k2:
-            r1_name = st.text_input("Tên người/PP đánh giá 1 (Hàng)", value="Đánh giá 1", key="kappa_r1_name")
-        c_k3, _ = st.columns([2.7, 5.3])
-        with c_k3:
-            r2_name = st.text_input("Tên người/PP đánh giá 2 (Cột)", value="Đánh giá 2", key="kappa_r2_name")
+    alpha_nom = _compute_krippendorff_alpha_val(df_clean, level="nominal", categories=cats)
+    alpha_ord = _compute_krippendorff_alpha_val(df_clean, level="ordinal", categories=cats)
 
-        default_labels = [f"Mức {i+1}" for i in range(int(k_dim))]
-        with st.expander("Đổi tên các mức phân loại (tùy chọn)", expanded=False):
-            lbl_cols = st.columns(min(int(k_dim), 4))
-            custom_labels = []
-            for i in range(int(k_dim)):
-                with lbl_cols[i % len(lbl_cols)]:
-                    val_l = st.text_input(f"Nhãn mức {i+1}", value=default_labels[i], key=f"kappa_lbl_{k_dim}_{i}")
-                    custom_labels.append(val_l.strip() if val_l.strip() else default_labels[i])
+    rng = np.random.default_rng(42)
+    n_rows_all = len(df_clean)
+    boot_nom, boot_ord = [], []
+    for _ in range(300):
+        idx_b = rng.integers(0, n_rows_all, size=n_rows_all)
+        df_b = df_clean.iloc[idx_b]
+        an = _compute_krippendorff_alpha_val(df_b, level="nominal", categories=cats)
+        ao = _compute_krippendorff_alpha_val(df_b, level="ordinal", categories=cats)
+        if np.isfinite(an):
+            boot_nom.append(an)
+        if np.isfinite(ao):
+            boot_ord.append(ao)
 
-        init_mat = np.eye(int(k_dim), dtype=int) * 20 + 2
-        df_init = pd.DataFrame(
-            init_mat,
-            index=[f"{r1_name}: {lb}" for lb in custom_labels],
-            columns=[f"{r2_name}: {lb}" for lb in custom_labels]
+    se_nom = float(np.std(boot_nom, ddof=1)) if len(boot_nom) >= 30 else np.nan
+    ci_nom = f"{np.percentile(boot_nom, 2.5):.3f} – {np.percentile(boot_nom, 97.5):.3f}" if len(boot_nom) >= 30 else "N/A"
+    se_ord = float(np.std(boot_ord, ddof=1)) if len(boot_ord) >= 30 else np.nan
+    ci_ord = f"{np.percentile(boot_ord, 2.5):.3f} – {np.percentile(boot_ord, 97.5):.3f}" if len(boot_ord) >= 30 else "N/A"
+
+    summary_rows = [
+        {
+            "Chỉ số đồng thuận": f"Fleiss' Kappa (N = {N_comp}, m = {m})",
+            "Giá trị": f"{fleiss_k:.3f}",
+            "SE": f"{se_fleiss:.3f}",
+            "KTC 95%": f"{max(-1.0, fleiss_k - 1.96 * se_fleiss):.3f} – {min(1.0, fleiss_k + 1.96 * se_fleiss):.3f}",
+            "Đồng thuận thực tế (Po)": f"{P_bar * 100:.1f}%",
+            "z": f"{z_fleiss:.3f}" if np.isfinite(z_fleiss) else "N/A",
+            "p-value": p_fleiss_str,
+            "Diễn giải (Landis & Koch)": _interpret_kappa(fleiss_k)
+        },
+        {
+            "Chỉ số đồng thuận": f"Light's Kappa (TB {len(pair_kappas)} cặp)",
+            "Giá trị": f"{lights_k:.3f}" if np.isfinite(lights_k) else "N/A",
+            "SE": f"{se_lights:.3f}" if np.isfinite(se_lights) else "N/A",
+            "KTC 95%": lights_ci,
+            "Đồng thuận thực tế (Po)": f"{P_bar * 100:.1f}%",
+            "z": "N/A",
+            "p-value": "N/A",
+            "Diễn giải (Landis & Koch)": _interpret_kappa(lights_k)
+        },
+        {
+            "Chỉ số đồng thuận": "Krippendorff's Alpha (Định danh / Nominal)",
+            "Giá trị": f"{alpha_nom:.3f}" if np.isfinite(alpha_nom) else "N/A",
+            "SE": f"{se_nom:.3f}" if np.isfinite(se_nom) else "N/A",
+            "KTC 95%": ci_nom,
+            "Đồng thuận thực tế (Po)": "Hỗ trợ cả khuyết dữ liệu",
+            "z": "N/A",
+            "p-value": "N/A",
+            "Diễn giải (Landis & Koch)": _interpret_kappa(alpha_nom)
+        },
+        {
+            "Chỉ số đồng thuận": "Krippendorff's Alpha (Thứ bậc / Ordinal)",
+            "Giá trị": f"{alpha_ord:.3f}" if np.isfinite(alpha_ord) else "N/A",
+            "SE": f"{se_ord:.3f}" if np.isfinite(se_ord) else "N/A",
+            "KTC 95%": ci_ord,
+            "Đồng thuận thực tế (Po)": "Trọng số thứ bậc",
+            "z": "N/A",
+            "p-value": "N/A",
+            "Diễn giải (Landis & Koch)": _interpret_kappa(alpha_ord)
+        },
+    ]
+    summary_df = pd.DataFrame(summary_rows)
+    return summary_df, cat_df, pair_df, fleiss_k, p_fleiss_str
+
+
+def render_cohens_kappa_tab():
+    import re as _re
+    st.markdown("## Categorical Tests — Agreement (Cohen's, Fleiss' & Krippendorff's Kappa)")
+
+    rater_mode = st.radio(
+        "Số người / phương pháp đánh giá:",
+        [
+            "👥 2 người / phương pháp đánh giá (Cohen's & Weighted Kappa)",
+            "👨‍👩‍👧‍👦 ≥ 3 người / phương pháp đánh giá (Fleiss' Kappa, Light's Kappa & Krippendorff's Alpha)"
+        ],
+        horizontal=True,
+        key="agreement_rater_count_mode"
+    )
+
+    # ==========================================================================
+    # NHÁNH 1: 2 NGƯỜI / PHƯƠNG PHÁP ĐÁNH GIÁ (COHEN'S & WEIGHTED KAPPA)
+    # ==========================================================================
+    if rater_mode.startswith("👥"):
+        mode_k = st.radio(
+            "Cách nhập dữ liệu đánh giá đồng thuận:",
+            ["📊 Nhập bảng chéo vuông (k × k)", "📋 Dán 2 cột phân loại từ Excel"],
+            horizontal=True,
+            key="kappa_input_mode"
         )
-        st.markdown("**Bảng tần số chéo (nhập số ca vào từng ô):**")
-        edited_mat = st.data_editor(df_init, key=f"kappa_grid_{k_dim}")
-        mat_df = edited_mat.apply(pd.to_numeric, errors="coerce").fillna(0.0)
 
-    else:
-        col_l, col_r = st.columns([1.05, 1.0])
-        with col_l:
-            txt_k = st.text_area(
-                "Quét chọn 2 cột kết quả phân loại trong Excel (gồm hàng tiêu đề) rồi dán vào đây:",
-                height=200,
-                key="kappa_paste_area",
-                placeholder="Ví dụ:\nBacSi_A\tBacSi_B\nDương tính\tDương tính\nÂm tính\tÂm tính\nDương tính\tÂm tính"
+        mat_df = None
+        if mode_k == "📊 Nhập bảng chéo vuông (k × k)":
+            c_k1, c_k2, _ = st.columns([1.2, 1.5, 5.3])
+            with c_k1:
+                k_dim = st.number_input("Số mức phân loại (k)", min_value=2, max_value=8, value=2, step=1, key="kappa_k_dim")
+            with c_k2:
+                r1_name = st.text_input("Tên người/PP đánh giá 1 (Hàng)", value="Đánh giá 1", key="kappa_r1_name")
+            c_k3, _ = st.columns([2.7, 5.3])
+            with c_k3:
+                r2_name = st.text_input("Tên người/PP đánh giá 2 (Cột)", value="Đánh giá 2", key="kappa_r2_name")
+
+            default_labels = [f"Mức {i+1}" for i in range(int(k_dim))]
+            with st.expander("Đổi tên các mức phân loại (tùy chọn)", expanded=False):
+                lbl_cols = st.columns(min(int(k_dim), 4))
+                custom_labels = []
+                for i in range(int(k_dim)):
+                    with lbl_cols[i % len(lbl_cols)]:
+                        val_l = st.text_input(f"Nhãn mức {i+1}", value=default_labels[i], key=f"kappa_lbl_{k_dim}_{i}")
+                        custom_labels.append(val_l.strip() if val_l.strip() else default_labels[i])
+
+            init_mat = np.eye(int(k_dim), dtype=int) * 20 + 2
+            df_init = pd.DataFrame(
+                init_mat,
+                index=[f"{r1_name}: {lb}" for lb in custom_labels],
+                columns=[f"{r2_name}: {lb}" for lb in custom_labels]
             )
-        with col_r:
-            if txt_k and txt_k.strip():
-                df_raw_k = _kappa_parse_excel_2cols(txt_k)
-                if not df_raw_k.empty and df_raw_k.shape[1] >= 2:
-                    c1_n, c2_n = df_raw_k.columns[0], df_raw_k.columns[1]
-                    sub_k = df_raw_k[[c1_n, c2_n]].dropna()
-                    cats = sorted(list(set(sub_k[c1_n].astype(str)).union(set(sub_k[c2_n].astype(str)))), key=str)
-                    if len(cats) >= 2:
-                        ct = pd.crosstab(
-                            pd.Categorical(sub_k[c1_n].astype(str), categories=cats),
-                            pd.Categorical(sub_k[c2_n].astype(str), categories=cats),
-                            dropna=False
-                        )
-                        ct.index = [f"{c1_n}: {x}" for x in cats]
-                        ct.columns = [f"{c2_n}: {x}" for x in cats]
-                        mat_df = ct.astype(float)
-                        st.markdown(f"✅ **Đã lập bảng chéo {len(cats)} × {len(cats)} từ {len(sub_k)} cặp quan sát:**")
-                        show_table(ct.reset_index().rename(columns={"index": f"{c1_n} \\ {c2_n}"}))
+            st.markdown("**Bảng tần số chéo (nhập số ca vào từng ô):**")
+            edited_mat = st.data_editor(df_init, key=f"kappa_grid_{k_dim}")
+            mat_df = edited_mat.apply(pd.to_numeric, errors="coerce").fillna(0.0)
+
+        else:
+            col_l, col_r = st.columns([1.05, 1.0])
+            with col_l:
+                txt_k = st.text_area(
+                    "Quét chọn 2 cột kết quả phân loại trong Excel (gồm hàng tiêu đề) rồi dán vào đây:",
+                    height=200,
+                    key="kappa_paste_area",
+                    placeholder="Ví dụ:\nBacSi_A\tBacSi_B\nDương tính\tDương tính\nÂm tính\tÂm tính\nDương tính\tÂm tính"
+                )
+            with col_r:
+                if txt_k and txt_k.strip():
+                    df_raw_k = _kappa_parse_excel_2cols(txt_k)
+                    if not df_raw_k.empty and df_raw_k.shape[1] >= 2:
+                        c1_n, c2_n = df_raw_k.columns[0], df_raw_k.columns[1]
+                        sub_k = df_raw_k[[c1_n, c2_n]].dropna()
+                        cats = sorted(list(set(sub_k[c1_n].astype(str)).union(set(sub_k[c2_n].astype(str)))), key=str)
+                        if len(cats) >= 2:
+                            ct = pd.crosstab(
+                                pd.Categorical(sub_k[c1_n].astype(str), categories=cats),
+                                pd.Categorical(sub_k[c2_n].astype(str), categories=cats),
+                                dropna=False
+                            )
+                            ct.index = [f"{c1_n}: {x}" for x in cats]
+                            ct.columns = [f"{c2_n}: {x}" for x in cats]
+                            mat_df = ct.astype(float)
+                            st.markdown(f"✅ **Đã lập bảng chéo {len(cats)} × {len(cats)} từ {len(sub_k)} cặp quan sát:**")
+                            show_table(ct.reset_index().rename(columns={"index": f"{c1_n} \\ {c2_n}"}))
+                        else:
+                            st.warning("⚠️ Dữ liệu cần có ít nhất 2 giá trị phân loại khác nhau.")
                     else:
-                        st.warning("⚠️ Dữ liệu cần có ít nhất 2 giá trị phân loại khác nhau.")
+                        st.warning("⚠️ Vui lòng dán bảng có ít nhất 2 cột phân tách bằng Tab, ';' hoặc ','.")
+
+        if mat_df is not None and st.button("Run Cohen's Kappa", type="primary", use_container_width=True, key="btn_run_kappa"):
+            try:
+                res_kappa = compute_cohens_kappa_table(mat_df)
+                show_table(res_kappa, "Cohen's Kappa & Weighted Kappa (Đánh giá độ đồng thuận)")
+                download_table_block(res_kappa, "cohens_kappa_agreement", "Cohen's Kappa")
+
+                tot_df = mat_df.copy()
+                tot_df["Tổng hàng"] = tot_df.sum(axis=1)
+                tot_row = pd.DataFrame([tot_df.sum(axis=0)], index=["Tổng cột"])
+                tot_df = pd.concat([tot_df, tot_row])
+                for c_num in tot_df.columns:
+                    if np.all(np.abs(tot_df[c_num] - np.round(tot_df[c_num])) < 1e-9):
+                        tot_df[c_num] = tot_df[c_num].astype(int)
+                show_table(tot_df.reset_index().rename(columns={"index": "Phân loại"}), "Bảng chéo đồng thuận (kèm tổng biên)")
+                download_table_block(tot_df.reset_index().rename(columns={"index": "Phân loại"}), "kappa_crosstab", "Bảng chéo đồng thuận")
+            except Exception as e:
+                st.error(f"Không thể tính Cohen's Kappa: {e}")
+
+    # ==========================================================================
+    # NHÁNH 2: >= 3 NGƯỜI / PHƯƠNG PHÁP ĐÁNH GIÁ (FLEISS, LIGHT & KRIPPENDORFF)
+    # ==========================================================================
+    else:
+        multi_src = st.radio(
+            "Cách nhập dữ liệu (N đối tượng × m người/phương pháp đánh giá):",
+            ["📋 Dán bảng nhiều cột từ Excel", "📁 Tải file dữ liệu (XLSX/CSV)"],
+            horizontal=True,
+            key="multi_kappa_src_mode"
+        )
+
+        df_multi_raw = None
+        if multi_src == "📋 Dán bảng nhiều cột từ Excel":
+            col_ml, col_mr = st.columns([1.05, 1.0])
+            with col_ml:
+                txt_multi = st.text_area(
+                    "Quét chọn vùng bảng trong Excel (gồm hàng tiêu đề là tên các bác sĩ/phương pháp) rồi dán vào đây:",
+                    height=220,
+                    key="multi_kappa_paste_area",
+                    placeholder="Ví dụ (3 bác sĩ đánh giá trên 6 bệnh nhân):\nBS_1\tBS_2\tBS_3\nNhẹ\tNhẹ\tNhẹ\nTrung bình\tTrung bình\tNặng\nNặng\tNặng\tNặng\nNhẹ\tTrung bình\tNhẹ\nTrung bình\tTrung bình\tTrung bình\nNặng\tNặng\tTrung bình"
+                )
+            with col_mr:
+                if txt_multi and txt_multi.strip():
+                    parsed_m = _kappa_parse_excel_2cols(txt_multi)
+                    if not parsed_m.empty and parsed_m.shape[1] >= 3:
+                        df_multi_raw = parsed_m
+                        st.markdown(
+                            f'<div style="font-size:13.5px;font-weight:600;color:#15803d;margin-bottom:4px;">'
+                            f'✅ Đã nhận diện bảng ({parsed_m.shape[0]} đối tượng × {parsed_m.shape[1]} cột):</div>',
+                            unsafe_allow_html=True
+                        )
+                        show_table(parsed_m.head(15))
+                    elif not parsed_m.empty and parsed_m.shape[1] == 2:
+                        st.warning("⚠️ Bảng hiện chỉ có 2 cột. Nếu có 2 người đánh giá, thầy chọn chế độ '2 người / phương pháp đánh giá' ở trên.")
+                    else:
+                        st.warning("⚠️ Vui lòng dán bảng có ít nhất 3 cột phân tách bằng Tab, ';' hoặc ','.")
                 else:
-                    st.warning("⚠️ Vui lòng dán bảng có ít nhất 2 cột phân tách bằng Tab, ';' hoặc ','.")
+                    st.markdown(
+                        '<div style="height:220px;margin-top:28px;border:1px dashed #cbd5e1;border-radius:6px;'
+                        'display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13.5px;padding:12px;text-align:center;">'
+                        'Mỗi hàng là 1 đối tượng (bệnh nhân/mẫu), mỗi cột là kết quả phân loại của 1 người hoặc 1 phương pháp đánh giá (m ≥ 3).'
+                        '</div>',
+                        unsafe_allow_html=True
+                    )
+        else:
+            tpl_multi = pd.DataFrame({
+                "Ma_BN": ["BN01", "BN02", "BN03", "BN04", "BN05", "BN06"],
+                "BacSi_1": ["Nhẹ", "Trung bình", "Nặng", "Nhẹ", "Trung bình", "Nặng"],
+                "BacSi_2": ["Nhẹ", "Trung bình", "Nặng", "Trung bình", "Trung bình", "Nặng"],
+                "BacSi_3": ["Nhẹ", "Nặng", "Nặng", "Nhẹ", "Trung bình", "Trung bình"],
+            })
+            st.download_button(
+                "Download Excel template (Multirater Kappa)",
+                data=df_to_excel_bytes({"multirater_kappa": tpl_multi}),
+                file_name="multirater_kappa_template.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_tpl_multirater_kappa"
+            )
+            up_mk = st.file_uploader("Upload file dữ liệu đánh giá đồng thuận (XLSX/CSV)", type=["xlsx", "csv"], key="up_multirater_kappa")
+            if up_mk is not None:
+                df_multi_raw = load_uploaded_file(up_mk)
+                st.dataframe(df_multi_raw.head(20), use_container_width=True)
 
-    if mat_df is not None and st.button("Run Cohen's Kappa", type="primary", use_container_width=True, key="btn_run_kappa"):
-        try:
-            res_kappa = compute_cohens_kappa_table(mat_df)
-            show_table(res_kappa, "Cohen's Kappa & Weighted Kappa (Đánh giá độ đồng thuận)")
-            download_table_block(res_kappa, "cohens_kappa_agreement", "Cohen's Kappa")
+        if df_multi_raw is not None and not df_multi_raw.empty:
+            all_cols_m = list(df_multi_raw.columns)
+            id_pat = _re.compile(r"^(stt|id|mã(\s*bn|\s*số)?|code|subject|bn|no\.?|#)$", _re.IGNORECASE)
+            default_raters = [c for c in all_cols_m if not id_pat.match(str(c).strip())]
+            if len(default_raters) < 3:
+                default_raters = all_cols_m
 
-            tot_df = mat_df.copy()
-            tot_df["Tổng hàng"] = tot_df.sum(axis=1)
-            tot_row = pd.DataFrame([tot_df.sum(axis=0)], index=["Tổng cột"])
-            tot_df = pd.concat([tot_df, tot_row])
-            for c_num in tot_df.columns:
-                if np.all(np.abs(tot_df[c_num] - np.round(tot_df[c_num])) < 1e-9):
-                    tot_df[c_num] = tot_df[c_num].astype(int)
-            show_table(tot_df.reset_index().rename(columns={"index": "Phân loại"}), "Bảng chéo đồng thuận (kèm tổng biên)")
-            download_table_block(tot_df.reset_index().rename(columns={"index": "Phân loại"}), "kappa_crosstab", "Bảng chéo đồng thuận")
-        except Exception as e:
-            st.error(f"Không thể tính Cohen's Kappa: {e}")
+            sel_raters = st.multiselect(
+                "Chọn các cột tương ứng với những người / phương pháp đánh giá (tối thiểu 3 cột):",
+                options=all_cols_m,
+                default=default_raters,
+                key="multi_kappa_sel_raters"
+            )
+
+            if len(sel_raters) >= 3:
+                sub_raters = df_multi_raw[sel_raters].copy()
+                u_vals = []
+                for c in sel_raters:
+                    u_vals.extend([str(v).strip() for v in sub_raters[c].dropna() if str(v).strip() != ""])
+                unique_cats = sorted(list(set(u_vals)), key=str)
+
+                custom_ord = None
+                if len(unique_cats) >= 2:
+                    with st.expander("Sắp xếp thứ tự mức phân loại (tùy chọn — dùng cho Krippendorff's Alpha thứ bậc)", expanded=False):
+                        ord_txt = st.text_input(
+                            "Nhập thứ tự các mức từ thấp đến cao (cách nhau bằng dấu phẩy ','):",
+                            value=", ".join(unique_cats),
+                            key="multi_kappa_cat_order"
+                        )
+                        parsed_ord = [x.strip() for x in ord_txt.split(",") if x.strip()]
+                        if len(parsed_ord) >= 2:
+                            custom_ord = parsed_ord
+
+                if st.button("Run Multirater Agreement (Fleiss' & Krippendorff's Kappa)", type="primary", use_container_width=True, key="btn_run_multirater_kappa"):
+                    try:
+                        sum_df, cat_df, pair_df, fk_val, fk_p_str = compute_multirater_agreement_tables(sub_raters, categories_order=custom_ord)
+
+                        show_table(sum_df, f"Tổng hợp các chỉ số đồng thuận đa người đánh giá (m = {len(sel_raters)} người/phương pháp)")
+                        download_table_block(sum_df, "multirater_agreement_summary", "Multirater Agreement Summary")
+
+                        show_table(cat_df, "Fleiss' Kappa theo từng mức phân loại (Category-wise Agreement)")
+                        download_table_block(cat_df, "fleiss_kappa_by_category", "Fleiss Kappa by Category")
+
+                        show_table(pair_df, "Ma trận Cohen's Kappa từng cặp người / phương pháp đánh giá")
+                        download_table_block(pair_df, "pairwise_cohens_kappa", "Pairwise Cohens Kappa")
+
+                        p_disp = f"p {fk_p_str}" if fk_p_str.startswith("<") else f"p = {fk_p_str}"
+                        st.success(
+                            f"**Kết luận đánh giá đồng thuận ({len(sel_raters)} người/phương pháp):** "
+                            f"Hệ số **Fleiss' Kappa = {fk_val:.3f}** ({p_disp}) — **{_interpret_kappa(fk_val)}**."
+                        )
+                    except Exception as e:
+                        st.error(f"Không thể tính đồng thuận đa người đánh giá: {e}")
+            else:
+                st.warning("⚠️ Vui lòng chọn ít nhất 3 cột người/phương pháp đánh giá.")
 
 # =========================================================
 # Thuật toán 2 bước tính phân vị giáo trình (Q1 = 21 khi n=20)
@@ -2269,8 +2670,8 @@ with st.sidebar:
             set_nav("Categorical Tests", "Goodness-of-fit")
         if st.button("Mantel–Haenszel (Stratified 2×2)", key="c_4", use_container_width=True):
             set_nav("Categorical Tests", "Mantel–Haenszel")
-        if st.button("Agreement (Cohen's Kappa)", key="c_5", use_container_width=True):
-            set_nav("Categorical Tests", "Agreement (Cohen's Kappa)")
+        if st.button("Agreement (Cohen's & Fleiss' Kappa)", key="c_5", use_container_width=True):
+            set_nav("Categorical Tests", "Agreement (Cohen's & Fleiss' Kappa)")
 
     with st.expander("Quantitative Tests", expanded=(st.session_state.section == "Quantitative Tests")):
         if st.button("t Tests", key="qt_ttests", use_container_width=True):
@@ -3064,7 +3465,7 @@ elif section == "Categorical Tests":
                 show_table(es_mh, "Effect Size (Độ lớn ảnh hưởng)")
                 download_table_block(es_mh, "mh_effect_size", "Effect Size")
 
-    elif sub == "Agreement (Cohen's Kappa)":
+    elif sub in ["Agreement (Cohen's Kappa)", "Agreement (Cohen's & Fleiss' Kappa)"]:
         render_cohens_kappa_tab()
 
 # -----------------------------
